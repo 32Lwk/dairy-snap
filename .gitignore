@@ -1,0 +1,13 @@
+# Next.js build output
+web/.next/
+
+# Dependencies (huge + platform-specific)
+web/node_modules/
+
+# Nested git metadata (do not push)
+web/.git/
+web/.git_backup*/
+
+# Environment files (do not push secrets)
+web/.env
+

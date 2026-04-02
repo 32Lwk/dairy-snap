@@ -1,0 +1,346 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum EncryptionMode {
+  STANDARD
+  EXPERIMENTAL_E2EE
+}
+
+enum ImageKind {
+  UPLOADED
+  GENERATED
+}
+
+enum WeatherPeriod {
+  AM
+  PM
+}
+
+enum ArtifactKind {
+  CHAT_MESSAGE
+  JOURNAL_DRAFT
+  TITLE_SUGGESTION
+  TAG_SUGGESTION
+  DAILY_SUMMARY
+  IMPACT_ESTIMATE
+  EMBEDDING
+  IMAGE_PROMPT
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  emailVerified DateTime?
+  name          String?
+  image         String?
+
+  isAllowed Boolean  @default(false)
+  timeZone  String   @default("Asia/Tokyo")
+
+  encryptionMode EncryptionMode @default(STANDARD)
+  settings       Json          @default("{}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  accounts      Account[]
+  sessions      Session[]
+  dailyEntries  DailyEntry[]
+  usageCounters UsageCounter[]
+  oauthTokens   OAuthToken[]
+  auditLogs     AuditLog[]
+  aiArtifacts   AIArtifact[]
+  memories      MemoryLongTerm[]
+  tags          Tag[]
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+model DailyEntry {
+  id           String   @id @default(cuid())
+  userId       String
+  entryDateYmd String
+
+  title   String?
+  mood    String?
+  body    String
+
+  latitude  Float?
+  longitude Float?
+
+  weatherPeriod WeatherPeriod?
+  weatherJson   Json? // Open-Meteoレスポンスの必要部分（MVPは柔軟に）
+
+  encryptionMode EncryptionMode @default(STANDARD)
+  encryptionMeta Json          @default("{}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appendEvents  EntryAppendEvent[]
+  images        Image[]
+  entryTags     EntryTag[]
+  chatThreads   ChatThread[]
+  aiArtifacts   AIArtifact[]
+  auditLogs     AuditLog[]
+
+  @@unique([userId, entryDateYmd])
+  @@index([userId, entryDateYmd])
+  @@map("daily_entries")
+}
+
+model EntryAppendEvent {
+  id        String   @id @default(cuid())
+  entryId   String
+  occurredAt DateTime
+  fragment  String
+
+  createdAt DateTime @default(now())
+
+  entry DailyEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  @@index([entryId, occurredAt])
+  @@map("entry_append_events")
+}
+
+model Image {
+  id      String   @id @default(cuid())
+  entryId String
+  kind    ImageKind
+
+  storageKey String
+  mimeType   String
+  byteSize   Int
+  sha256     String?
+
+  width  Int?
+  height Int?
+
+  createdAt DateTime @default(now())
+
+  entry DailyEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  @@index([entryId])
+  @@map("images")
+}
+
+model Tag {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  createdAt DateTime @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entryTags EntryTag[]
+
+  @@unique([userId, name])
+  @@map("tags")
+}
+
+model EntryTag {
+  entryId String
+  tagId   String
+
+  entry DailyEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  tag   Tag        @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([entryId, tagId])
+  @@map("entry_tags")
+}
+
+model ChatThread {
+  id      String   @id @default(cuid())
+  entryId String
+  title   String?
+
+  /** 会話から抽出した構造化メモ（JSON） */
+  conversationNotes Json @default("{}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  entry    DailyEntry    @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  messages ChatMessage[]
+
+  @@index([entryId])
+  @@map("chat_threads")
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  threadId  String
+  role      String
+  content   String
+
+  model      String?
+  latencyMs  Int?
+  tokenEstimate Int?
+
+  createdAt DateTime @default(now())
+
+  thread ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  @@index([threadId, createdAt])
+  @@map("chat_messages")
+}
+
+model AIArtifact {
+  id        String   @id @default(cuid())
+  userId    String
+  entryId   String?
+  kind      ArtifactKind
+  promptVersion String?
+
+  model     String?
+  latencyMs Int?
+  tokenEstimate Int?
+  cacheKey  String?
+  cacheHit  Boolean @default(false)
+
+  metadata Json @default("{}")
+  createdAt DateTime @default(now())
+
+  user  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entry DailyEntry? @relation(fields: [entryId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@map("ai_artifacts")
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String
+  entryId   String?
+
+  action    String
+  metadata  Json @default("{}")
+
+  createdAt DateTime @default(now())
+
+  user  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entry DailyEntry? @relation(fields: [entryId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@map("audit_logs")
+}
+
+model OAuthToken {
+  id      String  @id @default(cuid())
+  userId  String
+  provider String
+
+  tokenCiphertext String
+  tokenMeta       Json @default("{}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, provider])
+  @@map("oauth_tokens")
+}
+
+model MemoryLongTerm {
+  id        String   @id @default(cuid())
+  userId    String
+  sourceEntryId String?
+
+  bullets   Json // 箇条書き（抽象化）
+  attributes Json @default("{}")
+  impactScore Float @default(0)
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("memory_long_term")
+}
+
+model Embedding {
+  id        String   @id @default(cuid())
+  userId    String
+  targetType String
+  targetId   String
+
+  model     String
+  dimensions Int
+  vector    Unsupported("vector")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, targetType, targetId])
+  @@map("embeddings")
+}
+
+model UsageCounter {
+  id     String  @id @default(cuid())
+  userId String
+  dateYmd String
+
+  chatMessages Int @default(0)
+  imageGenerations Int @default(0)
+  dailySummaries Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, dateYmd])
+  @@map("usage_counters")
+}
