@@ -34,6 +34,9 @@ yarn-error.log*
 .env*
 !.env.example
 
+# age identity (do not push private keys)
+.age/
+
 # vercel
 .vercel
 

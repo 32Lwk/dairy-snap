@@ -6,6 +6,8 @@
     "dev": "next dev --webpack",
     "build": "cross-env SKIP_ENV_VALIDATION=1 next build --webpack",
     "start": "next start",
+    "env:encrypt": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/env-encrypt.ps1",
+    "env:decrypt": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/env-decrypt.ps1",
     "lint": "eslint",
     "postinstall": "prisma generate",
     "db:migrate": "prisma migrate deploy",

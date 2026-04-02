@@ -1,0 +1,6 @@
+# Add one age public recipient per line (format: age1...).
+# This file is safe to share (no private keys).
+#
+# Example:
+# age1l36wdcfx825h727h5wjs7swh675f3jd4qde0zj47gyslmuja3agspge22t
+
