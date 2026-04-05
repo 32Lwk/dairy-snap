@@ -1,0 +1,132 @@
+name: Update LOC Stats
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  update-loc:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Update README stats
+        run: |
+          python3 - <<'PY'
+          import re
+          import subprocess
+          from collections import defaultdict
+          from pathlib import Path
+
+
+          def git_ls_files():
+              out = subprocess.check_output(["git", "ls-files", "-z"])
+              return [p for p in out.decode("utf-8", errors="ignore").split("\0") if p]
+
+
+          def count_lines(path_str: str) -> int:
+              try:
+                  data = Path(path_str).read_bytes()
+              except Exception:
+                  return 0
+              if not data:
+                  return 0
+              return data.count(b"\n") + (0 if data.endswith(b"\n") else 1)
+
+
+          files = git_ls_files()
+          file_count = len(files)
+
+          total = 0
+          lifelog_total = 0
+          swift = 0
+          largest_file = "Unknown"
+          largest_lines = -1
+          largest_exts = {".swift", ".ts", ".js", ".md", ".html", ".css"}
+          dir_totals = defaultdict(int)
+
+          for f in files:
+              lines = count_lines(f)
+              total += lines
+
+              if f.startswith("lifelog/"):
+                  lifelog_total += lines
+
+              if f.endswith(".swift"):
+                  swift += lines
+
+              p = Path(f)
+              top_dir = p.parts[0] if len(p.parts) > 1 else "(root)"
+              dir_totals[top_dir] += lines
+
+              if p.suffix.lower() in largest_exts and "package-lock" not in f:
+                  if lines > largest_lines:
+                      largest_lines = lines
+                      largest_file = p.name
+
+          if largest_lines < 0:
+              largest_lines = 0
+
+          sorted_dirs = sorted(dir_totals.items(), key=lambda x: (-x[1], x[0].lower()))
+          dir_table_lines = ["| Directory | LOC |", "|:--|--:|"]
+          for name, loc in sorted_dirs:
+              dir_table_lines.append(f"| `{name}` | {loc:,} |")
+          dir_table = "\n".join(dir_table_lines)
+
+          readme_path = Path("README.md")
+          readme = readme_path.read_text(encoding="utf-8")
+
+          readme = re.sub(
+              r"(総行数: <strong>)[0-9,]+(</strong>)",
+              r"\g<1>" + f"{total:,}" + r"\g<2>",
+              readme,
+          )
+          readme = re.sub(
+              r"(lifelog配下: <strong>)[0-9,]+(</strong>)",
+              r"\g<1>" + f"{lifelog_total:,}" + r"\g<2>",
+              readme,
+          )
+          readme = re.sub(
+              r"(ファイル数: <strong>)[0-9,]+(</strong>)",
+              r"\g<1>" + f"{file_count:,}" + r"\g<2>",
+              readme,
+          )
+          readme = re.sub(
+              r"(Swiftコード: <strong>)[0-9,]+(</strong>)",
+              r"\g<1>" + f"{swift:,}" + r"\g<2>",
+              readme,
+          )
+          readme = re.sub(
+              r"(最大ファイル: <strong>)[^<]+(</strong> \()[0-9,]+( 行\))",
+              r"\g<1>" + largest_file + r"\g<2>" + f"{largest_lines:,}" + r"\g<3>",
+              readme,
+          )
+
+          start = "<!-- dir-loc-start -->"
+          end = "<!-- dir-loc-end -->"
+          new_block = f"{start}\n{dir_table}\n{end}"
+          block_pattern = re.compile(rf"{re.escape(start)}.*?{re.escape(end)}", re.S)
+
+          if block_pattern.search(readme):
+              readme = block_pattern.sub(new_block, readme)
+          else:
+              insertion = "\n\n#### Directory LOC\n\n" + new_block + "\n"
+              marker = "<sub>Stats 自動更新</sub>"
+              if marker in readme:
+                  readme = readme.replace(marker, marker + insertion, 1)
+              else:
+                  readme += insertion
+
+          readme_path.write_text(readme, encoding="utf-8")
+          PY
+
+      - name: Commit and push
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email github-actions[bot]@users.noreply.github.com
+          git diff --quiet README.md || (git add README.md && git commit -m "docs: update LOC stats [skip ci]" && git push)
