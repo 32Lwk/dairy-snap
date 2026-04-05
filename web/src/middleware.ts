@@ -26,6 +26,8 @@ export async function middleware(req: NextRequest) {
   const isApi = nextUrl.pathname.startsWith("/api/");
   const isLogin = nextUrl.pathname === "/login";
   const isForbidden = nextUrl.pathname === "/forbidden";
+  const isAccountMeApi = nextUrl.pathname === "/api/account/me" && req.method === "GET";
+  const isAccountDeleteApi = nextUrl.pathname === "/api/account/delete" && req.method === "POST";
 
   const isAuthed = Boolean(token);
   const isAllowed = Boolean(token?.isAllowed);
@@ -37,10 +39,12 @@ export async function middleware(req: NextRequest) {
   }
 
   if (isAuthed && !isAllowed && !isLogin && !isForbidden) {
-    if (isApi) {
+    if (isApi && !isAccountMeApi && !isAccountDeleteApi) {
       return new NextResponse("Forbidden", { status: 403 });
     }
-    return NextResponse.redirect(new URL("/forbidden", nextUrl));
+    if (!isApi) {
+      return NextResponse.redirect(new URL("/forbidden", nextUrl));
+    }
   }
 
   if (isAuthed && isAllowed && isLogin) {

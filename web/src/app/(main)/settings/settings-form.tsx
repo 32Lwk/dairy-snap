@@ -1,8 +1,14 @@
 "use client";
 
+import { SettingsAccountActions } from "@/components/settings-account-actions";
 import { UserProfileForm, type UserProfilePayload } from "@/components/user-profile-form";
+import { hydrateProfilePayloadForForms } from "@/lib/user-settings";
+import {
+  emitLocalSettingsSavedFromJson,
+  REMOTE_SETTINGS_UPDATED_EVENT,
+} from "@/lib/settings-sync-client";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 type SettingsPayload = {
   email?: string;
@@ -24,6 +30,7 @@ type SettingsPayload = {
     dailySummaries: number;
   };
   promptVersions: Record<string, string>;
+  serverSyncToken?: string;
 };
 
 export function SettingsForm() {
@@ -34,23 +41,53 @@ export function SettingsForm() {
   const [lonIn, setLonIn] = useState("");
   const [labelIn, setLabelIn] = useState("");
 
+  const applySettingsJson = useCallback((json: SettingsPayload & { defaultWeatherLocation?: unknown }) => {
+    setData(json);
+    const loc = json.defaultWeatherLocation as SettingsPayload["defaultWeatherLocation"] | undefined;
+    if (loc && typeof loc.latitude === "number" && typeof loc.longitude === "number") {
+      setLatIn(String(loc.latitude));
+      setLonIn(String(loc.longitude));
+      setLabelIn(loc.label ?? "");
+    } else {
+      setLatIn("");
+      setLonIn("");
+      setLabelIn("");
+    }
+  }, []);
+
+  const reloadSettingsFromServer = useCallback(async () => {
+    const res = await fetch(`/api/settings?_=${Date.now()}`, {
+      cache: "no-store",
+      credentials: "same-origin",
+    });
+    const json = (await res.json().catch(() => ({}))) as SettingsPayload & { error?: string };
+    if (!res.ok) {
+      setError(typeof json.error === "string" ? json.error : "読み込みに失敗しました");
+      return;
+    }
+    setError(null);
+    applySettingsJson(json);
+  }, [applySettingsJson]);
+
   useEffect(() => {
     void (async () => {
-      const res = await fetch("/api/settings");
+      const res = await fetch("/api/settings", { cache: "no-store", credentials: "same-origin" });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(typeof json.error === "string" ? json.error : "読み込みに失敗しました");
         return;
       }
-      setData(json as SettingsPayload);
-      const loc = json.defaultWeatherLocation as SettingsPayload["defaultWeatherLocation"] | undefined;
-      if (loc && typeof loc.latitude === "number" && typeof loc.longitude === "number") {
-        setLatIn(String(loc.latitude));
-        setLonIn(String(loc.longitude));
-        setLabelIn(loc.label ?? "");
-      }
+      applySettingsJson(json as SettingsPayload);
     })();
-  }, []);
+  }, [applySettingsJson]);
+
+  useEffect(() => {
+    function onRemote() {
+      void reloadSettingsFromServer();
+    }
+    window.addEventListener(REMOTE_SETTINGS_UPDATED_EVENT, onRemote);
+    return () => window.removeEventListener(REMOTE_SETTINGS_UPDATED_EVENT, onRemote);
+  }, [reloadSettingsFromServer]);
 
   async function saveDefaultLocation() {
     const lat = parseFloat(latIn);
@@ -78,6 +115,7 @@ export function SettingsForm() {
         setError(typeof json.error === "string" ? json.error : "保存に失敗しました");
         return;
       }
+      emitLocalSettingsSavedFromJson(json);
       setData((d) =>
         d
           ? {
@@ -105,6 +143,7 @@ export function SettingsForm() {
         setError(typeof json.error === "string" ? json.error : "保存に失敗しました");
         return;
       }
+      emitLocalSettingsSavedFromJson(json);
       setLatIn("");
       setLonIn("");
       setLabelIn("");
@@ -128,6 +167,7 @@ export function SettingsForm() {
         setError(typeof json.error === "string" ? json.error : "保存に失敗しました");
         return;
       }
+      emitLocalSettingsSavedFromJson(json);
       setData((d) => (d ? { ...d, encryptionMode: json.user.encryptionMode } : d));
     } finally {
       setSaving(false);
@@ -199,8 +239,9 @@ export function SettingsForm() {
 
       <section className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
         <UserProfileForm
-          initial={data.profile ?? {}}
-          onSaved={() => window.location.reload()}
+          key={data.serverSyncToken ?? "profile"}
+          initial={hydrateProfilePayloadForForms(data.profile ?? {})}
+          onSaved={() => void reloadSettingsFromServer()}
         />
       </section>
 
@@ -283,6 +324,8 @@ export function SettingsForm() {
           ))}
         </ul>
       </section>
+
+      <SettingsAccountActions email={data.email} />
     </div>
   );
 }

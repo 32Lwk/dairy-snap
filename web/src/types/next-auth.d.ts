@@ -14,6 +14,8 @@ declare module "next-auth/jwt" {
   interface JWT {
     id?: string;
     isAllowed?: boolean;
+    /** DB の user.id とずれたときのフォールバック解決用 */
+    email?: string | null;
   }
 }
 

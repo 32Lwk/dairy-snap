@@ -6,13 +6,11 @@ import { useEffect, useState } from "react";
 
 type Props = {
   entryDateYmd: string;
-  initialBody: string;
 };
 
-export function TodayAppendForm({ entryDateYmd, initialBody }: Props) {
+export function TodayAppendForm({ entryDateYmd }: Props) {
   const router = useRouter();
   const [text, setText] = useState("");
-  const [mood, setMood] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [queued, setQueued] = useState(0);
@@ -42,7 +40,6 @@ export function TodayAppendForm({ entryDateYmd, initialBody }: Props) {
         await enqueueAppend({
           entryDateYmd,
           fragment: text,
-          ...(mood.trim() ? { mood: mood.trim() } : {}),
         });
         setText("");
         setQueued(await pendingCount());
@@ -55,7 +52,6 @@ export function TodayAppendForm({ entryDateYmd, initialBody }: Props) {
         body: JSON.stringify({
           entryDateYmd,
           fragment: text,
-          ...(mood.trim() ? { mood: mood.trim() } : {}),
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -73,22 +69,13 @@ export function TodayAppendForm({ entryDateYmd, initialBody }: Props) {
   return (
     <div className="flex flex-col gap-4">
       <form onSubmit={onSubmit} className="flex flex-col gap-3">
-        <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-          1行メモでもOK（追記として保存）
-        </label>
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
           rows={4}
+          aria-label="日記への追記"
           className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-sm outline-none ring-zinc-400 focus:ring-2 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50"
           placeholder="今日のことを書く…"
-        />
-        <input
-          type="text"
-          value={mood}
-          onChange={(e) => setMood(e.target.value)}
-          className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50"
-          placeholder="気分タグ（任意）"
         />
         {error && <p className="text-sm text-red-600">{error}</p>}
         {queued > 0 && (
@@ -104,13 +91,6 @@ export function TodayAppendForm({ entryDateYmd, initialBody }: Props) {
           {saving ? "保存中…" : "追記を保存"}
         </button>
       </form>
-
-      <section>
-        <h2 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">本文プレビュー</h2>
-        <pre className="mt-2 whitespace-pre-wrap rounded-xl border border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-800 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
-          {initialBody || "（まだ追記がありません）"}
-        </pre>
-      </section>
     </div>
   );
 }

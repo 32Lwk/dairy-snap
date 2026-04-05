@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { auth } from "@/auth";
+import { getResolvedAuthUser } from "@/lib/server/resolved-auth-user";
 import { prisma } from "@/server/db";
 import { EntryActions } from "./entry-actions";
 import { EntryChat } from "./entry-chat";
@@ -11,15 +11,16 @@ export default async function EntryByDatePage({
 }: {
   params: Promise<{ date: string }>;
 }) {
-  const session = await auth();
-  if (!session?.user?.id) redirect("/login");
+  const r = await getResolvedAuthUser();
+  if (r.status === "unauthenticated") redirect("/login");
+  if (r.status === "session_mismatch") redirect("/login?error=session_mismatch");
 
   const { date } = await params;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) notFound();
 
   const entry = await prisma.dailyEntry.findUnique({
     where: {
-      userId_entryDateYmd: { userId: session.user.id, entryDateYmd: date },
+      userId_entryDateYmd: { userId: r.user.id, entryDateYmd: date },
     },
     include: {
       appendEvents: { orderBy: { occurredAt: "asc" } },

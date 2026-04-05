@@ -1,4 +1,4 @@
-import { signOut } from "@/auth";
+import { SettingsAccountActions } from "@/components/settings-account-actions";
 
 export default function ForbiddenPage() {
   return (
@@ -10,22 +10,10 @@ export default function ForbiddenPage() {
         <p className="mt-2 text-sm leading-6 text-zinc-600 dark:text-zinc-400">
           このアカウントは許可リストに含まれていないため、利用できません。
         </p>
-        <form
-          className="mt-6"
-          action={async () => {
-            "use server";
-            await signOut({ redirectTo: "/login" });
-          }}
-        >
-          <button
-            type="submit"
-            className="inline-flex w-full items-center justify-center rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-zinc-800 active:bg-zinc-950 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-white"
-          >
-            別のアカウントでログイン
-          </button>
-        </form>
+        <div className="mt-6 rounded-xl border border-zinc-100 bg-zinc-50/80 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+          <SettingsAccountActions />
+        </div>
       </div>
     </div>
   );
 }
-

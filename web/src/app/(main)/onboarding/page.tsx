@@ -1,33 +1,24 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
-import { auth } from "@/auth";
 import { parseUserSettings } from "@/lib/user-settings";
-import { prisma } from "@/server/db";
+import { getResolvedAuthUser } from "@/lib/server/resolved-auth-user";
 import { OnboardingClient } from "./onboarding-client";
 
-export default async function OnboardingPage() {
-  const session = await auth();
-  if (!session?.user?.id) redirect("/login");
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
-  const user = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: { settings: true },
-  });
-  const profile = parseUserSettings(user?.settings ?? {}).profile;
+export default async function OnboardingPage() {
+  const r = await getResolvedAuthUser();
+  if (r.status === "unauthenticated") redirect("/login");
+  if (r.status === "session_mismatch") redirect("/login?error=session_mismatch");
+
+  const profile = parseUserSettings(r.user.settings).profile;
   if (profile?.onboardingCompletedAt) {
     redirect("/today");
   }
 
   return (
-    <div className="mx-auto max-w-lg px-4 py-8">
-      <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">初回のみ</p>
-      <h1 className="mt-1 text-2xl font-semibold text-zinc-900 dark:text-zinc-50">プロフィール</h1>
-      <OnboardingClient initialProfile={profile ?? {}} />
-      <p className="mt-8 text-center text-sm text-zinc-500">
-        <Link href="/settings" className="text-emerald-700 underline dark:text-emerald-400">
-          設定（カレンダー連携）
-        </Link>
-      </p>
+    <div className="mx-auto flex h-[100dvh] min-w-0 max-w-lg flex-col px-4">
+      <OnboardingClient userId={r.user.id} initialProfile={profile ?? {}} />
     </div>
   );
 }

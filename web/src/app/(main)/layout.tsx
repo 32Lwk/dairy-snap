@@ -1,13 +1,13 @@
-import { AppBottomNav } from "@/components/app-bottom-nav";
 import { AuthSessionProvider } from "@/components/auth-session-provider";
+import { MainLayoutBody } from "@/components/main-layout-body";
+import { SettingsSyncProvider } from "@/components/settings-sync-provider";
 
 export default function MainAppLayout({ children }: { children: React.ReactNode }) {
   return (
     <AuthSessionProvider>
-      <div className="flex min-h-full flex-col pb-[calc(4.5rem+env(safe-area-inset-bottom))]">
-        <main className="flex-1">{children}</main>
-        <AppBottomNav />
-      </div>
+      <SettingsSyncProvider>
+        <MainLayoutBody>{children}</MainLayoutBody>
+      </SettingsSyncProvider>
     </AuthSessionProvider>
   );
 }

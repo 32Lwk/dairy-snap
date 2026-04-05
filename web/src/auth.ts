@@ -58,6 +58,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         token.sub = user.id;
         token.id = user.id;
         token.isAllowed = u?.isAllowed ?? false;
+        if (user.email) token.email = user.email;
       }
       if (trigger === "update" && session && typeof session === "object") {
         const s = session as { isAllowed?: boolean };
@@ -71,6 +72,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (session.user) {
         session.user.id = (token.id as string) ?? token.sub ?? "";
         session.user.isAllowed = Boolean(token.isAllowed);
+        if (typeof token.email === "string" && token.email.length > 0) {
+          session.user.email = token.email;
+        }
       }
       return session;
     },

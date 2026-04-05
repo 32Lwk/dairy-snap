@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { auth } from "@/auth";
+import { getResolvedAuthUser } from "@/lib/server/resolved-auth-user";
 import { prisma } from "@/server/db";
 import { UpcomingGoogleEvents } from "./upcoming-google-events";
 
@@ -17,8 +17,9 @@ export default async function CalendarPage({
 }: {
   searchParams: Promise<{ ym?: string }>;
 }) {
-  const session = await auth();
-  if (!session?.user?.id) redirect("/login");
+  const r = await getResolvedAuthUser();
+  if (r.status === "unauthenticated") redirect("/login");
+  if (r.status === "session_mismatch") redirect("/login?error=session_mismatch");
 
   const sp = await searchParams;
   const now = new Date();
@@ -27,7 +28,7 @@ export default async function CalendarPage({
   const { from, to } = monthRange(ym);
 
   const entries = await prisma.dailyEntry.findMany({
-    where: { userId: session.user.id, entryDateYmd: { gte: from, lte: to } },
+    where: { userId: r.user.id, entryDateYmd: { gte: from, lte: to } },
     select: { entryDateYmd: true, title: true },
     orderBy: { entryDateYmd: "asc" },
   });

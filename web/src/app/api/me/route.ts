@@ -1,16 +1,21 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/api/require-session";
+import { requireResolvedSession } from "@/lib/api/require-session";
 import { prisma } from "@/server/db";
 
 export async function GET() {
-  const session = await requireSession();
-  if ("response" in session) return session.response;
+  const resolved = await requireResolvedSession();
+  if ("response" in resolved) return resolved.response;
 
   const user = await prisma.user.findUnique({
-    where: { id: session.user.id },
+    where: { id: resolved.userId },
     select: { encryptionMode: true, email: true },
   });
-  if (!user) return NextResponse.json({ error: "ユーザーが見つかりません" }, { status: 404 });
+  if (!user) {
+    return NextResponse.json(
+      { error: "セッションと一致するユーザーが見つかりません。再ログインしてください。" },
+      { status: 401 },
+    );
+  }
 
   return NextResponse.json(user);
 }

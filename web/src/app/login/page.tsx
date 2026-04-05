@@ -3,10 +3,11 @@ import { signIn } from "@/auth";
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string }>;
+  searchParams: Promise<{ next?: string; error?: string }>;
 }) {
   const sp = await searchParams;
   const next = sp.next ?? "/";
+  const sessionMismatch = sp.error === "session_mismatch";
 
   return (
     <div className="flex flex-1 items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
@@ -14,9 +15,16 @@ export default async function LoginPage({
         <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
           daily-snap
         </h1>
-        <p className="mt-2 text-sm leading-6 text-zinc-600 dark:text-zinc-400">
-          個人用の日記です。ログイン後、許可されていないアカウントは利用できません。
-        </p>
+        {sessionMismatch ? (
+          <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-6 text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100">
+            サーバー上のユーザー情報とセッションが一致しませんでした（開発で DB をリセットした直後などに起きます）。
+            下のボタンから<strong className="font-semibold">もう一度 Google でログイン</strong>してください。
+          </p>
+        ) : (
+          <p className="mt-2 text-sm leading-6 text-zinc-600 dark:text-zinc-400">
+            個人用の日記です。ログイン後、許可されていないアカウントは利用できません。
+          </p>
+        )}
 
         <form
           className="mt-6"

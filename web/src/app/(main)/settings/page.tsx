@@ -1,15 +1,16 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { auth } from "@/auth";
+import { getResolvedAuthUser } from "@/lib/server/resolved-auth-user";
 import { getCalendarConnectionSummary } from "@/server/calendar";
 import { CalendarReconnectButton } from "./calendar-reconnect";
 import { SettingsForm } from "./settings-form";
 
 export default async function SettingsPage() {
-  const session = await auth();
-  if (!session?.user?.id) redirect("/login");
+  const r = await getResolvedAuthUser();
+  if (r.status === "unauthenticated") redirect("/login");
+  if (r.status === "session_mismatch") redirect("/login?error=session_mismatch");
 
-  const cal = await getCalendarConnectionSummary(session.user.id);
+  const cal = await getCalendarConnectionSummary(r.user.id);
 
   return (
     <div className="mx-auto max-w-lg px-4 py-8">
