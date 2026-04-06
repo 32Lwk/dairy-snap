@@ -1,4 +1,4 @@
-import { google } from "googleapis";
+import { google, calendar_v3 } from "googleapis";
 import { prisma } from "@/server/db";
 
 export type CalendarEventBrief = {
@@ -23,6 +23,174 @@ export type CalendarFetchResult =
 
 const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
 
+type GoogleCalEvent = calendar_v3.Schema$Event;
+
+function toBrief(ev: GoogleCalEvent): CalendarEventBrief {
+  return {
+    title: ev.summary ?? "",
+    start: ev.start?.dateTime ?? ev.start?.date ?? "",
+    end: ev.end?.dateTime ?? ev.end?.date ?? "",
+    location: ev.location ?? "",
+    description: (ev.description ?? "").slice(0, 500),
+  };
+}
+
+async function listReadableCalendarIds(cal: ReturnType<typeof google.calendar>): Promise<string[]> {
+  const ids: string[] = [];
+  let pageToken: string | undefined;
+  for (let i = 0; i < 5; i++) {
+    const res = await cal.calendarList.list({
+      minAccessRole: "reader",
+      showHidden: false,
+      maxResults: 250,
+      pageToken,
+    });
+    for (const item of res.data.items ?? []) {
+      if (!item.id) continue;
+      // 共有や購読（webcal/iCal）もここに入る。無効/削除済みは除外。
+      if (item.deleted) continue;
+      ids.push(item.id);
+    }
+    pageToken = res.data.nextPageToken ?? undefined;
+    if (!pageToken) break;
+  }
+  // primary を先頭にして、重複排除
+  const uniq = Array.from(new Set(ids));
+  const primaryIdx = uniq.indexOf("primary");
+  if (primaryIdx > 0) {
+    uniq.splice(primaryIdx, 1);
+    uniq.unshift("primary");
+  }
+  return uniq;
+}
+
+function sortKeyIso(start: string): number {
+  const ms = Date.parse(start);
+  return Number.isFinite(ms) ? ms : Number.POSITIVE_INFINITY;
+}
+
+function dateFromIsoLikeTokyo(isoLike: string, isEnd: boolean): Date {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(isoLike)) {
+    const suffix = isEnd ? "T23:59:59.999+09:00" : "T00:00:00+09:00";
+    return new Date(`${isoLike}${suffix}`);
+  }
+  return new Date(isoLike);
+}
+
+function computeRange(): { timeMin: Date; timeMax: Date } {
+  const now = new Date();
+  const timeMin = new Date(now);
+  timeMin.setDate(timeMin.getDate() - 90);
+  const timeMax = new Date(now);
+  timeMax.setDate(timeMax.getDate() + 365);
+  return { timeMin, timeMax };
+}
+
+function tokyoStartOfDay(ymd: string): Date {
+  return new Date(`${ymd}T00:00:00+09:00`);
+}
+
+function tokyoEndOfDay(ymd: string): Date {
+  return new Date(`${ymd}T23:59:59.999+09:00`);
+}
+
+async function syncGoogleCalendarCache(
+  userId: string,
+  cal: ReturnType<typeof google.calendar>,
+  opts?: { forceSync?: boolean; minIntervalMs?: number },
+) {
+  const { timeMin, timeMax } = computeRange();
+  const calendarIds = await listReadableCalendarIds(cal);
+  const now = new Date();
+  const forceSync = Boolean(opts?.forceSync);
+  const minIntervalMs = opts?.minIntervalMs ?? 5 * 60 * 1000;
+
+  // 差分同期: カレンダー単位で「前回同期時刻」以降に更新されたイベントのみ取得
+  const states = await prisma.googleCalendarSyncState.findMany({
+    where: { userId, calendarId: { in: calendarIds } },
+    select: { calendarId: true, lastSyncAt: true },
+  });
+  const lastSyncById = new Map(states.map((s) => [s.calendarId, s.lastSyncAt ?? null]));
+
+  for (const calendarId of calendarIds) {
+    const lastSyncAt = lastSyncById.get(calendarId) ?? null;
+    if (!forceSync && lastSyncAt && now.getTime() - lastSyncAt.getTime() < minIntervalMs) {
+      continue;
+    }
+
+    const updatedMin = lastSyncById.get(calendarId) ?? null;
+    let pageToken: string | undefined;
+
+    try {
+      for (let i = 0; i < 50; i++) {
+        const res = await cal.events.list({
+          calendarId,
+          timeMin: timeMin.toISOString(),
+          timeMax: timeMax.toISOString(),
+          singleEvents: true,
+          orderBy: "startTime",
+          maxResults: 250,
+          showDeleted: true,
+          ...(updatedMin ? { updatedMin: updatedMin.toISOString() } : {}),
+          pageToken,
+        });
+
+        for (const ev of res.data.items ?? []) {
+          if (!ev.id) continue;
+          const brief = toBrief(ev);
+          const startIso = brief.start;
+          const endIso = brief.end || brief.start;
+          if (!startIso) continue;
+
+          const isCancelled = ev.status === "cancelled";
+          const updatedAtGcal = ev.updated ? new Date(ev.updated) : null;
+
+          await prisma.googleCalendarEventCache.upsert({
+            where: { userId_calendarId_eventId: { userId, calendarId, eventId: ev.id } },
+            create: {
+              userId,
+              calendarId,
+              eventId: ev.id,
+              title: brief.title,
+              location: brief.location,
+              description: brief.description,
+              startIso,
+              endIso,
+              startAt: dateFromIsoLikeTokyo(startIso, false),
+              endAt: dateFromIsoLikeTokyo(endIso, true),
+              isCancelled,
+              updatedAtGcal: updatedAtGcal ?? undefined,
+            },
+            update: {
+              title: brief.title,
+              location: brief.location,
+              description: brief.description,
+              startIso,
+              endIso,
+              startAt: dateFromIsoLikeTokyo(startIso, false),
+              endAt: dateFromIsoLikeTokyo(endIso, true),
+              isCancelled,
+              updatedAtGcal: updatedAtGcal ?? undefined,
+            },
+          });
+        }
+
+        pageToken = res.data.nextPageToken ?? undefined;
+        if (!pageToken) break;
+      }
+
+      await prisma.googleCalendarSyncState.upsert({
+        where: { userId_calendarId: { userId, calendarId } },
+        create: { userId, calendarId, lastSyncAt: now },
+        update: { lastSyncAt: now },
+      });
+    } catch {
+      // 1つのカレンダーが落ちても全体は落とさない（購読カレンダー等での一時エラー対策）
+      continue;
+    }
+  }
+}
+
 /** 設定画面表示用（DB のみ） */
 export async function getCalendarConnectionSummary(userId: string): Promise<{
   hasGoogleAccount: boolean;
@@ -44,7 +212,15 @@ export async function getCalendarConnectionSummary(userId: string): Promise<{
 }
 
 /** 未来30日の予定（タイトル・開始/終了・場所・説明） */
-export async function fetchCalendarEventsForUser(userId: string): Promise<CalendarFetchResult> {
+export async function fetchCalendarEventsForUser(
+  userId: string,
+  opts?: {
+    forceSync?: boolean;
+    fromYmd?: string;
+    toYmd?: string;
+    limit?: number;
+  },
+): Promise<CalendarFetchResult> {
   const account = await prisma.account.findFirst({
     where: { userId, provider: "google" },
   });
@@ -86,27 +262,32 @@ export async function fetchCalendarEventsForUser(userId: string): Promise<Calend
 
   try {
     const cal = google.calendar({ version: "v3", auth: oauth2 });
-    const now = new Date();
-    const end = new Date(now);
-    end.setDate(end.getDate() + 30);
+    // 初回: 全取得（過去90日〜未来365日）→DBキャッシュ
+    // 次回以降: updatedMin（前回同期時刻）で差分のみ取得
+    await syncGoogleCalendarCache(userId, cal, { forceSync: opts?.forceSync, minIntervalMs: 5 * 60 * 1000 });
 
-    const res = await cal.events.list({
-      calendarId: "primary",
-      timeMin: now.toISOString(),
-      timeMax: end.toISOString(),
-      singleEvents: true,
-      orderBy: "startTime",
-      maxResults: 50,
+    const base = computeRange();
+    const timeMin =
+      typeof opts?.fromYmd === "string" && /^\d{4}-\d{2}-\d{2}$/.test(opts.fromYmd) ? tokyoStartOfDay(opts.fromYmd) : base.timeMin;
+    const timeMax =
+      typeof opts?.toYmd === "string" && /^\d{4}-\d{2}-\d{2}$/.test(opts.toYmd) ? tokyoEndOfDay(opts.toYmd) : base.timeMax;
+    const limit = Math.min(Math.max(opts?.limit ?? 2000, 1), 5000);
+
+    const rows = await prisma.googleCalendarEventCache.findMany({
+      where: {
+        userId,
+        isCancelled: false,
+        startAt: { gte: timeMin, lte: timeMax },
+      },
+      orderBy: { startAt: "asc" },
+      take: limit,
+      select: { title: true, startIso: true, endIso: true, location: true, description: true },
     });
 
-    const events: CalendarEventBrief[] =
-      res.data.items?.map((ev) => ({
-        title: ev.summary ?? "",
-        start: ev.start?.dateTime ?? ev.start?.date ?? "",
-        end: ev.end?.dateTime ?? ev.end?.date ?? "",
-        location: ev.location ?? "",
-        description: (ev.description ?? "").slice(0, 500),
-      })) ?? [];
+    const events: CalendarEventBrief[] = rows
+      .map((r) => ({ title: r.title, start: r.startIso, end: r.endIso, location: r.location, description: r.description }))
+      .filter((e) => e.start)
+      .sort((a, b) => sortKeyIso(a.start) - sortKeyIso(b.start));
 
     return { ok: true, events };
   } catch (e) {
@@ -187,23 +368,29 @@ export async function fetchCalendarEventsForDay(
     const timeMin = `${dayYmd}T00:00:00+09:00`;
     const timeMax = `${dayYmd}T23:59:59.999+09:00`;
 
-    const res = await cal.events.list({
-      calendarId: "primary",
-      timeMin: new Date(timeMin).toISOString(),
-      timeMax: new Date(timeMax).toISOString(),
-      singleEvents: true,
-      orderBy: "startTime",
-      maxResults: 50,
-    });
+    const calendarIds = await listReadableCalendarIds(cal).catch(() => ["primary"]);
+    const limitedIds = calendarIds.slice(0, 12);
 
-    const events: CalendarEventBrief[] =
-      res.data.items?.map((ev) => ({
-        title: ev.summary ?? "",
-        start: ev.start?.dateTime ?? ev.start?.date ?? "",
-        end: ev.end?.dateTime ?? ev.end?.date ?? "",
-        location: ev.location ?? "",
-        description: (ev.description ?? "").slice(0, 500),
-      })) ?? [];
+    const items = await Promise.all(
+      limitedIds.map(async (calendarId) => {
+        const res = await cal.events.list({
+          calendarId,
+          timeMin: new Date(timeMin).toISOString(),
+          timeMax: new Date(timeMax).toISOString(),
+          singleEvents: true,
+          orderBy: "startTime",
+          maxResults: 50,
+        });
+        return res.data.items ?? [];
+      }),
+    );
+
+    const events: CalendarEventBrief[] = items
+      .flat()
+      .map(toBrief)
+      .filter((e) => e.start)
+      .sort((a, b) => sortKeyIso(a.start) - sortKeyIso(b.start))
+      .slice(0, 50);
 
     return { ok: true, events };
   } catch (e) {

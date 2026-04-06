@@ -31,6 +31,75 @@ function countPicksInCategory(value: string[], c: (typeof INTEREST_CATEGORIES)[n
   ).length;
 }
 
+function HorizontalChipScroller({
+  children,
+  chipStripScroll,
+  btnCls,
+  stepPx = 220,
+}: {
+  children: React.ReactNode;
+  chipStripScroll: string;
+  btnCls: string;
+  stepPx?: number;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [atStart, setAtStart] = useState(true);
+  const [atEnd, setAtEnd] = useState(true);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+
+    const update = () => {
+      const max = Math.max(0, el.scrollWidth - el.clientWidth);
+      const left = el.scrollLeft;
+      setAtStart(left <= 1);
+      setAtEnd(left >= max - 1);
+    };
+
+    update();
+    el.addEventListener("scroll", update, { passive: true });
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener("scroll", update);
+      ro.disconnect();
+    };
+  }, []);
+
+  const scrollBy = (dx: number) => {
+    const el = ref.current;
+    if (!el) return;
+    el.scrollBy({ left: dx, behavior: "smooth" });
+  };
+
+  return (
+    <div className="flex min-w-0 items-center gap-1.5">
+      <button
+        type="button"
+        aria-label="左へ"
+        onClick={() => scrollBy(-stepPx)}
+        disabled={atStart}
+        className={`${btnCls} disabled:opacity-40`}
+      >
+        ←
+      </button>
+      <div ref={ref} className={`${chipStripScroll} min-w-0 flex-1`}>
+        {children}
+      </div>
+      <button
+        type="button"
+        aria-label="右へ"
+        onClick={() => scrollBy(stepPx)}
+        disabled={atEnd}
+        className={`${btnCls} disabled:opacity-40`}
+      >
+        →
+      </button>
+    </div>
+  );
+}
+
 export function InterestPicksControl({
   value,
   onChange,
@@ -218,10 +287,11 @@ export function InterestPicksControl({
   const freePicks = value.filter(isInterestFreePick);
 
   const chipStripScroll =
-    "min-w-0 max-w-full overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]";
+    "min-w-0 max-w-full overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch] [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden";
   /** 横スクロールチップ共通（高さを抑える） */
   const chipSm = "px-2 py-0.5 text-[11px] leading-tight";
   const chipSmRound = "rounded-lg border";
+  const scrollBtnCls = `${chipSmRound} ${chipSm} bg-white text-zinc-700 hover:bg-zinc-50 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900`;
   const addBtnClass =
     "shrink-0 rounded-md bg-zinc-800 px-2 py-0.5 text-[11px] font-medium leading-tight text-white dark:bg-zinc-200 dark:text-zinc-900";
 
@@ -229,7 +299,11 @@ export function InterestPicksControl({
     <div className="min-w-0 max-w-full space-y-3 overflow-x-hidden">
       <div className="space-y-1">
         <p className="text-xs text-zinc-600 dark:text-zinc-400">大分類</p>
-        <div className={chipStripScroll}>
+        <HorizontalChipScroller
+          chipStripScroll={chipStripScroll}
+          btnCls={scrollBtnCls}
+          stepPx={260}
+        >
           <div className="flex w-max items-center gap-1.5">
             {INTEREST_CATEGORIES.map((c) => {
               const active = c.id === catId;
@@ -272,12 +346,12 @@ export function InterestPicksControl({
               );
             })}
           </div>
-        </div>
+        </HorizontalChipScroller>
       </div>
 
       <div>
         <p className="mb-1 text-xs text-zinc-600 dark:text-zinc-400">小分類</p>
-        <div className={chipStripScroll}>
+        <HorizontalChipScroller chipStripScroll={chipStripScroll} btnCls={scrollBtnCls} stepPx={260}>
           <div className="flex w-max items-center gap-1.5">
             {category.subs.map((s) => {
               const on =
@@ -309,7 +383,7 @@ export function InterestPicksControl({
               ＋自由入力
             </button>
           </div>
-        </div>
+        </HorizontalChipScroller>
       </div>
 
       {detailSubFocused && activeSub && (
@@ -323,7 +397,7 @@ export function InterestPicksControl({
               詳細タグに下の段がある場合：選んだあと、もう一度同じタップで「テーマ・見方」と「作品例」などが開きます。もう一度タップでまとめて外せます。
             </p>
           ) : null}
-          <div className={chipStripScroll}>
+          <HorizontalChipScroller chipStripScroll={chipStripScroll} btnCls={scrollBtnCls} stepPx={260}>
             <div className="flex w-max items-center gap-1.5">
               {defaultFinesForSub(activeSub).map((f) => {
                 const fon = isFineBranchSelected(value, f);
@@ -368,7 +442,7 @@ export function InterestPicksControl({
                 ＋自由入力
               </button>
             </div>
-          </div>
+          </HorizontalChipScroller>
           {nestedPanelFine ? (
             <div className="space-y-1.5 rounded-lg border border-zinc-200 bg-zinc-50/80 p-2 dark:border-zinc-700 dark:bg-zinc-900/50">
               <p className="text-[11px] font-medium text-zinc-600 dark:text-zinc-300">
@@ -380,7 +454,7 @@ export function InterestPicksControl({
               {(nestedPanelFine.micro ?? []).length > 0 ? (
                 <div className="space-y-0.5">
                   <p className="text-[10px] text-zinc-500 dark:text-zinc-400">テーマ・見方</p>
-                  <div className={chipStripScroll}>
+                  <HorizontalChipScroller chipStripScroll={chipStripScroll} btnCls={scrollBtnCls} stepPx={240}>
                     <div className="flex w-max items-center gap-1.5">
                       {(nestedPanelFine.micro ?? []).map((ch) => {
                         const on = value.includes(ch.id);
@@ -400,7 +474,7 @@ export function InterestPicksControl({
                         );
                       })}
                     </div>
-                  </div>
+                  </HorizontalChipScroller>
                 </div>
               ) : null}
               {(nestedPanelFine.works ?? []).length > 0 ? (
@@ -408,7 +482,7 @@ export function InterestPicksControl({
                   <p className="text-[10px] text-zinc-500 dark:text-zinc-400">
                     作品例（代表的なタイトル）
                   </p>
-                  <div className={chipStripScroll}>
+                  <HorizontalChipScroller chipStripScroll={chipStripScroll} btnCls={scrollBtnCls} stepPx={240}>
                     <div className="flex w-max items-center gap-1.5">
                       {(nestedPanelFine.works ?? []).map((ch) => {
                         const on = value.includes(ch.id);
@@ -428,7 +502,7 @@ export function InterestPicksControl({
                         );
                       })}
                     </div>
-                  </div>
+                  </HorizontalChipScroller>
                 </div>
               ) : null}
             </div>
@@ -490,7 +564,7 @@ export function InterestPicksControl({
       {freePicks.length > 0 && (
         <div className="space-y-0.5">
           <p className="text-[11px] text-zinc-500">自由入力</p>
-          <div className={chipStripScroll}>
+          <HorizontalChipScroller chipStripScroll={chipStripScroll} btnCls={scrollBtnCls} stepPx={260}>
             <div className="flex w-max items-center gap-1.5">
               {freePicks.map((id) => (
                 <button
@@ -503,7 +577,7 @@ export function InterestPicksControl({
                 </button>
               ))}
             </div>
-          </div>
+          </HorizontalChipScroller>
         </div>
       )}
 

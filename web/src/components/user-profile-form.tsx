@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AgentPersonaPreferences } from "@/components/agent-persona-preferences";
 import { InterestPicksControl } from "@/components/interest-picks-control";
 import { ageYearsFromYmd, localYmdToday, sanitizeHtmlDateYmd } from "@/lib/age-from-ymd";
@@ -192,6 +192,8 @@ export function UserProfileForm({
   const [internal, setInternal] = useState<UserProfilePayload>(initial);
   const controlled = value !== undefined && onValuesChange !== undefined;
   const form = controlled ? value : internal;
+  const [birthEditMode, setBirthEditMode] = useState(false);
+  const birthDateInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!controlled) setInternal(initial);
@@ -255,6 +257,29 @@ export function UserProfileForm({
     () => (birthYmdForUi ? ageYearsFromYmd(birthYmdForUi) : null),
     [birthYmdForUi],
   );
+
+  const weekdayAuto = useMemo(() => {
+    if (!birthYmdForUi) return null;
+    const [ys, ms, ds] = birthYmdForUi.split("-");
+    const y = Number(ys);
+    const m = Number(ms);
+    const d = Number(ds);
+    const dt = new Date(y, m - 1, d);
+    if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) return null;
+    return new Intl.DateTimeFormat("ja-JP", { weekday: "short" }).format(dt);
+  }, [birthYmdForUi]);
+
+  const birthDisplayText = useMemo(() => {
+    if (!birthYmdForUi) return "";
+    const [y, m, d] = birthYmdForUi.split("-");
+    const base = `${y}/${m}/${d}`;
+    return weekdayAuto ? `${base}（${weekdayAuto}）` : base;
+  }, [birthYmdForUi, weekdayAuto]);
+
+  useEffect(() => {
+    if (!birthEditMode) return;
+    birthDateInputRef.current?.focus();
+  }, [birthEditMode]);
 
   function patchForm(next: UserProfilePayload) {
     if (controlled) onValuesChange!(next);
@@ -380,17 +405,40 @@ export function UserProfileForm({
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <label className="block text-xs text-zinc-600 dark:text-zinc-400">
           生年月日
-          <input
-            type="date"
-            min="1900-01-01"
-            max={localYmdToday()}
-            value={birthYmdForUi}
-            onChange={(e) => {
-              const v = sanitizeHtmlDateYmd(e.target.value);
-              set("birthDate", v ? v : undefined);
-            }}
-            className={inputCls}
-          />
+          <div className="relative">
+            {birthEditMode ? (
+              <input
+                ref={birthDateInputRef}
+                aria-label="生年月日"
+                type="date"
+                min="1900-01-01"
+                max={localYmdToday()}
+                value={birthYmdForUi}
+                onChange={(e) => {
+                  const v = sanitizeHtmlDateYmd(e.target.value);
+                  set("birthDate", v ? v : undefined);
+                }}
+                onBlur={() => setBirthEditMode(false)}
+                className={inputCls}
+              />
+            ) : (
+              <>
+                <div className={`${inputCls} flex items-center pr-10`}>
+                  {birthDisplayText ? (
+                    <span className="text-zinc-900 dark:text-zinc-50">{birthDisplayText}</span>
+                  ) : (
+                    <span className="text-zinc-400 dark:text-zinc-600">YYYY/MM/DD</span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  aria-label="生年月日を編集"
+                  onClick={() => setBirthEditMode(true)}
+                  className="absolute inset-0 h-full w-full cursor-text rounded-lg"
+                />
+              </>
+            )}
+          </div>
         </label>
         <label className="block text-xs text-zinc-600 dark:text-zinc-400">
           星座（自動）

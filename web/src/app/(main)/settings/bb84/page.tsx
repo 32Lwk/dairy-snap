@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
-const DETERMINISTIC_16 = () => Array.from<number>({ length: 16 }, () => 0);
+const DETERMINISTIC_16 = (): number[] => Array.from({ length: 16 }, () => 0);
 
 /** 教育用の BB84 シミュレーション（量子物理の厳密再現ではありません） */
 export default function Bb84Page() {

@@ -5,39 +5,85 @@ import { useEffect, useState } from "react";
 
 type Ev = { title: string; start: string; end: string; location: string };
 
+function tokyoYmdFromIsoLike(isoLike: string): string {
+  if (!isoLike) return "";
+  // All-day events come as YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(isoLike)) return isoLike;
+  const d = new Date(isoLike);
+  if (Number.isNaN(d.getTime())) return "";
+  return new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  })
+    .format(d)
+    .replaceAll("/", "-");
+}
+
+function tokyoHm(isoLike: string): string {
+  if (!isoLike || /^\d{4}-\d{2}-\d{2}$/.test(isoLike)) return "";
+  const d = new Date(isoLike);
+  if (Number.isNaN(d.getTime())) return "";
+  return new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", hour: "2-digit", minute: "2-digit" }).format(d);
+}
+
+function todayTokyoYmd(): string {
+  return new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  })
+    .format(new Date())
+    .replaceAll("/", "-");
+}
+
 export function UpcomingGoogleEvents() {
   const [events, setEvents] = useState<Ev[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hint, setHint] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  async function load(forceSync: boolean) {
+    try {
+      const today = todayTokyoYmd();
+      const qs = new URLSearchParams();
+      qs.set("from", today);
+      qs.set("to", today);
+      qs.set("limit", "200");
+      if (forceSync) qs.set("forceSync", "1");
+      const res = await fetch(`/api/calendar/events?${qs.toString()}`);
+      const data = (await res.json().catch(() => ({}))) as {
+        events?: Ev[];
+        error?: string;
+        hint?: string;
+      };
+      if (!res.ok) {
+        setError(typeof data.error === "string" ? data.error : "取得に失敗しました");
+        setHint(typeof data.hint === "string" ? data.hint : null);
+        setEvents([]);
+        return;
+      }
+      setError(null);
+      setHint(null);
+      setEvents(Array.isArray(data.events) ? data.events : []);
+    } catch {
+      setError("通信エラー");
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      try {
-        const res = await fetch("/api/calendar/events");
-        const data = (await res.json().catch(() => ({}))) as {
-          events?: Ev[];
-          error?: string;
-          hint?: string;
-        };
-        if (cancelled) return;
-        if (!res.ok) {
-          setError(typeof data.error === "string" ? data.error : "取得に失敗しました");
-          setHint(typeof data.hint === "string" ? data.hint : null);
-          setEvents([]);
-          return;
-        }
-        setEvents(Array.isArray(data.events) ? data.events : []);
-      } catch {
-        if (!cancelled) setError("通信エラー");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+      await load(false);
+      if (!cancelled) setLoading(false);
     })();
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (loading) {
@@ -66,31 +112,74 @@ export function UpcomingGoogleEvents() {
 
   if (!events?.length) {
     return (
-      <section className="mt-8 rounded-2xl border border-zinc-200 bg-zinc-50/50 p-4 text-sm text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400">
-        <h2 className="font-semibold text-zinc-900 dark:text-zinc-100">Google カレンダー（未来30日）</h2>
-        <p className="mt-2">予定はありません（または取得できませんでした）。</p>
+      <section className="mt-4 rounded-xl border border-zinc-200 bg-zinc-50/50 p-3 text-sm text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400">
+        <div className="flex items-baseline justify-between gap-3">
+          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">今日の予定</h2>
+          <span className="text-[11px] text-zinc-500 dark:text-zinc-400">{todayTokyoYmd()}</span>
+        </div>
+        <p className="mt-1 text-sm leading-snug">今日は予定がありません（または取得できませんでした）。</p>
       </section>
     );
   }
 
+  const today = todayTokyoYmd();
+  const todayEvents = events;
+
   return (
-    <section className="mt-8 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
-      <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Google カレンダー（未来30日）</h2>
-      <ul className="mt-3 max-h-64 space-y-2 overflow-y-auto text-sm">
-        {events.slice(0, 20).map((ev, i) => (
-          <li
-            key={`${ev.start}-${i}`}
-            className="rounded-xl border border-zinc-100 bg-zinc-50/80 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/60"
-          >
-            <p className="font-medium text-zinc-900 dark:text-zinc-100">{ev.title || "（無題）"}</p>
-            <p className="text-xs text-zinc-500">
-              {ev.start}
-              {ev.end ? ` — ${ev.end}` : ""}
-              {ev.location ? ` · ${ev.location}` : ""}
-            </p>
-          </li>
-        ))}
-      </ul>
+    <section className="mt-4 rounded-xl border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+      <div className="flex items-baseline justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">今日の予定</h2>
+          <span className="text-[11px] text-zinc-500 dark:text-zinc-400">{today}</span>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setRefreshing(true);
+            void load(true).finally(() => setRefreshing(false));
+          }}
+          className="shrink-0 rounded-md border border-zinc-200 bg-white px-2 py-0.5 text-[11px] font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900"
+          disabled={refreshing}
+        >
+          {refreshing ? "更新中…" : "更新"}
+        </button>
+      </div>
+
+      {!todayEvents.length ? (
+        <p className="mt-2 text-sm leading-snug text-zinc-600 dark:text-zinc-400">今日は予定がありません。</p>
+      ) : (
+        <ul className="mt-2 space-y-1.5 text-sm">
+          {todayEvents.slice(0, 10).map((ev, i) => (
+            <li
+              key={`${ev.start}-${i}`}
+              className="rounded-lg border border-zinc-100 bg-zinc-50/80 px-2.5 py-1.5 dark:border-zinc-800 dark:bg-zinc-900/60"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <p className="min-w-0 flex-1 truncate font-medium text-zinc-900 dark:text-zinc-100">
+                  {ev.title || "（無題）"}
+                </p>
+                <p className="shrink-0 text-[11px] tabular-nums text-zinc-600 dark:text-zinc-300">
+                  {tokyoHm(ev.start) || "終日"}
+                  {ev.end ? `–${tokyoHm(ev.end) || ""}` : ""}
+                </p>
+              </div>
+              {(ev.location || ev.start) && (
+                <p className="mt-0.5 truncate text-[11px] leading-snug text-zinc-500">
+                  {ev.location ? ev.location : " "}
+                </p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <p className="mt-2 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
+        未来の予定は下の月カレンダーに表示します。取得に失敗する場合は{" "}
+        <Link href="/settings" className="font-medium underline">
+          設定で Google を再連携
+        </Link>
+        してください。
+      </p>
     </section>
   );
 }

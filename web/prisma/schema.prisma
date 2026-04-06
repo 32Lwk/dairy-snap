@@ -45,24 +45,26 @@ model User {
   name          String?
   image         String?
 
-  isAllowed Boolean  @default(false)
-  timeZone  String   @default("Asia/Tokyo")
+  isAllowed Boolean @default(false)
+  timeZone  String  @default("Asia/Tokyo")
 
   encryptionMode EncryptionMode @default(STANDARD)
-  settings       Json          @default("{}")
+  settings       Json           @default("{}")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  accounts      Account[]
-  sessions      Session[]
-  dailyEntries  DailyEntry[]
-  usageCounters UsageCounter[]
-  oauthTokens   OAuthToken[]
-  auditLogs     AuditLog[]
-  aiArtifacts   AIArtifact[]
-  memories      MemoryLongTerm[]
-  tags          Tag[]
+  accounts       Account[]
+  sessions       Session[]
+  dailyEntries   DailyEntry[]
+  usageCounters  UsageCounter[]
+  oauthTokens    OAuthToken[]
+  auditLogs      AuditLog[]
+  aiArtifacts    AIArtifact[]
+  memories       MemoryLongTerm[]
+  tags           Tag[]
+  gcalEventCache GoogleCalendarEventCache[]
+  gcalSyncState  GoogleCalendarSyncState[]
 
   @@map("users")
 }
@@ -108,13 +110,13 @@ model VerificationToken {
 }
 
 model DailyEntry {
-  id           String   @id @default(cuid())
+  id           String @id @default(cuid())
   userId       String
   entryDateYmd String
 
-  title   String?
-  mood    String?
-  body    String
+  title String?
+  mood  String?
+  body  String
 
   latitude  Float?
   longitude Float?
@@ -123,18 +125,18 @@ model DailyEntry {
   weatherJson   Json? // Open-Meteoレスポンスの必要部分（MVPは柔軟に）
 
   encryptionMode EncryptionMode @default(STANDARD)
-  encryptionMeta Json          @default("{}")
+  encryptionMeta Json           @default("{}")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  appendEvents  EntryAppendEvent[]
-  images        Image[]
-  entryTags     EntryTag[]
-  chatThreads   ChatThread[]
-  aiArtifacts   AIArtifact[]
-  auditLogs     AuditLog[]
+  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appendEvents EntryAppendEvent[]
+  images       Image[]
+  entryTags    EntryTag[]
+  chatThreads  ChatThread[]
+  aiArtifacts  AIArtifact[]
+  auditLogs    AuditLog[]
 
   @@unique([userId, entryDateYmd])
   @@index([userId, entryDateYmd])
@@ -142,10 +144,10 @@ model DailyEntry {
 }
 
 model EntryAppendEvent {
-  id        String   @id @default(cuid())
-  entryId   String
+  id         String   @id @default(cuid())
+  entryId    String
   occurredAt DateTime
-  fragment  String
+  fragment   String
 
   createdAt DateTime @default(now())
 
@@ -156,7 +158,7 @@ model EntryAppendEvent {
 }
 
 model Image {
-  id      String   @id @default(cuid())
+  id      String    @id @default(cuid())
   entryId String
   kind    ImageKind
 
@@ -182,7 +184,7 @@ model Tag {
   name      String
   createdAt DateTime @default(now())
 
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   entryTags EntryTag[]
 
   @@unique([userId, name])
@@ -200,12 +202,61 @@ model EntryTag {
   @@map("entry_tags")
 }
 
+model GoogleCalendarEventCache {
+  id String @id @default(cuid())
+
+  userId     String
+  calendarId String
+  eventId    String
+
+  title       String
+  location    String
+  description String
+
+  startIso String
+  endIso   String
+  startAt  DateTime
+  endAt    DateTime
+
+  isCancelled   Boolean   @default(false)
+  updatedAtGcal DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, calendarId, eventId])
+  @@index([userId, startAt])
+  @@index([userId, endAt])
+  @@map("google_calendar_event_cache")
+}
+
+model GoogleCalendarSyncState {
+  id String @id @default(cuid())
+
+  userId     String
+  calendarId String
+
+  lastSyncAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, calendarId])
+  @@map("google_calendar_sync_state")
+}
+
 model ChatThread {
-  id      String   @id @default(cuid())
+  id      String  @id @default(cuid())
   entryId String
   title   String?
 
-  /** 会話から抽出した構造化メモ（JSON） */
+  /**
+   * 会話から抽出した構造化メモ（JSON）
+   */
   conversationNotes Json @default("{}")
 
   createdAt DateTime @default(now())
@@ -219,13 +270,13 @@ model ChatThread {
 }
 
 model ChatMessage {
-  id        String   @id @default(cuid())
-  threadId  String
-  role      String
-  content   String
+  id       String @id @default(cuid())
+  threadId String
+  role     String
+  content  String
 
-  model      String?
-  latencyMs  Int?
+  model         String?
+  latencyMs     Int?
   tokenEstimate Int?
 
   createdAt DateTime @default(now())
@@ -237,22 +288,22 @@ model ChatMessage {
 }
 
 model AIArtifact {
-  id        String   @id @default(cuid())
-  userId    String
-  entryId   String?
-  kind      ArtifactKind
+  id            String       @id @default(cuid())
+  userId        String
+  entryId       String?
+  kind          ArtifactKind
   promptVersion String?
 
-  model     String?
-  latencyMs Int?
+  model         String?
+  latencyMs     Int?
   tokenEstimate Int?
-  cacheKey  String?
-  cacheHit  Boolean @default(false)
+  cacheKey      String?
+  cacheHit      Boolean @default(false)
 
-  metadata Json @default("{}")
+  metadata  Json     @default("{}")
   createdAt DateTime @default(now())
 
-  user  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   entry DailyEntry? @relation(fields: [entryId], references: [id], onDelete: SetNull)
 
   @@index([userId, createdAt])
@@ -260,16 +311,16 @@ model AIArtifact {
 }
 
 model AuditLog {
-  id        String   @id @default(cuid())
-  userId    String
-  entryId   String?
+  id      String  @id @default(cuid())
+  userId  String
+  entryId String?
 
-  action    String
-  metadata  Json @default("{}")
+  action   String
+  metadata Json   @default("{}")
 
   createdAt DateTime @default(now())
 
-  user  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   entry DailyEntry? @relation(fields: [entryId], references: [id], onDelete: SetNull)
 
   @@index([userId, createdAt])
@@ -277,12 +328,12 @@ model AuditLog {
 }
 
 model OAuthToken {
-  id      String  @id @default(cuid())
-  userId  String
+  id       String @id @default(cuid())
+  userId   String
   provider String
 
   tokenCiphertext String
-  tokenMeta       Json @default("{}")
+  tokenMeta       Json   @default("{}")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -294,12 +345,12 @@ model OAuthToken {
 }
 
 model MemoryLongTerm {
-  id        String   @id @default(cuid())
-  userId    String
+  id            String  @id @default(cuid())
+  userId        String
   sourceEntryId String?
 
-  bullets   Json // 箇条書き（抽象化）
-  attributes Json @default("{}")
+  bullets     Json // 箇条書き（抽象化）
+  attributes  Json  @default("{}")
   impactScore Float @default(0)
 
   createdAt DateTime @default(now())
@@ -311,14 +362,14 @@ model MemoryLongTerm {
 }
 
 model Embedding {
-  id        String   @id @default(cuid())
-  userId    String
+  id         String @id @default(cuid())
+  userId     String
   targetType String
   targetId   String
 
-  model     String
+  model      String
   dimensions Int
-  vector    Unsupported("vector")
+  vector     Unsupported("vector")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -328,13 +379,13 @@ model Embedding {
 }
 
 model UsageCounter {
-  id     String  @id @default(cuid())
-  userId String
+  id      String @id @default(cuid())
+  userId  String
   dateYmd String
 
-  chatMessages Int @default(0)
+  chatMessages     Int @default(0)
   imageGenerations Int @default(0)
-  dailySummaries Int @default(0)
+  dailySummaries   Int @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

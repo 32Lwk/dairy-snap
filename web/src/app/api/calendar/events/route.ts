@@ -5,11 +5,23 @@ import { fetchCalendarEventsForUser } from "@/server/calendar";
 export const runtime = "nodejs";
 
 /** 未来30日の予定（タイトル・開始/終了・場所・説明） */
-export async function GET() {
+export async function GET(req: Request) {
   const session = await requireSession();
   if ("response" in session) return session.response;
 
-  const result = await fetchCalendarEventsForUser(session.user.id);
+  const url = new URL(req.url);
+  const forceSync = url.searchParams.get("forceSync") === "1";
+  const from = url.searchParams.get("from");
+  const to = url.searchParams.get("to");
+  const limitRaw = url.searchParams.get("limit");
+  const limit = limitRaw && /^\d+$/.test(limitRaw) ? Number(limitRaw) : undefined;
+
+  const result = await fetchCalendarEventsForUser(session.user.id, {
+    forceSync,
+    fromYmd: from ?? undefined,
+    toYmd: to ?? undefined,
+    limit,
+  });
   if (!result.ok) {
     const detail = result.detail ?? result.reason;
     if (result.reason === "oauth_not_configured") {
