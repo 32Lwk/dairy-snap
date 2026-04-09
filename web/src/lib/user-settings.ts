@@ -74,6 +74,51 @@ export type UserProfileSettings = {
    * 職業・暮らしウィザードの回答スナップショット（`st_timetable_note` は含めない。studentTimetable を参照）
    */
   workLifeAnswers?: Record<string, string>;
+
+  /**
+   * 開口メッセージの話題優先順位・分類ルール（任意）。
+   * Googleカレンダー予定をどのカテゴリとして扱うかの重み付けに使う。
+   */
+  calendarOpening?: CalendarOpeningSettings;
+
+  /**
+   * AIの誤推測をユーザーが訂正したメモ（短い箇条書き）。
+   * 「たぶん〜」のような推測を訂正されたら追加し、次回以降の会話で参照する。
+   */
+  aiCorrections?: string[];
+};
+
+export type CalendarOpeningCategory =
+  | "job_hunt"
+  | "parttime"
+  | "date"
+  | "school"
+  | "health"
+  | "family"
+  | "hobby"
+  | "other";
+
+export type CalendarOpeningRuleKind =
+  | "keyword"
+  | "calendarId"
+  | "colorId"
+  | "location"
+  | "description";
+
+export type CalendarOpeningRule = {
+  kind: CalendarOpeningRuleKind;
+  /** kindに応じた一致キー（部分一致/正規表現は当面なし） */
+  value: string;
+  category: CalendarOpeningCategory;
+  /** -20..+20 程度（任意。未指定は +5） */
+  weight?: number;
+};
+
+export type CalendarOpeningSettings = {
+  /** 優先順位（並べ替え）。未設定ならデフォルト順を使う */
+  priorityOrder?: CalendarOpeningCategory[];
+  /** 追加ルール */
+  rules?: CalendarOpeningRule[];
 };
 
 export type AppUserSettings = {
@@ -127,6 +172,71 @@ function parseWorkLifeAnswers(raw: unknown): Record<string, string> | undefined 
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+function parseCalendarOpening(raw: unknown): CalendarOpeningSettings | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  const allowedCat = new Set<CalendarOpeningCategory>([
+    "job_hunt",
+    "parttime",
+    "date",
+    "school",
+    "health",
+    "family",
+    "hobby",
+    "other",
+  ]);
+  const allowedKind = new Set<CalendarOpeningRuleKind>([
+    "keyword",
+    "calendarId",
+    "colorId",
+    "location",
+    "description",
+  ]);
+
+  let priorityOrder: CalendarOpeningCategory[] | undefined;
+  if (Array.isArray(o.priorityOrder)) {
+    const po = o.priorityOrder
+      .filter((x): x is CalendarOpeningCategory => typeof x === "string" && allowedCat.has(x as CalendarOpeningCategory))
+      .slice(0, 16);
+    if (po.length) {
+      // 重複排除（順序維持）
+      priorityOrder = Array.from(new Set(po));
+    }
+  }
+
+  let rules: CalendarOpeningRule[] | undefined;
+  if (Array.isArray(o.rules)) {
+    const out: CalendarOpeningRule[] = [];
+    for (const r of o.rules) {
+      if (!r || typeof r !== "object" || Array.isArray(r)) continue;
+      const rr = r as Record<string, unknown>;
+      const kind = typeof rr.kind === "string" ? rr.kind : "";
+      const value = typeof rr.value === "string" ? rr.value.trim() : "";
+      const category = typeof rr.category === "string" ? rr.category : "";
+      const weightRaw = rr.weight;
+      const weight =
+        typeof weightRaw === "number" ? weightRaw : typeof weightRaw === "string" ? Number(weightRaw) : undefined;
+      if (!allowedKind.has(kind as CalendarOpeningRuleKind)) continue;
+      if (!allowedCat.has(category as CalendarOpeningCategory)) continue;
+      if (!value || value.length > 120) continue;
+      const w = Number.isFinite(weight ?? NaN) ? Math.max(-50, Math.min(50, Number(weight))) : undefined;
+      out.push({
+        kind: kind as CalendarOpeningRuleKind,
+        value,
+        category: category as CalendarOpeningCategory,
+        ...(w !== undefined ? { weight: w } : {}),
+      });
+      if (out.length >= 120) break;
+    }
+    if (out.length) rules = out;
+  }
+
+  const out: CalendarOpeningSettings = {};
+  if (priorityOrder?.length) out.priorityOrder = priorityOrder;
+  if (rules?.length) out.rules = rules;
+  return Object.keys(out).length ? out : undefined;
+}
+
 function parseProfile(raw: unknown): UserProfileSettings | undefined {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return undefined;
@@ -165,6 +275,8 @@ function parseProfile(raw: unknown): UserProfileSettings | undefined {
       ? studentTimetableRaw
       : undefined;
   const workLifeAnswers = parseWorkLifeAnswers(o.workLifeAnswers);
+  const calendarOpening = parseCalendarOpening(o.calendarOpening);
+  const aiCorrections = parseProfileStringArray(o.aiCorrections, 200, 60);
 
   if (nickname) out.nickname = nickname;
   if (birthDate) out.birthDate = birthDate;
@@ -193,6 +305,8 @@ function parseProfile(raw: unknown): UserProfileSettings | undefined {
   if (aiCurrentFocus) out.aiCurrentFocus = aiCurrentFocus;
   if (studentTimetable) out.studentTimetable = studentTimetable;
   if (workLifeAnswers) out.workLifeAnswers = workLifeAnswers;
+  if (calendarOpening) out.calendarOpening = calendarOpening;
+  if (aiCorrections) out.aiCorrections = aiCorrections;
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
@@ -409,6 +523,9 @@ export function formatUserProfileForPrompt(profile: UserProfileSettings | undefi
   const pickBlock = formatInterestPicksForPrompt(profile.interestPicks);
   if (pickBlock) lines.push(`- 関心タグ（選択）:\n${pickBlock}`);
   if (profile.preferences) lines.push(`- メモ: ${profile.preferences}`);
+  if (profile.aiCorrections?.length) {
+    lines.push(`- 訂正メモ（ユーザーの指摘。断定せず配慮）:\n${profile.aiCorrections.map((x) => `  - ${x}`).join("\n")}`);
+  }
   lines.push(...formatAgentPersonaForPrompt(profile));
   return lines.length > 0 ? lines.join("\n") : "（未登録）";
 }

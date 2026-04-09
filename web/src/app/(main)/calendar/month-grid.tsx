@@ -4,7 +4,28 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 type EntryBrief = { entryDateYmd: string; title: string | null };
-type Ev = { title: string; start: string; end: string; location: string };
+type Ev = {
+  title: string;
+  start: string;
+  end: string;
+  location: string;
+  calendarName?: string;
+  colorId?: string;
+};
+
+const GCAL_COLOR: Record<string, string> = {
+  "1": "#a4bdfc",
+  "2": "#7ae7bf",
+  "3": "#dbadff",
+  "4": "#ff887c",
+  "5": "#fbd75b",
+  "6": "#ffb878",
+  "7": "#46d6db",
+  "8": "#e1e1e1",
+  "9": "#5484ed",
+  "10": "#51b749",
+  "11": "#dc2127",
+};
 
 // 月切替を速くするための軽量キャッシュ（タブ内・リロードで消える）
 const monthEventsCache = new Map<string, Ev[]>();
@@ -79,6 +100,7 @@ export function MonthGrid({
   daysInMonth,
   entries,
   initialEvents,
+  filter,
 }: {
   ym: string;
   prevYm: string;
@@ -87,6 +109,7 @@ export function MonthGrid({
   daysInMonth: number;
   entries: EntryBrief[];
   initialEvents: Ev[];
+  filter?: { apply: (ev: Ev) => boolean; infer: (ev: Ev) => string };
 }) {
   const [events, setEvents] = useState<Ev[] | null>(() => initialEvents ?? null);
 
@@ -116,9 +139,14 @@ export function MonthGrid({
     return m;
   }, [entries]);
 
+  const visibleEvents = useMemo(() => {
+    const evs = events ?? [];
+    return filter ? evs.filter((e) => filter.apply(e)) : evs;
+  }, [events, filter]);
+
   const eventsByYmd = useMemo(() => {
     const map = new Map<string, { list: Ev[]; seen: Set<string> }>();
-    for (const ev of events ?? []) {
+    for (const ev of visibleEvents) {
       const ymd = tokyoYmdFromIsoLike(ev.start);
       if (!ymd) continue;
       const key = `${ev.start}|${ev.end}|${ev.title}|${ev.location}`;
@@ -142,7 +170,7 @@ export function MonthGrid({
       );
     }
     return out;
-  }, [events]);
+  }, [visibleEvents]);
 
   const [yy, mm] = ym.split("-").map(Number);
   const today = todayTokyoYmd();
@@ -226,7 +254,11 @@ export function MonthGrid({
                     <ul className="space-y-0.5 text-[11px] leading-snug text-zinc-600 dark:text-zinc-300">
                       {evs.slice(0, 2).map((e, idx) => (
                         <li key={`${ymd}-ev-${idx}`} className="flex items-start gap-1.5">
-                          <span className="mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                          <span
+                            className="mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full"
+                            style={{ backgroundColor: GCAL_COLOR[e.colorId ?? ""] ?? "#10b981" }}
+                            aria-hidden="true"
+                          />
                           <span className="min-w-0 flex-1 truncate">{e.title || "（無題）"}</span>
                         </li>
                       ))}

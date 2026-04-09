@@ -2,6 +2,10 @@ import { google, calendar_v3 } from "googleapis";
 import { prisma } from "@/server/db";
 
 export type CalendarEventBrief = {
+  calendarId: string;
+  calendarName: string;
+  /** Googleの colorId（イベント色があれば優先、なければカレンダー色） */
+  colorId: string;
   title: string;
   start: string;
   end: string;
@@ -25,8 +29,13 @@ const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
 
 type GoogleCalEvent = calendar_v3.Schema$Event;
 
-function toBrief(ev: GoogleCalEvent): CalendarEventBrief {
+function toBrief(ev: GoogleCalEvent, meta: { calendarId: string; calendarName: string; calendarColorId: string }): CalendarEventBrief {
+  const eventColorId = ev.colorId ?? "";
+  const colorId = eventColorId || meta.calendarColorId || "";
   return {
+    calendarId: meta.calendarId,
+    calendarName: meta.calendarName,
+    colorId,
     title: ev.summary ?? "",
     start: ev.start?.dateTime ?? ev.start?.date ?? "",
     end: ev.end?.dateTime ?? ev.end?.date ?? "",
@@ -35,8 +44,10 @@ function toBrief(ev: GoogleCalEvent): CalendarEventBrief {
   };
 }
 
-async function listReadableCalendarIds(cal: ReturnType<typeof google.calendar>): Promise<string[]> {
-  const ids: string[] = [];
+async function listReadableCalendars(cal: ReturnType<typeof google.calendar>): Promise<
+  { id: string; name: string; colorId: string }[]
+> {
+  const items: { id: string; name: string; colorId: string }[] = [];
   let pageToken: string | undefined;
   for (let i = 0; i < 5; i++) {
     const res = await cal.calendarList.list({
@@ -49,17 +60,25 @@ async function listReadableCalendarIds(cal: ReturnType<typeof google.calendar>):
       if (!item.id) continue;
       // 共有や購読（webcal/iCal）もここに入る。無効/削除済みは除外。
       if (item.deleted) continue;
-      ids.push(item.id);
+      items.push({
+        id: item.id,
+        name: item.summary ?? item.id,
+        colorId: item.colorId ?? "",
+      });
     }
     pageToken = res.data.nextPageToken ?? undefined;
     if (!pageToken) break;
   }
   // primary を先頭にして、重複排除
-  const uniq = Array.from(new Set(ids));
-  const primaryIdx = uniq.indexOf("primary");
+  const byId = new Map<string, { id: string; name: string; colorId: string }>();
+  for (const it of items) {
+    if (!byId.has(it.id)) byId.set(it.id, it);
+  }
+  const uniq = Array.from(byId.values());
+  const primaryIdx = uniq.findIndex((x) => x.id === "primary");
   if (primaryIdx > 0) {
-    uniq.splice(primaryIdx, 1);
-    uniq.unshift("primary");
+    const [p] = uniq.splice(primaryIdx, 1);
+    uniq.unshift(p);
   }
   return uniq;
 }
@@ -100,7 +119,9 @@ async function syncGoogleCalendarCache(
   opts?: { forceSync?: boolean; minIntervalMs?: number },
 ) {
   const { timeMin, timeMax } = computeRange();
-  const calendarIds = await listReadableCalendarIds(cal);
+  const calendars = await listReadableCalendars(cal);
+  const calendarIds = calendars.map((c) => c.id);
+  const calMetaById = new Map(calendars.map((c) => [c.id, c] as const));
   const now = new Date();
   const forceSync = Boolean(opts?.forceSync);
   const minIntervalMs = opts?.minIntervalMs ?? 5 * 60 * 1000;
@@ -113,6 +134,7 @@ async function syncGoogleCalendarCache(
   const lastSyncById = new Map(states.map((s) => [s.calendarId, s.lastSyncAt ?? null]));
 
   for (const calendarId of calendarIds) {
+    const meta = calMetaById.get(calendarId) ?? { id: calendarId, name: calendarId, colorId: "" };
     const lastSyncAt = lastSyncById.get(calendarId) ?? null;
     if (!forceSync && lastSyncAt && now.getTime() - lastSyncAt.getTime() < minIntervalMs) {
       continue;
@@ -137,13 +159,16 @@ async function syncGoogleCalendarCache(
 
         for (const ev of res.data.items ?? []) {
           if (!ev.id) continue;
-          const brief = toBrief(ev);
+          const brief = toBrief(ev, { calendarId, calendarName: meta.name, calendarColorId: meta.colorId });
           const startIso = brief.start;
           const endIso = brief.end || brief.start;
           if (!startIso) continue;
 
           const isCancelled = ev.status === "cancelled";
           const updatedAtGcal = ev.updated ? new Date(ev.updated) : null;
+          const calendarName = meta.name;
+          const calendarColorId = meta.colorId || "";
+          const eventColorId = ev.colorId ?? "";
 
           await prisma.googleCalendarEventCache.upsert({
             where: { userId_calendarId_eventId: { userId, calendarId, eventId: ev.id } },
@@ -151,6 +176,9 @@ async function syncGoogleCalendarCache(
               userId,
               calendarId,
               eventId: ev.id,
+              calendarName,
+              calendarColorId: calendarColorId || undefined,
+              eventColorId: eventColorId || undefined,
               title: brief.title,
               location: brief.location,
               description: brief.description,
@@ -162,6 +190,9 @@ async function syncGoogleCalendarCache(
               updatedAtGcal: updatedAtGcal ?? undefined,
             },
             update: {
+              calendarName,
+              calendarColorId: calendarColorId || undefined,
+              eventColorId: eventColorId || undefined,
               title: brief.title,
               location: brief.location,
               description: brief.description,
@@ -281,11 +312,30 @@ export async function fetchCalendarEventsForUser(
       },
       orderBy: { startAt: "asc" },
       take: limit,
-      select: { title: true, startIso: true, endIso: true, location: true, description: true },
+      select: {
+        calendarId: true,
+        calendarName: true,
+        calendarColorId: true,
+        eventColorId: true,
+        title: true,
+        startIso: true,
+        endIso: true,
+        location: true,
+        description: true,
+      },
     });
 
     const events: CalendarEventBrief[] = rows
-      .map((r) => ({ title: r.title, start: r.startIso, end: r.endIso, location: r.location, description: r.description }))
+      .map((r) => ({
+        calendarId: r.calendarId,
+        calendarName: r.calendarName ?? r.calendarId,
+        colorId: r.eventColorId ?? r.calendarColorId ?? "",
+        title: r.title,
+        start: r.startIso,
+        end: r.endIso,
+        location: r.location,
+        description: r.description,
+      }))
       .filter((e) => e.start)
       .sort((a, b) => sortKeyIso(a.start) - sortKeyIso(b.start));
 
@@ -365,32 +415,48 @@ export async function fetchCalendarEventsForDay(
 
   try {
     const cal = google.calendar({ version: "v3", auth: oauth2 });
-    const timeMin = `${dayYmd}T00:00:00+09:00`;
-    const timeMax = `${dayYmd}T23:59:59.999+09:00`;
+    // 当日分もキャッシュ同期対象に含まれるよう、まず同期（差分）
+    await syncGoogleCalendarCache(userId, cal, { forceSync: false, minIntervalMs: 5 * 60 * 1000 });
 
-    const calendarIds = await listReadableCalendarIds(cal).catch(() => ["primary"]);
-    const limitedIds = calendarIds.slice(0, 12);
+    const dayStart = tokyoStartOfDay(dayYmd);
+    const dayEnd = tokyoEndOfDay(dayYmd);
 
-    const items = await Promise.all(
-      limitedIds.map(async (calendarId) => {
-        const res = await cal.events.list({
-          calendarId,
-          timeMin: new Date(timeMin).toISOString(),
-          timeMax: new Date(timeMax).toISOString(),
-          singleEvents: true,
-          orderBy: "startTime",
-          maxResults: 50,
-        });
-        return res.data.items ?? [];
-      }),
-    );
+    // 「当日に重なる」: startAt <= dayEnd && endAt >= dayStart
+    const rows = await prisma.googleCalendarEventCache.findMany({
+      where: {
+        userId,
+        isCancelled: false,
+        startAt: { lte: dayEnd },
+        endAt: { gte: dayStart },
+      },
+      orderBy: { startAt: "asc" },
+      take: 50,
+      select: {
+        calendarId: true,
+        calendarName: true,
+        calendarColorId: true,
+        eventColorId: true,
+        title: true,
+        startIso: true,
+        endIso: true,
+        location: true,
+        description: true,
+      },
+    });
 
-    const events: CalendarEventBrief[] = items
-      .flat()
-      .map(toBrief)
+    const events: CalendarEventBrief[] = rows
+      .map((r) => ({
+        calendarId: r.calendarId,
+        calendarName: r.calendarName ?? r.calendarId,
+        colorId: r.eventColorId ?? r.calendarColorId ?? "",
+        title: r.title,
+        start: r.startIso,
+        end: r.endIso,
+        location: r.location,
+        description: r.description,
+      }))
       .filter((e) => e.start)
-      .sort((a, b) => sortKeyIso(a.start) - sortKeyIso(b.start))
-      .slice(0, 50);
+      .sort((a, b) => sortKeyIso(a.start) - sortKeyIso(b.start));
 
     return { ok: true, events };
   } catch (e) {

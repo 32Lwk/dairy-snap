@@ -3,7 +3,28 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-type Ev = { title: string; start: string; end: string; location: string };
+type Ev = {
+  title: string;
+  start: string;
+  end: string;
+  location: string;
+  calendarName?: string;
+  colorId?: string;
+};
+
+const GCAL_COLOR: Record<string, string> = {
+  "1": "#a4bdfc",
+  "2": "#7ae7bf",
+  "3": "#dbadff",
+  "4": "#ff887c",
+  "5": "#fbd75b",
+  "6": "#ffb878",
+  "7": "#46d6db",
+  "8": "#e1e1e1",
+  "9": "#5484ed",
+  "10": "#51b749",
+  "11": "#dc2127",
+};
 
 function tokyoYmdFromIsoLike(isoLike: string): string {
   if (!isoLike) return "";
@@ -39,7 +60,11 @@ function todayTokyoYmd(): string {
     .replaceAll("/", "-");
 }
 
-export function UpcomingGoogleEvents() {
+export function UpcomingGoogleEvents({
+  filter,
+}: {
+  filter?: { apply: (ev: Ev) => boolean; infer: (ev: Ev) => string };
+}) {
   const [events, setEvents] = useState<Ev[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hint, setHint] = useState<string | null>(null);
@@ -123,7 +148,7 @@ export function UpcomingGoogleEvents() {
   }
 
   const today = todayTokyoYmd();
-  const todayEvents = events;
+  const todayEvents = (events ?? []).filter((e) => (filter ? filter.apply(e) : true));
 
   return (
     <section className="mt-4 rounded-xl border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
@@ -145,7 +170,7 @@ export function UpcomingGoogleEvents() {
         </button>
       </div>
 
-      {!todayEvents.length ? (
+        {!todayEvents.length ? (
         <p className="mt-2 text-sm leading-snug text-zinc-600 dark:text-zinc-400">今日は予定がありません。</p>
       ) : (
         <ul className="mt-2 space-y-1.5 text-sm">
@@ -155,9 +180,22 @@ export function UpcomingGoogleEvents() {
               className="rounded-lg border border-zinc-100 bg-zinc-50/80 px-2.5 py-1.5 dark:border-zinc-800 dark:bg-zinc-900/60"
             >
               <div className="flex items-start justify-between gap-3">
-                <p className="min-w-0 flex-1 truncate font-medium text-zinc-900 dark:text-zinc-100">
-                  {ev.title || "（無題）"}
-                </p>
+                <div className="min-w-0 flex-1">
+                  <p className="flex min-w-0 items-center gap-2 truncate font-medium text-zinc-900 dark:text-zinc-100">
+                    <span
+                      className="h-2.5 w-2.5 shrink-0 rounded-full"
+                      style={{ backgroundColor: GCAL_COLOR[ev.colorId ?? ""] ?? "#10b981" }}
+                      aria-hidden="true"
+                    />
+                    <span className="min-w-0 truncate">{ev.title || "（無題）"}</span>
+                  </p>
+                  {ev.calendarName ? (
+                      <p className="mt-0.5 truncate text-[11px] text-zinc-500 dark:text-zinc-400">
+                        {ev.calendarName}
+                        {filter ? ` · ${filter.infer(ev)}` : ""}
+                      </p>
+                  ) : null}
+                </div>
                 <p className="shrink-0 text-[11px] tabular-nums text-zinc-600 dark:text-zinc-300">
                   {tokyoHm(ev.start) || "終日"}
                   {ev.end ? `–${tokyoHm(ev.end) || ""}` : ""}

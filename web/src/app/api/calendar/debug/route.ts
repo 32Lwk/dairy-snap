@@ -33,7 +33,16 @@ export async function GET(req: Request) {
       where: { ...where, isCancelled: false },
       orderBy: { startAt: "asc" },
       take: 10,
-      select: { calendarId: true, eventId: true, title: true, startIso: true, startAt: true },
+      select: {
+        calendarId: true,
+        calendarName: true,
+        calendarColorId: true,
+        eventColorId: true,
+        eventId: true,
+        title: true,
+        startIso: true,
+        startAt: true,
+      },
     }),
   ]);
 

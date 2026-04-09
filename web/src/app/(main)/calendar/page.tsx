@@ -2,8 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getResolvedAuthUser } from "@/lib/server/resolved-auth-user";
 import { prisma } from "@/server/db";
-import { UpcomingGoogleEvents } from "./upcoming-google-events";
-import { MonthGrid } from "./month-grid";
+import { CalendarClient } from "./calendar-client";
 
 function monthRange(ym: string): { from: string; to: string } {
   const [y, m] = ym.split("-").map(Number);
@@ -45,7 +44,16 @@ export default async function CalendarPage({
     },
     orderBy: { startAt: "asc" },
     take: 5000,
-    select: { title: true, startIso: true, endIso: true, location: true },
+    select: {
+      title: true,
+      startIso: true,
+      endIso: true,
+      location: true,
+      calendarName: true,
+      calendarColorId: true,
+      eventColorId: true,
+      calendarId: true,
+    },
   });
 
   const [yy, mm] = ym.split("-").map(Number);
@@ -63,16 +71,22 @@ export default async function CalendarPage({
         <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-50">カレンダー</h1>
       </header>
 
-      <UpcomingGoogleEvents />
-
-      <MonthGrid
+      <CalendarClient
         ym={ym}
         prevYm={prevYm}
         nextYm={nextYm}
         firstDow={firstDow}
         daysInMonth={daysInMonth}
         entries={entries}
-        initialEvents={initialEvents.map((e) => ({ title: e.title, start: e.startIso, end: e.endIso, location: e.location }))}
+        initialEvents={initialEvents.map((e) => ({
+          title: e.title,
+          start: e.startIso,
+          end: e.endIso,
+          location: e.location,
+          calendarName: e.calendarName ?? e.calendarId,
+          colorId: e.eventColorId ?? e.calendarColorId ?? "",
+          calendarId: e.calendarId,
+        }))}
       />
     </div>
   );

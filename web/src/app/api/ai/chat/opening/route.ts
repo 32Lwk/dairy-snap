@@ -15,7 +15,7 @@ const bodySchema = z.object({
 });
 
 const OPENING_USER_SIGNAL =
-  "（会話はまだ始まっていません。あなたから、今日の振り返りの最初の一言を日本語で短く送ってください。ユーザーのプライバシーに配慮し、断定は避け、共感や軽い質問を1つ含めてもよいです。）";
+  "（会話はまだ始まっていません。あなたから、今日の振り返りの最初の一言を日本語で短く送ってください。ユーザーのプライバシーに配慮し、断定は避けてください。参照コンテキストに『対象日の Google カレンダー予定』または『推奨トピック（自動・開口用）』がある場合は、それに触れたうえで質問を1つ入れてください。予定がない場合は一般的な振り返り質問で構いません。）";
 
 export async function POST(req: NextRequest) {
   const session = await requireSession();
@@ -62,6 +62,8 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  const openingVariant = Math.random() < 0.5 ? ("control" as const) : ("weighted" as const);
+
   const baseSystem = loadPromptFile("reflective-chat");
   const extraContext = await buildReflectiveChatContext({
     userId: session.user.id,
@@ -69,6 +71,7 @@ export async function POST(req: NextRequest) {
     entryDateYmd: entry.entryDateYmd,
     encryptionMode: entry.encryptionMode,
     currentBody: entry.body,
+    openingVariant,
   });
   const system = `${baseSystem}\n\n${extraContext}\n\n## 会話開始モード\nユーザーはまだメッセージを送っていません。上記の「会話開始シグナル」に応じて、あなたから最初の発話のみを行ってください。`;
 
@@ -122,6 +125,7 @@ export async function POST(req: NextRequest) {
               model: "gpt-4o-mini",
               latencyMs,
               promptVersion: PROMPT_VERSIONS.reflective_chat,
+              openingVariant,
             },
           },
         });
@@ -139,6 +143,7 @@ export async function POST(req: NextRequest) {
               threadId: thread!.id,
               opening: true,
               assistantMessageId: assistant.id,
+              openingVariant,
             },
           },
         });

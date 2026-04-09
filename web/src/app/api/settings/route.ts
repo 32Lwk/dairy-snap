@@ -73,6 +73,25 @@ const profilePatchSchema = z
       .refine((o) => o == null || Object.keys(o).length <= 80, {
         message: "workLifeAnswers のキー数が多すぎます",
       }),
+    /** 開口トピックの分類・優先順位 */
+    calendarOpening: z
+      .object({
+        priorityOrder: z.array(z.string().max(32)).max(16).optional(),
+        rules: z
+          .array(
+            z.object({
+              kind: z.string().max(32),
+              value: z.string().max(120),
+              category: z.string().max(32),
+              weight: z.number().min(-50).max(50).optional(),
+            }),
+          )
+          .max(120)
+          .optional(),
+      })
+      .optional(),
+    /** AIの誤推測の訂正（短い箇条書き） */
+    aiCorrections: z.array(z.string().max(200)).max(60).optional(),
   })
   .strict();
 

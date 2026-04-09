@@ -209,6 +209,13 @@ model GoogleCalendarEventCache {
   calendarId String
   eventId    String
 
+  /** UI用: カレンダー名（取得できた場合） */
+  calendarName String?
+  /** カレンダー色（calendarList.colorId。取得できた場合） */
+  calendarColorId String?
+  /** イベント色（event.colorId。設定されている場合） */
+  eventColorId String?
+
   title       String
   location    String
   description String
