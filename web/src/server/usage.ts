@@ -42,3 +42,12 @@ export async function incrementDailySummary(userId: string) {
     update: { dailySummaries: { increment: 1 } },
   });
 }
+
+export async function incrementOrchestratorCalls(userId: string) {
+  const dateYmd = formatYmdTokyo();
+  return prisma.usageCounter.upsert({
+    where: { userId_dateYmd: { userId, dateYmd } },
+    create: { userId, dateYmd, orchestratorCalls: 1 },
+    update: { orchestratorCalls: { increment: 1 } },
+  });
+}
