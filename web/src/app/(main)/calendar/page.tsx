@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getResolvedAuthUser } from "@/lib/server/resolved-auth-user";
 import { prisma } from "@/server/db";
@@ -57,7 +56,7 @@ export default async function CalendarPage({
   });
 
   const [yy, mm] = ym.split("-").map(Number);
-  const firstDow = new Date(yy, mm - 1, 1).getDay();
+  const monthStartWeekday = new Date(yy, mm - 1, 1).getDay();
   const daysInMonth = new Date(yy, mm, 0).getDate();
 
   const prev = new Date(yy, mm - 2, 1);
@@ -67,15 +66,11 @@ export default async function CalendarPage({
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-6">
-      <header className="mb-6">
-        <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-50">カレンダー</h1>
-      </header>
-
       <CalendarClient
         ym={ym}
         prevYm={prevYm}
         nextYm={nextYm}
-        firstDow={firstDow}
+        monthStartWeekday={monthStartWeekday}
         daysInMonth={daysInMonth}
         entries={entries}
         initialEvents={initialEvents.map((e) => ({

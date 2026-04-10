@@ -3,6 +3,7 @@ import { formatYmdTokyo } from "@/lib/time/tokyo";
 import { parseUserSettings } from "@/lib/user-settings";
 import { getResolvedAuthUser } from "@/lib/server/resolved-auth-user";
 import { prisma } from "@/server/db";
+import { upsertDailyEntryForTodayPage } from "@/server/ensure-daily-entry";
 import { redirect } from "next/navigation";
 import { EntryChat } from "../entries/[date]/entry-chat";
 import { TodayAppendForm } from "./today-append-form";
@@ -18,24 +19,7 @@ export default async function TodayPage() {
       where: { id: r.user.id },
       select: { settings: true },
     }),
-    prisma.dailyEntry.upsert({
-      where: {
-        userId_entryDateYmd: { userId: r.user.id, entryDateYmd: ymd },
-      },
-      create: {
-        userId: r.user.id,
-        entryDateYmd: ymd,
-        body: "",
-      },
-      update: {},
-      include: {
-        chatThreads: {
-          orderBy: { updatedAt: "desc" },
-          take: 1,
-          include: { messages: { orderBy: { createdAt: "asc" } } },
-        },
-      },
-    }),
+    upsertDailyEntryForTodayPage(r.user.id, ymd),
   ]);
 
   const prof = parseUserSettings(userSettingsRow?.settings ?? {}).profile;

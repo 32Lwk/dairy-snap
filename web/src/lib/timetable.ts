@@ -17,11 +17,18 @@ export type TimetablePattern = {
   cells: Record<string, string>;
 };
 
+/** YYYY-MM-DD（`<input type="date">` と一致） */
+export type TimetableValidityDate = string;
+
 /** 保存形式 v2 */
 export type TimetableBundle = {
   v: 2;
   /** 学期・年度など（全パターン共通メモ） */
   scenarioLabel?: string;
+  /** この時間割が有効な期間の開始日（任意・含む） */
+  validFrom?: TimetableValidityDate;
+  /** この時間割が有効な期間の終了日（任意・含む） */
+  validTo?: TimetableValidityDate;
   patterns: TimetablePattern[];
   activePatternIndex: number;
 };
@@ -36,6 +43,100 @@ const EXTRA_DAY_LABELS = ["土", "日"] as const;
 
 const MAX_PERIODS = 10;
 const DEFAULT_PERIOD_COUNT = 5;
+
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function parseStoredValidityDate(raw: unknown): TimetableValidityDate | undefined {
+  if (typeof raw !== "string" || !ISO_DATE_RE.test(raw)) return undefined;
+  const [y, m, d] = raw.split("-").map((x) => Number.parseInt(x, 10));
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return undefined;
+  if (m < 1 || m > 12 || d < 1 || d > 31) return undefined;
+  return raw;
+}
+
+/** 表示用: 有効期間の1行（未設定なら undefined） */
+export function formatTimetableValidityLabel(bundle: TimetableBundle): string | undefined {
+  const from = bundle.validFrom?.trim();
+  const to = bundle.validTo?.trim();
+  if (!from && !to) return undefined;
+  if (from && to) return `${from} 〜 ${to}`;
+  if (from) return `${from} 〜`;
+  return `〜 ${to}`;
+}
+
+/** 日=0 … 土=6（`Date#getUTCDay` と同じ並び） */
+const TOKYO_WEEKDAY_JA = ["日", "月", "火", "水", "木", "金", "土"] as const;
+
+const WEEKDAY_LONG_JA: Record<string, string> = {
+  日: "日曜日",
+  月: "月曜日",
+  火: "火曜日",
+  水: "水曜日",
+  木: "木曜日",
+  金: "金曜日",
+  土: "土曜日",
+};
+
+const JA_WEEK_HEAD = new Set<string>([...TOKYO_WEEKDAY_JA]);
+
+const EN_WEEK_KEYS: Record<string, string[]> = {
+  日: ["sun", "sunday"],
+  月: ["mon", "monday"],
+  火: ["tue", "tues", "tuesday"],
+  水: ["wed", "wednesday"],
+  木: ["thu", "thur", "thurs", "thursday"],
+  金: ["fri", "friday"],
+  土: ["sat", "saturday"],
+};
+
+/**
+ * 暦日 ymd の曜日（1文字）を Asia/Tokyo のグレゴリオ暦で求める。
+ * 正午 JST 相当の UTC 瞬間に正規化し、DST のない日本で日付ずれを避ける。
+ */
+export function weekdayJaFromYmdTokyo(ymd: string): string | null {
+  const t = ymd.trim();
+  if (!ISO_DATE_RE.test(t)) return null;
+  const [ys, ms, ds] = t.split("-");
+  const y = Number(ys);
+  const m = Number(ms);
+  const d = Number(ds);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
+  const utcMs = Date.UTC(y, m - 1, d, 3, 0, 0);
+  const idx = new Date(utcMs).getUTCDay();
+  return TOKYO_WEEKDAY_JA[idx] ?? null;
+}
+
+/** 例: `2026-04-10（金曜日）` */
+export function formatYmdWithTokyoWeekday(ymd: string): string {
+  const t = ymd.trim();
+  const w = weekdayJaFromYmdTokyo(t);
+  if (!w) return t;
+  const long = WEEKDAY_LONG_JA[w] ?? w;
+  return `${t}（${long}）`;
+}
+
+function columnMatchesWeekdayLabel(colLabel: string, weekdayJa: string): boolean {
+  const t = colLabel.trim().normalize("NFKC");
+  if (!t) return false;
+  const head = t[0];
+  if (head === weekdayJa && JA_WEEK_HEAD.has(weekdayJa)) {
+    if (t.length === 1) return true;
+    return t.startsWith(`${weekdayJa}曜`);
+  }
+  const lower = t.toLowerCase();
+  for (const key of EN_WEEK_KEYS[weekdayJa] ?? []) {
+    if (lower === key) return true;
+    if (lower.startsWith(`${key}.`)) return true;
+    if (lower.startsWith(`${key} `)) return true;
+  }
+  return false;
+}
+
+function isYmdInTimetableValidity(ymd: string, b: TimetableBundle): boolean {
+  if (b.validFrom && ymd < b.validFrom) return false;
+  if (b.validTo && ymd > b.validTo) return false;
+  return true;
+}
 
 function newColumn(label: string): TimetableColumn {
   return { id: `c${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, label };
@@ -208,6 +309,8 @@ export function parseTimetableStored(raw: string): TimetableBundle | null {
       return {
         v: 2,
         scenarioLabel: typeof o.scenarioLabel === "string" ? o.scenarioLabel : undefined,
+        validFrom: parseStoredValidityDate(o.validFrom),
+        validTo: parseStoredValidityDate(o.validTo),
         patterns,
         activePatternIndex,
       };
@@ -219,6 +322,8 @@ export function parseTimetableStored(raw: string): TimetableBundle | null {
     return {
       v: 2,
       scenarioLabel: typeof o.scenarioLabel === "string" ? o.scenarioLabel : undefined,
+      validFrom: parseStoredValidityDate(o.validFrom),
+      validTo: parseStoredValidityDate(o.validTo),
       patterns: [pattern],
       activePatternIndex: 0,
     };
@@ -286,7 +391,12 @@ export function formatTimetableSummary(raw: string): string {
   const b = parseTimetableStored(raw);
   if (!b) return "";
   const parts: string[] = [];
-  if (b.scenarioLabel?.trim()) parts.push(`時間割(${b.scenarioLabel.trim()})`);
+  const validity = formatTimetableValidityLabel(b);
+  if (b.scenarioLabel?.trim()) {
+    parts.push(validity ? `時間割(${b.scenarioLabel.trim()}・${validity})` : `時間割(${b.scenarioLabel.trim()})`);
+  } else if (validity) {
+    parts.push(`時間割(${validity})`);
+  }
 
   for (const pat of b.patterns) {
     const tag = pat.label.trim() || "パターン";
@@ -311,8 +421,12 @@ export function formatTimetableForPrompt(raw: string | undefined, maxChars = 240
   if (!b) return raw.trim().slice(0, maxChars);
 
   const chunks: string[] = [];
-  if (b.scenarioLabel?.trim()) {
-    chunks.push(`学期・メモ: ${b.scenarioLabel.trim()}`);
+  const validity = formatTimetableValidityLabel(b);
+  const scenario = b.scenarioLabel?.trim();
+  if (scenario) {
+    chunks.push(validity ? `学期・メモ: ${scenario} / 有効期間: ${validity}` : `学期・メモ: ${scenario}`);
+  } else if (validity) {
+    chunks.push(`有効期間: ${validity}`);
   }
 
   for (const pat of b.patterns) {
@@ -356,6 +470,80 @@ export function formatTimetableForPrompt(raw: string | undefined, maxChars = 240
   if (out.length > maxChars) {
     out = `${out.slice(0, maxChars)}…`;
   }
+  return out;
+}
+
+/**
+ * 振り返りチャット用: 対象日の曜日列だけを渡しトークンを抑え、他曜の科目を誤って引用しにくくする。
+ * パースできない場合は空文字（呼び出し側でフル `formatTimetableForPrompt` にフォールバック可）。
+ */
+export function formatTimetableForPromptDaySlice(
+  raw: string | undefined,
+  entryDateYmd: string,
+  maxChars = 1200,
+): string {
+  if (!raw?.trim()) return "";
+  const b = parseTimetableStored(raw);
+  if (!b) return "";
+
+  const ymd = entryDateYmd.trim();
+  if (!ISO_DATE_RE.test(ymd)) return "";
+
+  const weekdayJa = weekdayJaFromYmdTokyo(ymd);
+  if (!weekdayJa) return "";
+
+  const chunks: string[] = [];
+  const validity = formatTimetableValidityLabel(b);
+  const scenario = b.scenarioLabel?.trim();
+  const long = WEEKDAY_LONG_JA[weekdayJa] ?? weekdayJa;
+
+  chunks.push(`抜粋条件: ${ymd}（${long}）の列のみ（他曜は省略）`);
+  if (scenario) {
+    chunks.push(validity ? `学期・メモ: ${scenario} / 有効期間: ${validity}` : `学期・メモ: ${scenario}`);
+  } else if (validity) {
+    chunks.push(`有効期間: ${validity}`);
+  }
+
+  if (!isYmdInTimetableValidity(ymd, b)) {
+    chunks.push("※この日付は登録された時間割の有効期間外です。その日の科目を推測・断定しないでください。");
+    const out = chunks.join("\n");
+    return out.length > maxChars ? `${out.slice(0, maxChars)}…` : out;
+  }
+
+  const anchor = b.patterns[b.activePatternIndex] ?? b.patterns[0];
+  const sched: string[] = [];
+  for (let p = 0; p < anchor.periodCount; p++) {
+    const st = anchor.periodMeta[p]?.start?.trim();
+    const dur = effectiveDurationMin(anchor, p);
+    const bits: string[] = [`${p + 1}限`];
+    if (st) bits.push(st);
+    if (dur != null) bits.push(`${dur}分`);
+    if (st || dur != null) sched.push(bits.join(" "));
+  }
+  if (sched.length) {
+    const anchorLabel = anchor.label.trim() || "メイン";
+    chunks.push(`各限の目安（参考・選択中パターン「${anchorLabel}」基準）: ${sched.join(" / ")}`);
+  }
+
+  for (const pat of b.patterns) {
+    const head = pat.label.trim() || "パターン";
+    const col = pat.columns.find((c) => columnMatchesWeekdayLabel(c.label, weekdayJa));
+    if (!col) {
+      chunks.push(
+        `[${head}] ※「${weekdayJa}曜」に相当する列がありません（登録列: ${pat.columns.map((c) => c.label).join("・") || "なし"}）`,
+      );
+      continue;
+    }
+    const cells: string[] = [];
+    for (let p = 1; p <= pat.periodCount; p++) {
+      const v = (pat.cells[`${col.id}-${p}`] ?? "").trim();
+      if (v) cells.push(`${p}:${v}`);
+    }
+    chunks.push(`[${head}] ${col.label}: ${cells.length ? cells.join(", ") : "（科目未入力）"}`);
+  }
+
+  let out = chunks.join("\n\n");
+  if (out.length > maxChars) out = `${out.slice(0, maxChars)}…`;
   return out;
 }
 
