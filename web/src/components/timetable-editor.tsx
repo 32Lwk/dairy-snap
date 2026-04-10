@@ -383,6 +383,20 @@ export function TimetableEditor({ value, onChange, stLevel, compact = false }: P
     [onChange],
   );
 
+  const setValidityRange = useCallback(
+    (patch: { validFrom?: string; validTo?: string }) => {
+      let from = patch.validFrom !== undefined ? patch.validFrom || undefined : bundle.validFrom;
+      let to = patch.validTo !== undefined ? patch.validTo || undefined : bundle.validTo;
+      if (from && to && from > to) {
+        const t = from;
+        from = to;
+        to = t;
+      }
+      commit({ ...bundle, validFrom: from, validTo: to });
+    },
+    [bundle, commit],
+  );
+
   const cellKey = (colId: string, period: number) => `${colId}-${period}`;
 
   const setCell = (colId: string, period: number, text: string) => {
@@ -570,6 +584,31 @@ export function TimetableEditor({ value, onChange, stLevel, compact = false }: P
             }
             placeholder="A週・メイン"
             className="min-w-0 flex-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-950"
+          />
+        </label>
+      </div>
+
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
+        <span className="w-full shrink-0 text-[10px] text-zinc-500 dark:text-zinc-400 sm:w-auto">
+          有効期間（任意・両端の日付を含みます）
+        </span>
+        <label className="flex min-w-0 flex-1 basis-[8.5rem] items-center gap-1.5 text-[10px] text-zinc-600 dark:text-zinc-400">
+          <span className="shrink-0 whitespace-nowrap">開始</span>
+          <input
+            type="date"
+            value={bundle.validFrom ?? ""}
+            onChange={(e) => setValidityRange({ validFrom: e.target.value })}
+            className="min-w-0 flex-1 rounded-md border border-zinc-200 bg-white px-1.5 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-950"
+          />
+        </label>
+        <span className="shrink-0 text-[10px] text-zinc-400">〜</span>
+        <label className="flex min-w-0 flex-1 basis-[8.5rem] items-center gap-1.5 text-[10px] text-zinc-600 dark:text-zinc-400">
+          <span className="shrink-0 whitespace-nowrap">終了</span>
+          <input
+            type="date"
+            value={bundle.validTo ?? ""}
+            onChange={(e) => setValidityRange({ validTo: e.target.value })}
+            className="min-w-0 flex-1 rounded-md border border-zinc-200 bg-white px-1.5 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-950"
           />
         </label>
       </div>

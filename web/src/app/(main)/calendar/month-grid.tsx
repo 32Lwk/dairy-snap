@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { resolveGcalEventColor } from "@/lib/gcal-event-color";
+import type { CalendarWeekStartDay } from "@/lib/user-settings";
 
 type EntryBrief = { entryDateYmd: string; title: string | null };
 type Ev = {
@@ -11,23 +13,11 @@ type Ev = {
   location: string;
   calendarName?: string;
   colorId?: string;
+  calendarId?: string;
 };
 
-const GCAL_COLOR: Record<string, string> = {
-  "1": "#a4bdfc",
-  "2": "#7ae7bf",
-  "3": "#dbadff",
-  "4": "#ff887c",
-  "5": "#fbd75b",
-  "6": "#ffb878",
-  "7": "#46d6db",
-  "8": "#e1e1e1",
-  "9": "#5484ed",
-  "10": "#51b749",
-  "11": "#dc2127",
-};
+const WEEK_LABELS_JA = ["日", "月", "火", "水", "木", "金", "土"] as const;
 
-// 月切替を速くするための軽量キャッシュ（タブ内・リロードで消える）
 const monthEventsCache = new Map<string, Ev[]>();
 const monthEventsInflight = new Map<string, Promise<Ev[]>>();
 
@@ -44,11 +34,6 @@ function tokyoYmdFromIsoLike(isoLike: string): string {
   })
     .format(d)
     .replaceAll("/", "-");
-}
-
-function dayFromYmd(ymd: string): number {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
-  return m ? Number(m[3]) : 0;
 }
 
 function todayTokyoYmd(): string {
@@ -96,7 +81,10 @@ export function MonthGrid({
   ym,
   prevYm,
   nextYm,
-  firstDow,
+  monthStartWeekday,
+  weekStartsOn,
+  maxEventsPerCell,
+  calendarHexById,
   daysInMonth,
   entries,
   initialEvents,
@@ -105,7 +93,11 @@ export function MonthGrid({
   ym: string;
   prevYm: string;
   nextYm: string;
-  firstDow: number;
+  /** 当月1日の JS 週番号（0=日 … 6=土） */
+  monthStartWeekday: number;
+  weekStartsOn: CalendarWeekStartDay;
+  maxEventsPerCell: number;
+  calendarHexById: Record<string, string>;
   daysInMonth: number;
   entries: EntryBrief[];
   initialEvents: Ev[];
@@ -120,7 +112,6 @@ export function MonthGrid({
         const cur = await fetchMonthEvents(ym);
         if (!cancelled) setEvents(cur);
 
-        // 前後1カ月を先読み（UIをブロックしない）
         void fetchMonthEvents(prevYm);
         void fetchMonthEvents(nextYm);
       } catch {
@@ -156,7 +147,6 @@ export function MonthGrid({
       bucket.seen.add(key);
       bucket.list.push(ev);
     }
-    // 表示安定のため開始時刻でソート
     const out = new Map<string, Ev[]>();
     for (const [ymd, v] of map) {
       out.set(
@@ -174,6 +164,12 @@ export function MonthGrid({
 
   const [yy, mm] = ym.split("-").map(Number);
   const today = todayTokyoYmd();
+
+  const leadingBlankDays = (monthStartWeekday - weekStartsOn + 7) % 7;
+  const weekLabels = Array.from({ length: 7 }, (_, i) => WEEK_LABELS_JA[(weekStartsOn + i) % 7]);
+  const maxEv = Math.min(5, Math.max(1, maxEventsPerCell));
+  const tooltipMaxTitles = Math.min(12, Math.max(maxEv + 2, 6));
+  const cellMinHeight = Math.max(88, 40 + maxEv * 22);
 
   const cells: { day: number; ymd: string }[] = useMemo(() => {
     const arr: { day: number; ymd: string }[] = [];
@@ -206,12 +202,12 @@ export function MonthGrid({
       </div>
 
       <div className="grid grid-cols-7 gap-1 text-center text-xs font-medium text-zinc-500">
-        {["日", "月", "火", "水", "木", "金", "土"].map((w) => (
-          <div key={w} className="py-1">
+        {weekLabels.map((w, i) => (
+          <div key={`${i}-${w}`} className="py-1">
             {w}
           </div>
         ))}
-        {Array.from({ length: firstDow }).map((_, i) => (
+        {Array.from({ length: leadingBlankDays }).map((_, i) => (
           <div key={`pad-${i}`} />
         ))}
         {cells.map(({ day, ymd }) => {
@@ -219,12 +215,17 @@ export function MonthGrid({
           const entryTitle = (entryTitleByYmd.get(ymd) ?? "").trim();
           const evs = eventsByYmd.get(ymd) ?? [];
           const isToday = ymd === today;
-          const evTitles = evs.slice(0, 3).map((e) => e.title || "（無題）");
+          const evTitles = evs.slice(0, tooltipMaxTitles).map((e) => e.title || "（無題）");
           const titleLines = [
             ymd,
             ...(has && entryTitle ? [`日記: ${entryTitle}`] : []),
-            ...(evs.length ? [`予定: ${evTitles.join(" / ")}${evs.length > 3 ? " …" : ""}`] : []),
+            ...(evs.length
+              ? [`予定: ${evTitles.join(" / ")}${evs.length > tooltipMaxTitles ? " …" : ""}`]
+              : []),
           ].join("\n");
+
+          const shown = evs.slice(0, maxEv);
+          const rest = evs.length - shown.length;
 
           return (
             <Link
@@ -232,12 +233,13 @@ export function MonthGrid({
               href={`/entries/${ymd}`}
               title={titleLines}
               className={[
-                "group block h-[88px] rounded-lg border px-2 py-2 text-left",
+                "group block rounded-lg border px-2 py-2 text-left",
                 has
                   ? "border-blue-300 bg-blue-50 text-blue-900 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-100"
                   : "border-zinc-100 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-900",
                 isToday ? "ring-1 ring-zinc-400/40 dark:ring-zinc-500/40" : "",
               ].join(" ")}
+              style={{ minHeight: cellMinHeight }}
             >
               <div className="flex h-full min-h-0 flex-col">
                 <div className="flex items-baseline justify-between gap-2">
@@ -252,18 +254,18 @@ export function MonthGrid({
                 <div className="mt-1 min-h-0 flex-1">
                   {evs.length ? (
                     <ul className="space-y-0.5 text-[11px] leading-snug text-zinc-600 dark:text-zinc-300">
-                      {evs.slice(0, 2).map((e, idx) => (
+                      {shown.map((e, idx) => (
                         <li key={`${ymd}-ev-${idx}`} className="flex items-start gap-1.5">
                           <span
                             className="mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full"
-                            style={{ backgroundColor: GCAL_COLOR[e.colorId ?? ""] ?? "#10b981" }}
+                            style={{ backgroundColor: resolveGcalEventColor(e, calendarHexById) }}
                             aria-hidden="true"
                           />
                           <span className="min-w-0 flex-1 truncate">{e.title || "（無題）"}</span>
                         </li>
                       ))}
-                      {evs.length > 2 ? (
-                        <li className="text-[11px] text-zinc-500 dark:text-zinc-400">…+{evs.length - 2}</li>
+                      {rest > 0 ? (
+                        <li className="text-[11px] text-zinc-500 dark:text-zinc-400">…+{rest}</li>
                       ) : null}
                     </ul>
                   ) : (
@@ -290,4 +292,3 @@ export function MonthGrid({
     </>
   );
 }
-

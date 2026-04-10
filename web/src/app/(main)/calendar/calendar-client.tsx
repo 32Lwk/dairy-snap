@@ -2,10 +2,17 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import type {
-  CalendarOpeningCategory,
-  CalendarOpeningRule,
-  CalendarOpeningSettings,
+import { GCAL_COLOR_MAP } from "@/lib/gcal-event-color";
+import {
+  type CalendarOpeningCategory,
+  type CalendarOpeningRule,
+  type CalendarOpeningSettings,
+  type CalendarWeekStartDay,
+  calendarOpeningCategoryOptions,
+  labelToUserCategoryId,
+  normalizeCalendarGridDisplay,
+  normalizeCalendarOpeningPriorityOrder,
+  stripCalendarOpeningCustomLabel,
 } from "@/lib/user-settings";
 import { UpcomingGoogleEvents } from "./upcoming-google-events";
 import { MonthGrid } from "./month-grid";
@@ -22,31 +29,19 @@ type Ev = {
   description?: string;
 };
 
-const CATS: { id: CalendarOpeningCategory; label: string }[] = [
-  { id: "job_hunt", label: "就活/面接" },
-  { id: "parttime", label: "バイト/シフト" },
-  { id: "date", label: "デート/恋愛" },
-  { id: "school", label: "授業/試験" },
-  { id: "health", label: "通院/健康" },
-  { id: "family", label: "家族/友人" },
-  { id: "hobby", label: "趣味/イベント" },
-  { id: "other", label: "その他" },
+const CALENDAR_WEEK_START_OPTIONS: { value: CalendarWeekStartDay; label: string }[] = [
+  { value: 0, label: "日曜始まり" },
+  { value: 1, label: "月曜始まり" },
+  { value: 2, label: "火曜始まり" },
+  { value: 3, label: "水曜始まり" },
+  { value: 4, label: "木曜始まり" },
+  { value: 5, label: "金曜始まり" },
+  { value: 6, label: "土曜始まり" },
 ];
-
-function normalizePriorityOrder(po: unknown): CalendarOpeningCategory[] {
-  const allow = new Set(CATS.map((c) => c.id));
-  const arr = Array.isArray(po) ? po : [];
-  const filtered = arr.filter(
-    (x): x is CalendarOpeningCategory =>
-      typeof x === "string" && allow.has(x as CalendarOpeningCategory),
-  );
-  const uniq = Array.from(new Set([...filtered, ...CATS.map((c) => c.id)]));
-  return uniq.slice(0, CATS.length);
-}
 
 function inferCategoryForEvent(ev: Ev, settings: CalendarOpeningSettings | null): CalendarOpeningCategory {
   const rules = settings?.rules ?? [];
-  const priority = normalizePriorityOrder(settings?.priorityOrder);
+  const priority = normalizeCalendarOpeningPriorityOrder(settings);
   const hayTitle = (ev.title ?? "").toLowerCase();
   const hayLoc = (ev.location ?? "").toLowerCase();
   const hayDesc = (ev.description ?? "").toLowerCase();
@@ -97,7 +92,8 @@ export function CalendarClient(props: {
   ym: string;
   prevYm: string;
   nextYm: string;
-  firstDow: number;
+  /** 当月1日の getDay()（0=日曜） */
+  monthStartWeekday: number;
   daysInMonth: number;
   entries: EntryBrief[];
   initialEvents: Ev[];
@@ -111,6 +107,22 @@ export function CalendarClient(props: {
   const [selectedCats, setSelectedCats] = useState<CalendarOpeningCategory[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [customCatDraft, setCustomCatDraft] = useState("");
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSettingsOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [settingsOpen]);
 
   useEffect(() => {
     // settings: calendarOpening
@@ -159,7 +171,15 @@ export function CalendarClient(props: {
     })();
   }, []);
 
-  const effectivePriority = useMemo(() => normalizePriorityOrder(opening?.priorityOrder), [opening?.priorityOrder]);
+  const effectivePriority = useMemo(() => normalizeCalendarOpeningPriorityOrder(opening), [opening]);
+
+  const catOptions = useMemo(() => calendarOpeningCategoryOptions(opening), [opening]);
+
+  const ruleCats = useMemo(() => catOptions.map(({ id, label }) => ({ id, label })), [catOptions]);
+
+  const gridDisplay = useMemo(() => normalizeCalendarGridDisplay(opening?.gridDisplay), [opening?.gridDisplay]);
+
+  const noDisplayFilter = selectedCalendars.length === 0 && selectedCats.length === 0;
 
   async function saveCalendarOpening(next: CalendarOpeningSettings) {
     setBusy(true);
@@ -180,6 +200,32 @@ export function CalendarClient(props: {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function addCustomCategory() {
+    const lab = customCatDraft.normalize("NFKC").trim();
+    if (!lab) return;
+    if (lab.length > 24) {
+      setErr("カテゴリ名は24文字以内にしてください");
+      return;
+    }
+    const id = labelToUserCategoryId(lab);
+    const labels = opening?.customCategoryLabels ?? [];
+    const existing = new Set(labels.map((x) => labelToUserCategoryId(x)));
+    if (existing.has(id)) {
+      setErr("同じカテゴリが既にあります");
+      return;
+    }
+    if (labels.length >= 16) {
+      setErr("カスタムカテゴリは16件までです");
+      return;
+    }
+    setErr(null);
+    setCustomCatDraft("");
+    await saveCalendarOpening({
+      ...(opening ?? {}),
+      customCategoryLabels: [...labels, lab],
+    });
   }
 
   const filterSettings = useMemo(() => {
@@ -209,21 +255,142 @@ export function CalendarClient(props: {
 
   return (
     <>
-      <UpcomingGoogleEvents filter={filterSettings} />
+      <header className="mb-6 flex items-center justify-between gap-3">
+        <h1 className="min-w-0 text-2xl font-bold text-zinc-900 dark:text-zinc-50">カレンダー</h1>
+        <button
+          type="button"
+          onClick={() => setSettingsOpen(true)}
+          className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-700 shadow-sm transition-colors hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:border-zinc-600 dark:hover:bg-zinc-900"
+          aria-expanded={settingsOpen}
+          aria-haspopup="dialog"
+          aria-controls="calendar-display-settings-dialog"
+          aria-label="表示・分類設定を開く"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+            className="h-4 w-4 text-zinc-500 dark:text-zinc-400"
+            aria-hidden
+          >
+            <path
+              fillRule="evenodd"
+              d="M8.34 1.804A1 1 0 019.32 1h1.36a1 1 0 01.98.804l.295 1.473c.497.144.971.342 1.416.587l1.25-.834a1 1 0 011.262.125l.962.962a1 1 0 01.125 1.262l-.834 1.25c.245.445.443.919.587 1.416l1.473.294a1 1 0 01.804.98v1.361a1 1 0 01-.804.98l-1.473.295a6.95 6.95 0 01-.587 1.416l.834 1.25a1 1 0 01-1.262.125l-.962-.962a6.95 6.95 0 01-1.416.587l-.294 1.473a1 1 0 01-.98.804H9.32a1 1 0 01-.98-.804l-.295-1.473a6.95 6.95 0 01-1.416-.587l-1.25.834a1 1 0 01-1.262-.125l-.962-.962a1 1 0 01-.125-1.262l.834-1.25a6.95 6.95 0 01-.587-1.416l-1.473-.294A1 1 0 011 10.68V9.32a1 1 0 01.804-.98l1.473-.295c.144-.497.342-.971.587-1.416l-.834-1.25a1 1 0 01.125-1.262l.962-.962A1 1 0 015.38 3.03l1.25.834a6.95 6.95 0 011.416-.587l.294-1.473zM13 10a3 3 0 11-6 0 3 3 0 016 0z"
+              clipRule="evenodd"
+            />
+          </svg>
+          <span className="hidden sm:inline">設定</span>
+        </button>
+      </header>
 
-      <section className="mt-4 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">表示・分類設定</h2>
-            <p className="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-              カレンダー別/カテゴリ別に表示を絞り込めます。カテゴリは「分類ルール」で判定します。
-            </p>
-            {err ? <p className="mt-2 text-xs text-red-600">{err}</p> : null}
-          </div>
-          <Link href="/settings" className="shrink-0 text-[11px] text-zinc-500 underline dark:text-zinc-400">
-            設定（全体）へ
-          </Link>
+      <UpcomingGoogleEvents filter={filterSettings} calendarHexById={gridDisplay.calendarHexById} />
+
+      <div className="mt-2 space-y-1.5">
+        <p className="text-[11px] font-medium text-zinc-600 dark:text-zinc-300">表示の絞り込み</p>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedCalendars([]);
+              setSelectedCats([]);
+            }}
+            className={[
+              "rounded-full border px-3 py-1 text-xs font-medium",
+              noDisplayFilter
+                ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900"
+                : "border-zinc-200 bg-white text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200",
+            ].join(" ")}
+          >
+            すべて
+          </button>
+          {(opts?.calendars ?? []).map((c) => {
+            const on = selectedCalendars.includes(c.calendarId);
+            return (
+              <button
+                key={c.calendarId}
+                type="button"
+                onClick={() => {
+                  setSelectedCalendars((prev) =>
+                    prev.includes(c.calendarId) ? prev.filter((x) => x !== c.calendarId) : [...prev, c.calendarId],
+                  );
+                }}
+                className={[
+                  "max-w-[11rem] truncate rounded-full border px-3 py-1 text-xs font-medium",
+                  on
+                    ? "border-emerald-600 bg-emerald-50 text-emerald-900 dark:border-emerald-500 dark:bg-emerald-950/40 dark:text-emerald-100"
+                    : "border-zinc-200 bg-white text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200",
+                ].join(" ")}
+                title={c.calendarName}
+              >
+                {c.calendarName}
+              </button>
+            );
+          })}
+          {catOptions.map((c) => {
+            const on = selectedCats.includes(c.id);
+            const selectedCls = c.custom
+              ? "border-violet-600 bg-violet-50 text-violet-900 dark:border-violet-500 dark:bg-violet-950/40 dark:text-violet-100"
+              : "border-blue-600 bg-blue-50 text-blue-900 dark:border-blue-500 dark:bg-blue-950/40 dark:text-blue-100";
+            const idleCls =
+              "border-zinc-200 bg-white text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200";
+            return (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => {
+                  setSelectedCats((prev) => (prev.includes(c.id) ? prev.filter((x) => x !== c.id) : [...prev, c.id]));
+                }}
+                className={["rounded-full border px-3 py-1 text-xs font-medium", on ? selectedCls : idleCls].join(" ")}
+              >
+                {c.label}
+              </button>
+            );
+          })}
         </div>
+        <p className="text-[10px] leading-snug text-zinc-500 dark:text-zinc-400">
+          ※ 表示のみ。Google の予定データは変わりません。詳細は右上の設定からも変更できます。
+        </p>
+      </div>
+
+      {settingsOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-zinc-950/50 p-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]"
+          role="presentation"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setSettingsOpen(false);
+          }}
+        >
+          <section
+            id="calendar-display-settings-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="calendar-display-settings-title"
+            className="relative mt-0 w-full max-w-3xl rounded-2xl border border-zinc-200 bg-white p-4 shadow-xl dark:border-zinc-800 dark:bg-zinc-950"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 pr-2">
+                <h2 id="calendar-display-settings-title" className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+                  表示・分類設定
+                </h2>
+                <p className="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                  カレンダー別/カテゴリ別に表示を絞り込めます。カテゴリは「分類ルール」で判定します。
+                </p>
+                {err ? <p className="mt-2 text-xs text-red-600">{err}</p> : null}
+              </div>
+              <div className="flex shrink-0 flex-col items-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSettingsOpen(false)}
+                  className="rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-700 shadow-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                >
+                  閉じる
+                </button>
+                <Link href="/settings" className="text-[11px] text-zinc-500 underline dark:text-zinc-400">
+                  設定（全体）へ
+                </Link>
+              </div>
+            </div>
 
         <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
           <div>
@@ -270,26 +437,68 @@ export function CalendarClient(props: {
           <div>
             <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">カテゴリで絞り込む（複数可）</p>
             <div className="mt-2 flex flex-wrap gap-2">
-              {CATS.map((c) => {
+              {catOptions.map((c) => {
                 const on = selectedCats.includes(c.id);
+                const selectedCls = c.custom
+                  ? "border-violet-600 bg-violet-50 text-violet-900 dark:border-violet-500 dark:bg-violet-950/40 dark:text-violet-100"
+                  : "border-blue-600 bg-blue-50 text-blue-900 dark:border-blue-500 dark:bg-blue-950/40 dark:text-blue-100";
+                const idleCls =
+                  "border-zinc-200 bg-white text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200";
                 return (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => {
-                      setSelectedCats((prev) => (prev.includes(c.id) ? prev.filter((x) => x !== c.id) : [...prev, c.id]));
-                    }}
-                    className={[
-                      "rounded-full border px-3 py-1 text-xs font-medium",
-                      on
-                        ? "border-blue-600 bg-blue-50 text-blue-900 dark:border-blue-500 dark:bg-blue-950/40 dark:text-blue-100"
-                        : "border-zinc-200 bg-white text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200",
-                    ].join(" ")}
-                  >
-                    {c.label}
-                  </button>
+                  <span key={c.id} className="inline-flex items-center gap-0.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedCats((prev) =>
+                          prev.includes(c.id) ? prev.filter((x) => x !== c.id) : [...prev, c.id],
+                        );
+                      }}
+                      className={["rounded-full border px-3 py-1 text-xs font-medium", on ? selectedCls : idleCls].join(
+                        " ",
+                      )}
+                    >
+                      {c.label}
+                    </button>
+                    {c.custom && opening ? (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        title="カテゴリを削除"
+                        className="rounded-full px-1.5 text-xs text-zinc-400 hover:text-red-600 disabled:opacity-40 dark:hover:text-red-400"
+                        onClick={() => {
+                          void saveCalendarOpening(stripCalendarOpeningCustomLabel(opening, c.label));
+                          setSelectedCats((prev) => prev.filter((x) => x !== c.id));
+                        }}
+                      >
+                        ×
+                      </button>
+                    ) : null}
+                  </span>
                 );
-              })}
+                           })}
+              <input
+                value={customCatDraft}
+                onChange={(e) => setCustomCatDraft(e.target.value)}
+                maxLength={24}
+                disabled={busy}
+                placeholder="カスタム名（例: 旅行）"
+                aria-label="カスタムカテゴリ名"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void addCustomCategory();
+                  }
+                }}
+                className="min-w-[9rem] max-w-[14rem] rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-medium text-zinc-900 outline-none ring-zinc-400 placeholder:font-normal placeholder:text-zinc-400 focus-visible:ring-2 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:placeholder:text-zinc-500 dark:focus-visible:ring-zinc-500"
+              />
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void addCustomCategory()}
+                className="rounded-full border border-violet-500/70 bg-violet-50 px-3 py-1 text-xs font-medium text-violet-900 hover:bg-violet-100/80 disabled:opacity-50 dark:border-violet-500 dark:bg-violet-950/40 dark:text-violet-100 dark:hover:bg-violet-950/60"
+              >
+                追加
+              </button>
             </div>
             {selectedCats.length ? (
               <button
@@ -301,6 +510,130 @@ export function CalendarClient(props: {
               </button>
             ) : null}
           </div>
+        </div>
+
+        <div className="mt-4 space-y-3 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+          <div>
+            <h3 className="text-xs font-semibold text-zinc-900 dark:text-zinc-50">月カレンダーの見た目</h3>
+            <p className="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+              週の始まり・1マスあたりの予定行数・カレンダー別のドット色を変えられます（画面表示のみ）。
+            </p>
+          </div>
+          <label className="flex flex-wrap items-center gap-2 text-[11px] text-zinc-600 dark:text-zinc-300">
+            週の始まり
+            <select
+              disabled={busy}
+              value={gridDisplay.weekStartsOn}
+              onChange={(e) => {
+                const v = Number(e.target.value) as CalendarWeekStartDay;
+                setOpening((prev) => ({
+                  ...(prev ?? {}),
+                  gridDisplay: { ...normalizeCalendarGridDisplay(prev?.gridDisplay), weekStartsOn: v },
+                }));
+              }}
+              className="min-w-[9.5rem] rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs dark:border-zinc-700 dark:bg-zinc-950"
+            >
+              {CALENDAR_WEEK_START_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-wrap items-center gap-2 text-[11px] text-zinc-600 dark:text-zinc-300">
+            1マスに並べる予定（最大）
+            <select
+              disabled={busy}
+              value={gridDisplay.maxEventsPerCell}
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                setOpening((prev) => ({
+                  ...(prev ?? {}),
+                  gridDisplay: { ...normalizeCalendarGridDisplay(prev?.gridDisplay), maxEventsPerCell: n },
+                }));
+              }}
+              className="rounded-lg border border-zinc-200 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+            >
+              {[1, 2, 3, 4, 5].map((n) => (
+                <option key={n} value={n}>
+                  {n}件
+                </option>
+              ))}
+            </select>
+          </label>
+          <div>
+            <p className="text-[11px] font-medium text-zinc-600 dark:text-zinc-300">カレンダー別の色</p>
+            <div className="mt-2 max-h-48 space-y-2 overflow-y-auto pr-1">
+              {(opts?.calendars ?? []).map((cal) => {
+                const defHex = (GCAL_COLOR_MAP[cal.calendarColorId] ?? "#10b981").toLowerCase();
+                const override = gridDisplay.calendarHexById[cal.calendarId];
+                const shown = (override ?? defHex).toLowerCase();
+                return (
+                  <div key={cal.calendarId} className="flex flex-wrap items-center gap-2 text-[11px]">
+                    <span className="min-w-0 flex-1 truncate text-zinc-600 dark:text-zinc-300" title={cal.calendarId}>
+                      {cal.calendarName}
+                    </span>
+                    <span className="inline-flex shrink-0 rounded-lg border border-zinc-400/75 bg-gradient-to-b from-zinc-200/90 to-zinc-300/85 p-[3px] shadow-[inset_0_1px_0_rgba(255,255,255,0.35)] dark:border-zinc-500 dark:from-zinc-600 dark:to-zinc-800 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
+                      <input
+                        type="color"
+                        disabled={busy}
+                        value={/^#[0-9a-f]{6}$/i.test(shown) ? shown : defHex}
+                        onChange={(e) => {
+                          const hex = e.target.value.toLowerCase();
+                          setOpening((prev) => {
+                            const base = normalizeCalendarGridDisplay(prev?.gridDisplay);
+                            const nextHex = { ...base.calendarHexById };
+                            if (hex === defHex) delete nextHex[cal.calendarId];
+                            else nextHex[cal.calendarId] = hex;
+                            return { ...(prev ?? {}), gridDisplay: { ...base, calendarHexById: nextHex } };
+                          });
+                        }}
+                        className="h-[26px] w-[2.125rem] cursor-pointer rounded-md border-0 bg-transparent p-0 [&::-moz-color-swatch]:rounded-[5px] [&::-moz-color-swatch]:border-0 [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:rounded-[5px] [&::-webkit-color-swatch]:border-0"
+                        aria-label={`${cal.calendarName}の色`}
+                      />
+                    </span>
+                    {override ? (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        className="text-zinc-500 underline dark:text-zinc-400"
+                        onClick={() =>
+                          setOpening((prev) => {
+                            const base = normalizeCalendarGridDisplay(prev?.gridDisplay);
+                            const nextHex = { ...base.calendarHexById };
+                            delete nextHex[cal.calendarId];
+                            return { ...(prev ?? {}), gridDisplay: { ...base, calendarHexById: nextHex } };
+                          })
+                        }
+                      >
+                        デフォルト
+                      </button>
+                    ) : null}
+                  </div>
+                );
+              })}
+              {!opts?.calendars?.length ? (
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-400">（カレンダー一覧は予定同期後に出ます）</p>
+              ) : null}
+            </div>
+          </div>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() =>
+              void saveCalendarOpening({
+                ...(opening ?? {}),
+                gridDisplay: {
+                  weekStartsOn: gridDisplay.weekStartsOn,
+                  maxEventsPerCell: gridDisplay.maxEventsPerCell,
+                  calendarHexById: { ...gridDisplay.calendarHexById },
+                },
+              })
+            }
+            className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+          >
+            表示オプションを保存
+          </button>
         </div>
 
         <details className="mt-4 rounded-xl border border-zinc-200 bg-zinc-50/50 p-3 dark:border-zinc-800 dark:bg-zinc-900/30">
@@ -325,9 +658,9 @@ export function CalendarClient(props: {
                       }}
                       className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
                     >
-                      {CATS.map((c) => (
+                      {catOptions.map((c) => (
                         <option key={c.id} value={c.id}>
-                          {c.label}
+                          {c.custom ? `${c.label}（カスタム）` : c.label}
                         </option>
                       ))}
                     </select>
@@ -340,7 +673,7 @@ export function CalendarClient(props: {
                 onClick={() =>
                   void saveCalendarOpening({
                     ...(opening ?? {}),
-                    priorityOrder: normalizePriorityOrder(effectivePriority),
+                    priorityOrder: normalizeCalendarOpeningPriorityOrder(opening),
                     rules: opening?.rules ?? [],
                   })
                 }
@@ -362,7 +695,7 @@ export function CalendarClient(props: {
                     key={i}
                     rule={r}
                     disabled={busy}
-                    cats={CATS}
+                    cats={ruleCats}
                     calendars={opts?.calendars ?? []}
                     colorIds={opts?.colorIds ?? []}
                     onChange={(next) => {
@@ -397,7 +730,8 @@ export function CalendarClient(props: {
                 disabled={busy}
                 onClick={() =>
                   void saveCalendarOpening({
-                    priorityOrder: effectivePriority,
+                    ...(opening ?? {}),
+                    priorityOrder: normalizeCalendarOpeningPriorityOrder(opening),
                     rules: opening?.rules ?? [],
                   })
                 }
@@ -408,13 +742,18 @@ export function CalendarClient(props: {
             </div>
           </div>
         </details>
-      </section>
+          </section>
+        </div>
+      ) : null}
 
       <MonthGrid
         ym={props.ym}
         prevYm={props.prevYm}
         nextYm={props.nextYm}
-        firstDow={props.firstDow}
+        monthStartWeekday={props.monthStartWeekday}
+        weekStartsOn={gridDisplay.weekStartsOn}
+        maxEventsPerCell={gridDisplay.maxEventsPerCell}
+        calendarHexById={gridDisplay.calendarHexById}
         daysInMonth={props.daysInMonth}
         entries={props.entries}
         initialEvents={props.initialEvents}
