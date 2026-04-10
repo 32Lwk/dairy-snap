@@ -166,9 +166,14 @@ export type CalendarOpeningSettings = {
   rules?: CalendarOpeningRule[];
   /** ユーザー定義カテゴリ（表示名。内部 ID は labelToUserCategoryId で決定） */
   customCategoryLabels?: string[];
+  /** Google カレンダー ID → 分類デフォルト（ルール・キーワードより強く効かせる） */
+  calendarCategoryById?: Record<string, CalendarOpeningCategory>;
   /** カレンダー画面のグリッド表示オプション */
   gridDisplay?: CalendarGridDisplaySettings;
 };
+
+/** `calendarCategoryById` のスコア（キーワードルールより優先しやすい重み） */
+export const CALENDAR_DEFAULT_CATEGORY_WEIGHT = 100;
 
 export function normalizeCalendarGridDisplay(
   g: CalendarGridDisplaySettings | null | undefined,
@@ -242,6 +247,11 @@ export function stripCalendarOpeningCustomLabel(
   const nextLabels = (opening.customCategoryLabels ?? []).filter((l) => labelToUserCategoryId(l) !== id);
   const nextPo = (opening.priorityOrder ?? []).filter((c) => c !== id);
   const nextRules = (opening.rules ?? []).filter((r) => r.category !== id);
+  const prevCalCat = opening.calendarCategoryById;
+  const nextCalCat =
+    prevCalCat && Object.keys(prevCalCat).length > 0
+      ? Object.fromEntries(Object.entries(prevCalCat).filter(([, c]) => c !== id))
+      : undefined;
   const out: CalendarOpeningSettings = { ...opening };
   if (nextLabels.length) out.customCategoryLabels = nextLabels;
   else delete out.customCategoryLabels;
@@ -249,6 +259,8 @@ export function stripCalendarOpeningCustomLabel(
   else delete out.priorityOrder;
   if (nextRules.length) out.rules = nextRules;
   else delete out.rules;
+  if (nextCalCat && Object.keys(nextCalCat).length > 0) out.calendarCategoryById = nextCalCat;
+  else delete out.calendarCategoryById;
   return out;
 }
 
@@ -379,6 +391,21 @@ function parseCalendarOpening(raw: unknown): CalendarOpeningSettings | undefined
     if (out.length) rules = out;
   }
 
+  let calendarCategoryById: Record<string, CalendarOpeningCategory> | undefined;
+  const calCatRaw = o.calendarCategoryById;
+  if (calCatRaw && typeof calCatRaw === "object" && !Array.isArray(calCatRaw)) {
+    const rec: Record<string, CalendarOpeningCategory> = {};
+    let n = 0;
+    for (const [k, v] of Object.entries(calCatRaw as Record<string, unknown>)) {
+      if (n >= 40) break;
+      if (k.length > 400 || typeof v !== "string") continue;
+      if (!isAllowedCategory(v)) continue;
+      rec[k] = v as CalendarOpeningCategory;
+      n++;
+    }
+    if (Object.keys(rec).length) calendarCategoryById = rec;
+  }
+
   let gridDisplay: CalendarGridDisplaySettings | undefined;
   const gdRaw = o.gridDisplay;
   if (gdRaw && typeof gdRaw === "object" && !Array.isArray(gdRaw)) {
@@ -416,6 +443,7 @@ function parseCalendarOpening(raw: unknown): CalendarOpeningSettings | undefined
   if (priorityOrder?.length) out.priorityOrder = priorityOrder;
   if (rules?.length) out.rules = rules;
   if (customCategoryLabels?.length) out.customCategoryLabels = customCategoryLabels;
+  if (calendarCategoryById && Object.keys(calendarCategoryById).length) out.calendarCategoryById = calendarCategoryById;
   if (gridDisplay && Object.keys(gridDisplay).length) out.gridDisplay = gridDisplay;
   return Object.keys(out).length ? out : undefined;
 }

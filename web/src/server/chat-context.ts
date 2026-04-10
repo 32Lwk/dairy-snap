@@ -1,6 +1,7 @@
 import type { EncryptionMode } from "@/generated/prisma/enums";
 import type { CalendarOpeningCategory, CalendarOpeningSettings } from "@/lib/user-settings";
 import {
+  CALENDAR_DEFAULT_CATEGORY_WEIGHT,
   formatUserProfileForPrompt,
   normalizeCalendarOpeningPriorityOrder,
   parseUserSettings,
@@ -154,6 +155,9 @@ function scoreOpeningTopic(args: {
     }
 
     if (rb) add(rb.cat, rb.w, `role:${args.occupationRole}`);
+
+    const calDefault = args.calendarOpening?.calendarCategoryById?.[ev.calendarId];
+    if (calDefault) add(calDefault, CALENDAR_DEFAULT_CATEGORY_WEIGHT, "calendar:default");
 
     for (const r of rules) {
       const w = typeof r.weight === "number" ? r.weight : 5;

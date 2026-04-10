@@ -101,6 +101,12 @@ const profilePatchSchema = z
               }),
           })
           .optional(),
+        calendarCategoryById: z
+          .record(z.string().max(400), z.string().max(48))
+          .optional()
+          .refine((rec) => rec == null || Object.keys(rec).length <= 40, {
+            message: "calendarCategoryById が多すぎます",
+          }),
       })
       .optional(),
     /** AIの誤推測の訂正（短い箇条書き） */
