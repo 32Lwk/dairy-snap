@@ -76,17 +76,30 @@ const profilePatchSchema = z
     /** 開口トピックの分類・優先順位 */
     calendarOpening: z
       .object({
-        priorityOrder: z.array(z.string().max(32)).max(16).optional(),
+        priorityOrder: z.array(z.string().max(48)).max(32).optional(),
+        customCategoryLabels: z.array(z.string().min(1).max(24)).max(16).optional(),
         rules: z
           .array(
             z.object({
               kind: z.string().max(32),
               value: z.string().max(120),
-              category: z.string().max(32),
+              category: z.string().max(48),
               weight: z.number().min(-50).max(50).optional(),
             }),
           )
           .max(120)
+          .optional(),
+        gridDisplay: z
+          .object({
+            weekStartsOn: z.number().int().min(0).max(6).optional(),
+            maxEventsPerCell: z.number().int().min(1).max(5).optional(),
+            calendarHexById: z
+              .record(z.string().max(400), z.string().regex(/^#[0-9A-Fa-f]{6}$/i))
+              .optional()
+              .refine((rec) => rec == null || Object.keys(rec).length <= 40, {
+                message: "calendarHexById が多すぎます",
+              }),
+          })
           .optional(),
       })
       .optional(),
@@ -192,10 +205,11 @@ export async function PATCH(req: NextRequest) {
       onboardingCompletedAt: new Date().toISOString(),
     };
   } else if (parsed.data.profile !== undefined) {
-    profilePatch = { ...parsed.data.profile };
+    const next: Partial<UserProfileSettings> = { ...(parsed.data.profile as Partial<UserProfileSettings>) };
     if (parsed.data.finalizeOnboarding) {
-      profilePatch.onboardingCompletedAt = new Date().toISOString();
+      next.onboardingCompletedAt = new Date().toISOString();
     }
+    profilePatch = next;
   } else if (parsed.data.finalizeOnboarding) {
     const cur = parseUserSettings(existing.settings).profile ?? {};
     profilePatch = {

@@ -1,6 +1,10 @@
 import type { EncryptionMode } from "@/generated/prisma/enums";
 import type { CalendarOpeningCategory, CalendarOpeningSettings } from "@/lib/user-settings";
-import { formatUserProfileForPrompt, parseUserSettings } from "@/lib/user-settings";
+import {
+  formatUserProfileForPrompt,
+  normalizeCalendarOpeningPriorityOrder,
+  parseUserSettings,
+} from "@/lib/user-settings";
 import { prisma } from "@/server/db";
 import {
   fetchCalendarEventsForDay,
@@ -23,26 +27,8 @@ function truncate(s: string, n: number) {
   return `${t.slice(0, n)}…`;
 }
 
-const DEFAULT_PRIORITY: CalendarOpeningCategory[] = [
-  "job_hunt",
-  "parttime",
-  "date",
-  "school",
-  "health",
-  "family",
-  "hobby",
-  "other",
-];
-
 function normalizePriorityOrder(s: CalendarOpeningSettings | undefined): CalendarOpeningCategory[] {
-  const po = s?.priorityOrder ?? [];
-  const allow = new Set(DEFAULT_PRIORITY);
-  const filtered = po.filter(
-    (x): x is CalendarOpeningCategory =>
-      typeof x === "string" && allow.has(x as CalendarOpeningCategory),
-  );
-  const uniq = Array.from(new Set([...filtered, ...DEFAULT_PRIORITY]));
-  return uniq;
+  return normalizeCalendarOpeningPriorityOrder(s);
 }
 
 function hhmmTokyoFromIsoLike(isoLike: string): string {

@@ -7,7 +7,13 @@ import type {
   CalendarOpeningRule,
   CalendarOpeningSettings,
 } from "@/lib/user-settings";
-import { hydrateProfilePayloadForForms } from "@/lib/user-settings";
+import {
+  calendarOpeningCategoryOptions,
+  hydrateProfilePayloadForForms,
+  labelToUserCategoryId,
+  normalizeCalendarOpeningPriorityOrder,
+  stripCalendarOpeningCustomLabel,
+} from "@/lib/user-settings";
 import {
   emitLocalSettingsSavedFromJson,
   REMOTE_SETTINGS_UPDATED_EVENT,
@@ -51,6 +57,7 @@ export function SettingsForm() {
     calendars: { calendarId: string; calendarName: string; calendarColorId: string }[];
     colorIds: string[];
   } | null>(null);
+  const [customCatDraft, setCustomCatDraft] = useState("");
 
   const applySettingsJson = useCallback((json: SettingsPayload & { defaultWeatherLocation?: unknown }) => {
     setData(json);
@@ -216,28 +223,8 @@ export function SettingsForm() {
     }
   }
 
-  const CATS: { id: CalendarOpeningCategory; label: string }[] = [
-    { id: "job_hunt", label: "就活/面接" },
-    { id: "parttime", label: "バイト/シフト" },
-    { id: "date", label: "デート/恋愛" },
-    { id: "school", label: "授業/試験" },
-    { id: "health", label: "通院/健康" },
-    { id: "family", label: "家族/友人" },
-    { id: "hobby", label: "趣味/イベント" },
-    { id: "other", label: "その他" },
-  ];
-
-  function normalizePriorityOrder(po: unknown): CalendarOpeningCategory[] {
-    const allow = new Set(CATS.map((c) => c.id));
-    const arr = Array.isArray(po) ? po : [];
-    const filtered = arr.filter(
-      (x): x is CalendarOpeningCategory =>
-        typeof x === "string" && allow.has(x as CalendarOpeningCategory),
-    );
-    // 足りない分はデフォルト順で埋め、重複排除
-    const uniq = Array.from(new Set([...filtered, ...CATS.map((c) => c.id)]));
-    return uniq.slice(0, CATS.length);
-  }
+  const openingCatOptions = calendarOpeningCategoryOptions(opening);
+  const openingRuleCats = openingCatOptions.map(({ id, label }) => ({ id, label }));
 
   async function saveCalendarOpening(next: CalendarOpeningSettings) {
     setOpeningBusy(true);
@@ -258,6 +245,31 @@ export function SettingsForm() {
     } finally {
       setOpeningBusy(false);
     }
+  }
+
+  async function addCustomOpeningCategory() {
+    const lab = customCatDraft.normalize("NFKC").trim();
+    if (!lab) return;
+    if (lab.length > 24) {
+      setError("カテゴリ名は24文字以内にしてください");
+      return;
+    }
+    const id = labelToUserCategoryId(lab);
+    const labels = opening?.customCategoryLabels ?? [];
+    if (labels.some((x) => labelToUserCategoryId(x) === id)) {
+      setError("同じカテゴリが既にあります");
+      return;
+    }
+    if (labels.length >= 16) {
+      setError("カスタムカテゴリは16件までです");
+      return;
+    }
+    setError(null);
+    setCustomCatDraft("");
+    await saveCalendarOpening({
+      ...(opening ?? {}),
+      customCategoryLabels: [...labels, lab],
+    });
   }
 
   if (!data && !error) {
@@ -341,35 +353,83 @@ export function SettingsForm() {
           <div>
             <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">カテゴリの優先順位（上ほど優先）</p>
             <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {normalizePriorityOrder(opening?.priorityOrder).map((cat, idx) => (
+              {normalizeCalendarOpeningPriorityOrder(opening).map((cat, idx) => (
                 <label key={idx} className="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
                   <span className="w-6 shrink-0 text-[11px] text-zinc-500">#{idx + 1}</span>
                   <select
                     value={cat}
                     disabled={openingBusy}
                     onChange={(e) => {
-                      const cur = normalizePriorityOrder(opening?.priorityOrder);
+                      const cur = [...normalizeCalendarOpeningPriorityOrder(opening)];
                       cur[idx] = e.target.value as CalendarOpeningCategory;
                       setOpening((prev) => ({ ...(prev ?? {}), priorityOrder: cur }));
                     }}
                     className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
                   >
-                    {CATS.map((c) => (
+                    {openingCatOptions.map((c) => (
                       <option key={c.id} value={c.id}>
-                        {c.label}
+                        {c.custom ? `${c.label}（カスタム）` : c.label}
                       </option>
                     ))}
                   </select>
                 </label>
               ))}
             </div>
+            <div className="mt-3 flex flex-wrap items-end gap-2">
+              <label className="min-w-[10rem] flex-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                カスタムカテゴリを追加
+                <input
+                  value={customCatDraft}
+                  onChange={(e) => setCustomCatDraft(e.target.value)}
+                  maxLength={24}
+                  disabled={openingBusy}
+                  placeholder="自由入力（24文字まで）"
+                  className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                />
+              </label>
+              <button
+                type="button"
+                disabled={openingBusy}
+                onClick={() => void addCustomOpeningCategory()}
+                className="shrink-0 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium dark:border-zinc-700 dark:bg-zinc-950"
+              >
+                追加
+              </button>
+            </div>
+            {openingCatOptions.some((c) => c.custom) ? (
+              <ul className="mt-2 flex flex-wrap gap-2 text-[11px] text-zinc-600 dark:text-zinc-400">
+                {openingCatOptions
+                  .filter((c) => c.custom)
+                  .map((c) => (
+                    <li
+                      key={c.id}
+                      className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 dark:border-zinc-700 dark:bg-zinc-900/50"
+                    >
+                      <span>{c.label}</span>
+                      {opening ? (
+                        <button
+                          type="button"
+                          disabled={openingBusy}
+                          className="text-zinc-400 hover:text-red-600 disabled:opacity-40 dark:hover:text-red-400"
+                          title="削除"
+                          onClick={() =>
+                            void saveCalendarOpening(stripCalendarOpeningCustomLabel(opening, c.label))
+                          }
+                        >
+                          ×
+                        </button>
+                      ) : null}
+                    </li>
+                  ))}
+              </ul>
+            ) : null}
             <button
               type="button"
               disabled={openingBusy}
               onClick={() =>
                 void saveCalendarOpening({
                   ...(opening ?? {}),
-                  priorityOrder: normalizePriorityOrder(opening?.priorityOrder),
+                  priorityOrder: normalizeCalendarOpeningPriorityOrder(opening),
                 })
               }
               className="mt-3 rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
@@ -389,7 +449,7 @@ export function SettingsForm() {
                   key={i}
                   rule={r}
                   disabled={openingBusy}
-                  cats={CATS}
+                  cats={openingRuleCats}
                   calendars={openingOpts?.calendars ?? []}
                   colorIds={openingOpts?.colorIds ?? []}
                   onChange={(next) => {
@@ -420,7 +480,13 @@ export function SettingsForm() {
             <button
               type="button"
               disabled={openingBusy}
-              onClick={() => void saveCalendarOpening(opening ?? { priorityOrder: normalizePriorityOrder(undefined), rules: [] })}
+              onClick={() =>
+                void saveCalendarOpening({
+                  ...(opening ?? {}),
+                  priorityOrder: normalizeCalendarOpeningPriorityOrder(opening),
+                  rules: opening?.rules ?? [],
+                })
+              }
               className="mt-3 rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
             >
               ルールを保存

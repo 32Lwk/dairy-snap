@@ -5,7 +5,7 @@ import { formatInterestPicksForPrompt } from "@/lib/interest-taxonomy";
 import { labelForOccupationRole } from "@/lib/occupation-role";
 import { isLoveMbtiType, loveMbtiDisplayJa, loveMbtiUserPromptSubLines } from "@/lib/love-mbti";
 import { isMbtiType, mbtiDisplayJa } from "@/lib/mbti";
-import { formatTimetableForPrompt } from "@/lib/timetable";
+import { formatTimetableForPrompt, formatTimetableForPromptDaySlice } from "@/lib/timetable";
 
 export type DefaultWeatherLocation = {
   latitude: number;
@@ -88,15 +88,48 @@ export type UserProfileSettings = {
   aiCorrections?: string[];
 };
 
-export type CalendarOpeningCategory =
-  | "job_hunt"
-  | "parttime"
-  | "date"
-  | "school"
-  | "health"
-  | "family"
-  | "hobby"
-  | "other";
+export const CALENDAR_OPENING_USERCAT_PREFIX = "usercat:" as const;
+
+export const CALENDAR_OPENING_BUILTIN_IDS = [
+  "job_hunt",
+  "parttime",
+  "date",
+  "school",
+  "health",
+  "family",
+  "hobby",
+  "other",
+] as const;
+
+export type BuiltinCalendarOpeningCategory = (typeof CALENDAR_OPENING_BUILTIN_IDS)[number];
+
+/** 組み込み8種 + ユーザー追加（`usercat:` + スラッグ） */
+export type CalendarOpeningCategory = BuiltinCalendarOpeningCategory | `usercat:${string}`;
+
+export const CALENDAR_OPENING_BUILTIN_CATS: { id: BuiltinCalendarOpeningCategory; label: string }[] = [
+  { id: "job_hunt", label: "就活/面接" },
+  { id: "parttime", label: "バイト/シフト" },
+  { id: "date", label: "デート/恋愛" },
+  { id: "school", label: "授業/試験" },
+  { id: "health", label: "通院/健康" },
+  { id: "family", label: "家族/友人" },
+  { id: "hobby", label: "趣味/イベント" },
+  { id: "other", label: "その他" },
+];
+
+const CAL_USERCAT_ID_RE = /^usercat:[a-z0-9_]{1,32}$/;
+
+/** 表示ラベルから安定したカテゴリ ID を生成（保存・ルール参照に使う） */
+export function labelToUserCategoryId(label: string): CalendarOpeningCategory {
+  const t = label.normalize("NFKC").trim().toLowerCase();
+  const slug = t
+    .replace(/[^\p{L}\p{N}]+/gu, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "")
+    .slice(0, 32);
+  const s = slug.length > 0 ? slug : "custom";
+  return `${CALENDAR_OPENING_USERCAT_PREFIX}${s}` as CalendarOpeningCategory;
+}
 
 export type CalendarOpeningRuleKind =
   | "keyword"
@@ -114,12 +147,110 @@ export type CalendarOpeningRule = {
   weight?: number;
 };
 
+/** JS と同じ: 0=日曜 … 6=土曜。グリッド左端の列がこの曜日になる */
+export type CalendarWeekStartDay = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
+/** 月カレンダー・今日の予定リストの見た目（表示のみ） */
+export type CalendarGridDisplaySettings = {
+  weekStartsOn?: CalendarWeekStartDay;
+  /** 月グリッドの各マスに並べる予定の最大件数（1〜5） */
+  maxEventsPerCell?: number;
+  /** カレンダー ID → #rrggbb（ユーザー上書き） */
+  calendarHexById?: Record<string, string>;
+};
+
 export type CalendarOpeningSettings = {
   /** 優先順位（並べ替え）。未設定ならデフォルト順を使う */
   priorityOrder?: CalendarOpeningCategory[];
   /** 追加ルール */
   rules?: CalendarOpeningRule[];
+  /** ユーザー定義カテゴリ（表示名。内部 ID は labelToUserCategoryId で決定） */
+  customCategoryLabels?: string[];
+  /** カレンダー画面のグリッド表示オプション */
+  gridDisplay?: CalendarGridDisplaySettings;
 };
+
+export function normalizeCalendarGridDisplay(
+  g: CalendarGridDisplaySettings | null | undefined,
+): { weekStartsOn: CalendarWeekStartDay; maxEventsPerCell: number; calendarHexById: Record<string, string> } {
+  const rawWs = g?.weekStartsOn;
+  const weekStartsOn: CalendarWeekStartDay =
+    typeof rawWs === "number" && Number.isInteger(rawWs) && rawWs >= 0 && rawWs <= 6
+      ? (rawWs as CalendarWeekStartDay)
+      : 0;
+  const raw = g?.maxEventsPerCell;
+  const maxEventsPerCell =
+    typeof raw === "number" && Number.isInteger(raw) && raw >= 1 && raw <= 5 ? raw : 2;
+  const src = g?.calendarHexById;
+  const calendarHexById: Record<string, string> = {};
+  if (src && typeof src === "object" && !Array.isArray(src)) {
+    let n = 0;
+    for (const [k, v] of Object.entries(src)) {
+      if (n >= 40) break;
+      if (k.length > 400 || typeof v !== "string") continue;
+      const hex = v.trim();
+      if (!/^#[0-9A-Fa-f]{6}$/.test(hex)) continue;
+      calendarHexById[k] = hex.toLowerCase();
+      n++;
+    }
+  }
+  return { weekStartsOn, maxEventsPerCell, calendarHexById };
+}
+
+export function calendarOpeningCategoryOptions(
+  opening: CalendarOpeningSettings | null | undefined,
+): { id: CalendarOpeningCategory; label: string; custom: boolean }[] {
+  const builtins = CALENDAR_OPENING_BUILTIN_CATS.map((c) => ({ ...c, custom: false as const }));
+  const seen = new Set<string>(builtins.map((b) => b.id));
+  const out: { id: CalendarOpeningCategory; label: string; custom: boolean }[] = [...builtins];
+  for (const lab of opening?.customCategoryLabels ?? []) {
+    if (typeof lab !== "string") continue;
+    const trimmed = lab.normalize("NFKC").trim();
+    if (!trimmed) continue;
+    const id = labelToUserCategoryId(trimmed);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push({ id, label: trimmed, custom: true });
+  }
+  return out;
+}
+
+/** 優先順位配列を正規化（組み込み・カスタムを統合、最大32件） */
+export function normalizeCalendarOpeningPriorityOrder(
+  opening: CalendarOpeningSettings | null | undefined,
+): CalendarOpeningCategory[] {
+  const builtins = [...CALENDAR_OPENING_BUILTIN_IDS] as CalendarOpeningCategory[];
+  const customIds = (opening?.customCategoryLabels ?? []).map((l) => labelToUserCategoryId(l));
+  const allow = new Set<string>([...builtins, ...customIds]);
+  const po = opening?.priorityOrder ?? [];
+  const filtered = po.filter((x): x is CalendarOpeningCategory => typeof x === "string" && allow.has(x));
+  const uniq: CalendarOpeningCategory[] = [];
+  const push = (x: CalendarOpeningCategory) => {
+    if (!uniq.includes(x)) uniq.push(x);
+  };
+  for (const x of filtered) push(x);
+  for (const x of builtins) push(x);
+  for (const x of customIds) push(x);
+  return uniq.slice(0, 32);
+}
+
+export function stripCalendarOpeningCustomLabel(
+  opening: CalendarOpeningSettings,
+  label: string,
+): CalendarOpeningSettings {
+  const id = labelToUserCategoryId(label);
+  const nextLabels = (opening.customCategoryLabels ?? []).filter((l) => labelToUserCategoryId(l) !== id);
+  const nextPo = (opening.priorityOrder ?? []).filter((c) => c !== id);
+  const nextRules = (opening.rules ?? []).filter((r) => r.category !== id);
+  const out: CalendarOpeningSettings = { ...opening };
+  if (nextLabels.length) out.customCategoryLabels = nextLabels;
+  else delete out.customCategoryLabels;
+  if (nextPo.length) out.priorityOrder = nextPo;
+  else delete out.priorityOrder;
+  if (nextRules.length) out.rules = nextRules;
+  else delete out.rules;
+  return out;
+}
 
 export type AppUserSettings = {
   defaultWeatherLocation?: DefaultWeatherLocation;
@@ -175,16 +306,7 @@ function parseWorkLifeAnswers(raw: unknown): Record<string, string> | undefined 
 function parseCalendarOpening(raw: unknown): CalendarOpeningSettings | undefined {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const o = raw as Record<string, unknown>;
-  const allowedCat = new Set<CalendarOpeningCategory>([
-    "job_hunt",
-    "parttime",
-    "date",
-    "school",
-    "health",
-    "family",
-    "hobby",
-    "other",
-  ]);
+  const builtinCat = new Set<string>(CALENDAR_OPENING_BUILTIN_IDS);
   const allowedKind = new Set<CalendarOpeningRuleKind>([
     "keyword",
     "calendarId",
@@ -193,13 +315,39 @@ function parseCalendarOpening(raw: unknown): CalendarOpeningSettings | undefined
     "description",
   ]);
 
+  const MAX_CUSTOM_LABELS = 16;
+  const MAX_LABEL_LEN = 24;
+
+  let customCategoryLabels: string[] | undefined;
+  if (Array.isArray(o.customCategoryLabels)) {
+    const seenId = new Set<string>();
+    const labs: string[] = [];
+    for (const x of o.customCategoryLabels) {
+      if (typeof x !== "string") continue;
+      const lab = x.normalize("NFKC").trim().slice(0, MAX_LABEL_LEN);
+      if (!lab) continue;
+      const id = labelToUserCategoryId(lab);
+      if (seenId.has(id)) continue;
+      seenId.add(id);
+      labs.push(lab);
+      if (labs.length >= MAX_CUSTOM_LABELS) break;
+    }
+    if (labs.length) customCategoryLabels = labs;
+  }
+
+  const customIds = new Set((customCategoryLabels ?? []).map((l) => labelToUserCategoryId(l)));
+  const isAllowedCategory = (cat: string): cat is CalendarOpeningCategory => {
+    if (builtinCat.has(cat)) return true;
+    if (!CAL_USERCAT_ID_RE.test(cat)) return false;
+    return customIds.has(cat as CalendarOpeningCategory);
+  };
+
   let priorityOrder: CalendarOpeningCategory[] | undefined;
   if (Array.isArray(o.priorityOrder)) {
     const po = o.priorityOrder
-      .filter((x): x is CalendarOpeningCategory => typeof x === "string" && allowedCat.has(x as CalendarOpeningCategory))
-      .slice(0, 16);
+      .filter((x): x is CalendarOpeningCategory => typeof x === "string" && isAllowedCategory(x))
+      .slice(0, 32);
     if (po.length) {
-      // 重複排除（順序維持）
       priorityOrder = Array.from(new Set(po));
     }
   }
@@ -217,7 +365,7 @@ function parseCalendarOpening(raw: unknown): CalendarOpeningSettings | undefined
       const weight =
         typeof weightRaw === "number" ? weightRaw : typeof weightRaw === "string" ? Number(weightRaw) : undefined;
       if (!allowedKind.has(kind as CalendarOpeningRuleKind)) continue;
-      if (!allowedCat.has(category as CalendarOpeningCategory)) continue;
+      if (!isAllowedCategory(category)) continue;
       if (!value || value.length > 120) continue;
       const w = Number.isFinite(weight ?? NaN) ? Math.max(-50, Math.min(50, Number(weight))) : undefined;
       out.push({
@@ -231,9 +379,44 @@ function parseCalendarOpening(raw: unknown): CalendarOpeningSettings | undefined
     if (out.length) rules = out;
   }
 
+  let gridDisplay: CalendarGridDisplaySettings | undefined;
+  const gdRaw = o.gridDisplay;
+  if (gdRaw && typeof gdRaw === "object" && !Array.isArray(gdRaw)) {
+    const g = gdRaw as Record<string, unknown>;
+    const sub: CalendarGridDisplaySettings = {};
+    if (
+      typeof g.weekStartsOn === "number" &&
+      Number.isInteger(g.weekStartsOn) &&
+      g.weekStartsOn >= 0 &&
+      g.weekStartsOn <= 6
+    ) {
+      sub.weekStartsOn = g.weekStartsOn as CalendarWeekStartDay;
+    }
+    if (typeof g.maxEventsPerCell === "number" && Number.isInteger(g.maxEventsPerCell)) {
+      const n = g.maxEventsPerCell;
+      if (n >= 1 && n <= 5) sub.maxEventsPerCell = n;
+    }
+    if (g.calendarHexById && typeof g.calendarHexById === "object" && !Array.isArray(g.calendarHexById)) {
+      const hexRec: Record<string, string> = {};
+      let c = 0;
+      for (const [k, v] of Object.entries(g.calendarHexById as Record<string, unknown>)) {
+        if (c >= 40) break;
+        if (k.length > 400 || typeof v !== "string") continue;
+        const hex = v.trim();
+        if (!/^#[0-9A-Fa-f]{6}$/.test(hex)) continue;
+        hexRec[k] = hex.toLowerCase();
+        c++;
+      }
+      if (Object.keys(hexRec).length) sub.calendarHexById = hexRec;
+    }
+    if (Object.keys(sub).length) gridDisplay = sub;
+  }
+
   const out: CalendarOpeningSettings = {};
   if (priorityOrder?.length) out.priorityOrder = priorityOrder;
   if (rules?.length) out.rules = rules;
+  if (customCategoryLabels?.length) out.customCategoryLabels = customCategoryLabels;
+  if (gridDisplay && Object.keys(gridDisplay).length) out.gridDisplay = gridDisplay;
   return Object.keys(out).length ? out : undefined;
 }
 

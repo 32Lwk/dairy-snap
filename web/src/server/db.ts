@@ -3,7 +3,7 @@ import { Pool } from "pg";
 import { PrismaClient } from "@/generated/prisma/client";
 
 /** 開発時: Prisma スキーマ変更後に古い PrismaClient が global に残るとバリデーションがズレるため、更新時はバージョンを上げる */
-const PRISMA_DEV_CACHE_VERSION = 3;
+const PRISMA_DEV_CACHE_VERSION = 4;
 
 const globalForPrisma = globalThis as unknown as {
   prisma?: PrismaClient;
