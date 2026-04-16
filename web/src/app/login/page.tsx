@@ -1,4 +1,5 @@
-import { signIn } from "@/auth";
+import { AuthSessionProvider } from "@/components/auth-session-provider";
+import { GoogleSignInButton } from "./google-sign-in-button";
 
 export default async function LoginPage({
   searchParams,
@@ -26,20 +27,11 @@ export default async function LoginPage({
           </p>
         )}
 
-        <form
-          className="mt-6"
-          action={async () => {
-            "use server";
-            await signIn("google", { redirectTo: next });
-          }}
-        >
-          <button
-            type="submit"
-            className="inline-flex w-full items-center justify-center rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-zinc-800 active:bg-zinc-950 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-white"
-          >
-            Google でログイン
-          </button>
-        </form>
+        <AuthSessionProvider>
+          <div className="mt-6">
+            <GoogleSignInButton callbackUrl={next} />
+          </div>
+        </AuthSessionProvider>
       </div>
     </div>
   );

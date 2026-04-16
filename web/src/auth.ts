@@ -32,6 +32,9 @@ async function syncAllowlistFlag(userId: string, email: string | null | undefine
 }
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
+  // 本番で Cloudflare / Cloud Run 等のプロキシ背後でもコールバック URL を正しく解決する
+  trustHost: true,
+  secret: env.AUTH_SECRET,
   adapter: PrismaAdapter(prisma),
   providers: [
     Google({
