@@ -23,9 +23,15 @@ export default async function proxy(req: NextRequest) {
     return NextResponse.next();
   }
 
+  // HTTPS では `__Secure-authjs.session-token`。getToken に secureCookie: true が必要。
+  const forwardedProto = req.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+  const secureCookie =
+    nextUrl.protocol === "https:" || forwardedProto === "https";
+
   const token = await getToken({
     req,
     secret: process.env.AUTH_SECRET,
+    secureCookie,
   });
 
   const isApi = nextUrl.pathname.startsWith("/api/");
