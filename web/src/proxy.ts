@@ -2,7 +2,12 @@ import { getToken } from "next-auth/jwt";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-export async function middleware(req: NextRequest) {
+/**
+ * Next.js 16+: `middleware` is deprecated in favor of `proxy`.
+ * Proxy は既定で Node.js ランタイムのため、`next-auth/jwt` → jose の JWE 復号（CompressionStream 等）が Edge で落ちる問題を避けられる。
+ * @see https://nextjs.org/docs/app/api-reference/file-conventions/proxy
+ */
+export default async function proxy(req: NextRequest) {
   const { nextUrl } = req;
 
   if (nextUrl.pathname.startsWith("/api/auth")) {

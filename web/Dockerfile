@@ -23,6 +23,13 @@ ENV DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/postgres?schema=p
 RUN npx prisma generate
 RUN npm run build
 
+FROM base AS migrate-tool
+WORKDIR /migrate
+COPY prisma ./prisma
+COPY prisma.config.ts ./
+RUN echo '{"private":true,"dependencies":{"prisma":"7.6.0","dotenv":"17.3.1"}}' > package.json \
+  && npm install
+
 FROM base AS runner
 RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates \
   && rm -rf /var/lib/apt/lists/* \
@@ -32,9 +39,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-cert
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=migrate-tool --chown=nextjs:nodejs /migrate /migrate
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh && chown nextjs:nodejs /app/docker-entrypoint.sh
 
+WORKDIR /app
 USER nextjs
 EXPOSE 8080
 ENV HOSTNAME=0.0.0.0
 
-CMD ["node", "server.js"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
