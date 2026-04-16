@@ -31,9 +31,16 @@ async function syncAllowlistFlag(userId: string, email: string | null | undefine
   });
 }
 
+function allowlistAllowsEmail(email: string | null | undefined) {
+  const normalized = email ? normalizeEmail(email) : null;
+  return Boolean(normalized && getAllowedEmails().has(normalized));
+}
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
   // 本番で Cloudflare / Cloud Run 等のプロキシ背後でもコールバック URL を正しく解決する
   trustHost: true,
+  basePath: "/api/auth",
+  debug: env.AUTH_DEBUG === "1",
   secret: env.AUTH_SECRET,
   adapter: PrismaAdapter(prisma),
   providers: [
@@ -56,12 +63,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     },
     async jwt({ token, user, trigger, session }): Promise<JWT> {
       if (user?.id) {
-        await syncAllowlistFlag(user.id, user.email);
-        const u = await prisma.user.findUnique({ where: { id: user.id } });
+        // isAllowed は ALLOWED_EMAILS と同じルールで決める（JWT 内の余計な Prisma読み取りを避け、失敗時もログインが Configuration に化けにくくする）
         token.sub = user.id;
         token.id = user.id;
-        token.isAllowed = u?.isAllowed ?? false;
+        token.isAllowed = allowlistAllowsEmail(user.email);
         if (user.email) token.email = user.email;
+        void syncAllowlistFlag(user.id, user.email).catch((err) => {
+          console.error("[auth] syncAllowlistFlag (jwt)", err);
+        });
       }
       if (trigger === "update" && session && typeof session === "object") {
         const s = session as { isAllowed?: boolean };
@@ -88,37 +97,51 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
      * ここで `accounts` を更新して refresh_token / scope を保持する。
      */
     async signIn({ user, account }) {
-      if (user.id) await syncAllowlistFlag(user.id, user.email);
+      if (user.id) {
+        try {
+          await syncAllowlistFlag(user.id, user.email);
+        } catch (err) {
+          console.error("[auth] events.signIn syncAllowlistFlag", err);
+        }
+      }
       if (account?.provider === "google" && user.id) {
-        const a = account as {
-          providerAccountId?: string;
-          refresh_token?: string | null;
-          access_token?: string | null;
-          expires_at?: number | null;
-          token_type?: string | null;
-          scope?: string | null;
-        };
-        const data: {
-          refresh_token?: string | null;
-          access_token?: string | null;
-          expires_at?: number | null;
-          token_type?: string | null;
-          scope?: string | null;
-        } = {};
-        if (a.refresh_token) data.refresh_token = a.refresh_token;
-        if (a.access_token) data.access_token = a.access_token;
-        if (a.expires_at != null) data.expires_at = a.expires_at;
-        if (a.token_type) data.token_type = a.token_type;
-        if (a.scope) data.scope = a.scope;
-        if (Object.keys(data).length === 0) return;
-        await prisma.account.updateMany({
-          where: { userId: user.id, provider: "google" },
-          data,
-        });
+        try {
+          const a = account as {
+            providerAccountId?: string;
+            refresh_token?: string | null;
+            access_token?: string | null;
+            expires_at?: number | null;
+            token_type?: string | null;
+            scope?: string | null;
+          };
+          const data: {
+            refresh_token?: string | null;
+            access_token?: string | null;
+            expires_at?: number | null;
+            token_type?: string | null;
+            scope?: string | null;
+          } = {};
+          if (a.refresh_token) data.refresh_token = a.refresh_token;
+          if (a.access_token) data.access_token = a.access_token;
+          if (a.expires_at != null) data.expires_at = a.expires_at;
+          if (a.token_type) data.token_type = a.token_type;
+          if (a.scope) data.scope = a.scope;
+          if (Object.keys(data).length === 0) return;
+          await prisma.account.updateMany({
+            where: { userId: user.id, provider: "google" },
+            data,
+          });
+        } catch (err) {
+          console.error("[auth] events.signIn account tokens", err);
+        }
       }
     },
     async createUser({ user }) {
-      if (user.id) await syncAllowlistFlag(user.id, user.email);
+      try {
+        if (user.id) await syncAllowlistFlag(user.id, user.email);
+      } catch (err) {
+        console.error("[auth] events.createUser", err);
+      }
     },
   },
   session: { strategy: "jwt" },

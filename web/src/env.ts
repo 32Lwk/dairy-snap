@@ -7,6 +7,10 @@ export const env = createEnv({
     process.env.SKIP_ENV_VALIDATION === "true",
   server: {
     AUTH_SECRET: z.string().min(1),
+    /** Canonical site URL (e.g. https://snap.yutok.dev). Recommended behind Cloud Run / reverse proxies. */
+    AUTH_URL: z.string().url().optional(),
+    /** Set to `1` to enable Auth.js debug logs (temporary production troubleshooting). */
+    AUTH_DEBUG: z.string().optional(),
     AUTH_GOOGLE_ID: z.string().min(1),
     AUTH_GOOGLE_SECRET: z.string().min(1),
     ALLOWED_EMAILS: z.string().min(1),
@@ -19,6 +23,8 @@ export const env = createEnv({
   },
   runtimeEnv: {
     AUTH_SECRET: process.env.AUTH_SECRET,
+    AUTH_URL: process.env.AUTH_URL,
+    AUTH_DEBUG: process.env.AUTH_DEBUG,
     AUTH_GOOGLE_ID: process.env.AUTH_GOOGLE_ID,
     AUTH_GOOGLE_SECRET: process.env.AUTH_GOOGLE_SECRET,
     ALLOWED_EMAILS: process.env.ALLOWED_EMAILS,
