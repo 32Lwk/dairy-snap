@@ -19,6 +19,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV SKIP_ENV_VALIDATION=1
 ENV NODE_OPTIONS=--max-old-space-size=4096
+ENV DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/postgres?schema=public
 RUN npx prisma generate
 RUN npm run build
 
