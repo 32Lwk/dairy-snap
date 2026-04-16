@@ -1,6 +1,8 @@
 "use client";
 
+import { PlaceCoordsLine } from "@/components/place-coords-line";
 import { WeatherAmPmDisplay } from "@/components/weather-am-pm-display";
+import { reverseGeocodeClient } from "@/lib/reverse-geocode-client";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -44,12 +46,27 @@ export function EntryActions({
   const [msg, setMsg] = useState<string | null>(null);
   const [latIn, setLatIn] = useState(latitude != null ? String(latitude) : "");
   const [lonIn, setLonIn] = useState(longitude != null ? String(longitude) : "");
+  const [placeLine, setPlaceLine] = useState<string | null>(null);
 
   const wj = weatherJson as WeatherJson | null;
 
   useEffect(() => {
     setLatIn(latitude != null ? String(latitude) : "");
     setLonIn(longitude != null ? String(longitude) : "");
+  }, [latitude, longitude]);
+
+  useEffect(() => {
+    if (latitude == null || longitude == null) {
+      setPlaceLine(null);
+      return;
+    }
+    let cancelled = false;
+    void reverseGeocodeClient(latitude, longitude).then((line) => {
+      if (!cancelled) setPlaceLine(line);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [latitude, longitude]);
 
   async function run(kind: "title" | "tags" | "daily_summary") {
@@ -132,9 +149,12 @@ export function EntryActions({
     setMsg(null);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        setLatIn(String(pos.coords.latitude));
-        setLonIn(String(pos.coords.longitude));
+        const la = pos.coords.latitude;
+        const lo = pos.coords.longitude;
+        setLatIn(String(la));
+        setLonIn(String(lo));
         setBusy(null);
+        void reverseGeocodeClient(la, lo).then(setPlaceLine);
         setMsg("現在地を入力欄に反映しました（保存は「位置を保存」）");
       },
       () => {
@@ -297,25 +317,36 @@ export function EntryActions({
             {wj.locationNote ? ` · ${wj.locationNote}` : ""}
           </p>
         ) : null}
+        {(() => {
+          const la = parseFloat(latIn);
+          const lo = parseFloat(lonIn);
+          const ok = !Number.isNaN(la) && !Number.isNaN(lo);
+          return (
+            <PlaceCoordsLine placeLine={placeLine} latitude={ok ? la : NaN} longitude={ok ? lo : NaN} />
+          );
+        })()}
         <div className="mt-2 flex flex-wrap items-end gap-2">
-          <label className="text-xs text-zinc-600 dark:text-zinc-400">
-            緯度
-            <input
-              value={latIn}
-              onChange={(e) => setLatIn(e.target.value)}
-              className="ml-1 w-28 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-              inputMode="decimal"
-            />
-          </label>
-          <label className="text-xs text-zinc-600 dark:text-zinc-400">
-            経度
-            <input
-              value={lonIn}
-              onChange={(e) => setLonIn(e.target.value)}
-              className="ml-1 w-28 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-              inputMode="decimal"
-            />
-          </label>
+          <input
+            value={latIn}
+            onChange={(e) => {
+              setLatIn(e.target.value);
+              setPlaceLine(null);
+            }}
+            aria-label="\u7def\u5ea6"
+            className="w-28 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+            inputMode="decimal"
+          />
+          <input
+            value={lonIn}
+            onChange={(e) => {
+              setLonIn(e.target.value);
+              setPlaceLine(null);
+            }}
+            aria-label="\u7d4c\u5ea6"
+            className="w-28 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+            inputMode="decimal"
+          />
+
           <button
             type="button"
             disabled={busy !== null}

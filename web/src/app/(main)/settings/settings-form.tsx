@@ -1,5 +1,6 @@
 "use client";
 
+import { PlaceCoordsLine } from "@/components/place-coords-line";
 import { SettingsAccountActions } from "@/components/settings-account-actions";
 import { UserProfileForm, type UserProfilePayload } from "@/components/user-profile-form";
 import type {
@@ -18,6 +19,7 @@ import {
   emitLocalSettingsSavedFromJson,
   REMOTE_SETTINGS_UPDATED_EVENT,
 } from "@/lib/settings-sync-client";
+import { reverseGeocodeClient } from "@/lib/reverse-geocode-client";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
@@ -51,6 +53,8 @@ export function SettingsForm() {
   const [latIn, setLatIn] = useState("");
   const [lonIn, setLonIn] = useState("");
   const [labelIn, setLabelIn] = useState("");
+  const [placeLine, setPlaceLine] = useState<string | null>(null);
+  const [geoBusy, setGeoBusy] = useState(false);
   const [opening, setOpening] = useState<CalendarOpeningSettings | null>(null);
   const [openingBusy, setOpeningBusy] = useState(false);
   const [openingOpts, setOpeningOpts] = useState<{
@@ -66,10 +70,12 @@ export function SettingsForm() {
       setLatIn(String(loc.latitude));
       setLonIn(String(loc.longitude));
       setLabelIn(loc.label ?? "");
+      void reverseGeocodeClient(loc.latitude, loc.longitude).then(setPlaceLine);
     } else {
       setLatIn("");
       setLonIn("");
       setLabelIn("");
+      setPlaceLine(null);
     }
     setOpening((json.profile as UserProfilePayload | undefined)?.calendarOpening ?? null);
   }, []);
@@ -165,6 +171,15 @@ export function SettingsForm() {
         return;
       }
       emitLocalSettingsSavedFromJson(json);
+      const nw = json.user?.defaultWeatherLocation as
+        | { latitude?: number; longitude?: number }
+        | null
+        | undefined;
+      if (nw && typeof nw.latitude === "number" && typeof nw.longitude === "number") {
+        void reverseGeocodeClient(nw.latitude, nw.longitude).then(setPlaceLine);
+      } else {
+        setPlaceLine(null);
+      }
       setData((d) =>
         d
           ? {
@@ -196,10 +211,35 @@ export function SettingsForm() {
       setLatIn("");
       setLonIn("");
       setLabelIn("");
+      setPlaceLine(null);
       setData((d) => (d ? { ...d, defaultWeatherLocation: null } : d));
     } finally {
       setSaving(false);
     }
+  }
+
+  function useDefaultLocationGeolocation() {
+    if (!navigator.geolocation) {
+      setError("この環境では位置情報が使えません");
+      return;
+    }
+    setGeoBusy(true);
+    setError(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const la = pos.coords.latitude;
+        const lo = pos.coords.longitude;
+        setLatIn(String(la));
+        setLonIn(String(lo));
+        setGeoBusy(false);
+        void reverseGeocodeClient(la, lo).then(setPlaceLine);
+      },
+      () => {
+        setGeoBusy(false);
+        setError("位置情報の取得に失敗しました");
+      },
+      { enableHighAccuracy: true, timeout: 15_000 },
+    );
   }
 
   async function saveMode(mode: "STANDARD" | "EXPERIMENTAL_E2EE") {
@@ -500,36 +540,42 @@ export function SettingsForm() {
         <p className="mt-1 text-xs text-zinc-500">
           エントリに位置がないときの天気取得（午前・午後）に使います。エントリに位置を保存した場合はそちらが優先されます。
         </p>
-        <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
-          <label className="text-xs text-zinc-600 dark:text-zinc-400">
-            緯度
-            <input
-              value={latIn}
-              onChange={(e) => setLatIn(e.target.value)}
-              className="ml-1 w-28 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-              inputMode="decimal"
-            />
-          </label>
-          <label className="text-xs text-zinc-600 dark:text-zinc-400">
-            経度
-            <input
-              value={lonIn}
-              onChange={(e) => setLonIn(e.target.value)}
-              className="ml-1 w-28 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-              inputMode="decimal"
-            />
-          </label>
-          <label className="min-w-0 flex-1 text-xs text-zinc-600 dark:text-zinc-400 sm:min-w-[8rem]">
-            表示名（任意）
-            <input
-              value={labelIn}
-              onChange={(e) => setLabelIn(e.target.value)}
-              className="ml-1 w-full rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-              placeholder="自宅など"
-            />
-          </label>
-        </div>
-        <div className="mt-3 flex flex-wrap gap-2">
+        {(() => {
+          const la = parseFloat(latIn);
+          const lo = parseFloat(lonIn);
+          const ok = !Number.isNaN(la) && !Number.isNaN(lo);
+          return (
+            <PlaceCoordsLine placeLine={placeLine} latitude={ok ? la : NaN} longitude={ok ? lo : NaN} />
+          );
+        })()}
+        <div className="mt-2 flex flex-wrap items-end gap-2">
+          <input
+            value={latIn}
+            onChange={(e) => {
+              setLatIn(e.target.value);
+              setPlaceLine(null);
+            }}
+            aria-label="緯度"
+            className="w-28 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+            inputMode="decimal"
+          />
+          <input
+            value={lonIn}
+            onChange={(e) => {
+              setLonIn(e.target.value);
+              setPlaceLine(null);
+            }}
+            aria-label="経度"
+            className="w-28 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+            inputMode="decimal"
+          />
+          <input
+            value={labelIn}
+            onChange={(e) => setLabelIn(e.target.value)}
+            aria-label="表示名（任意）"
+            placeholder="表示名（任意）・自宅など"
+            className="min-w-[10rem] flex-1 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950 sm:min-w-[12rem]"
+          />
           <button
             type="button"
             disabled={saving}
@@ -537,6 +583,14 @@ export function SettingsForm() {
             className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
           >
             既定地点を保存
+          </button>
+          <button
+            type="button"
+            disabled={saving || geoBusy}
+            onClick={() => useDefaultLocationGeolocation()}
+            className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm dark:border-zinc-700"
+          >
+            {geoBusy ? "…" : "現在地"}
           </button>
           <button
             type="button"

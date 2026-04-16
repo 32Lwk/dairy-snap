@@ -32,15 +32,20 @@ export async function middleware(req: NextRequest) {
   const isAuthed = Boolean(token);
   const isAllowed = Boolean(token?.isAllowed);
 
-  if (!isAuthed && (isApi || !isLogin)) {
-    const url = new URL("/login", nextUrl);
-    url.searchParams.set("next", nextUrl.pathname);
-    return NextResponse.redirect(url);
+  if (!isAuthed) {
+    if (isApi) {
+      return NextResponse.json({ error: "未ログインです" }, { status: 401 });
+    }
+    if (!isLogin) {
+      const url = new URL("/login", nextUrl);
+      url.searchParams.set("next", nextUrl.pathname);
+      return NextResponse.redirect(url);
+    }
   }
 
   if (isAuthed && !isAllowed && !isLogin && !isForbidden) {
     if (isApi && !isAccountMeApi && !isAccountDeleteApi) {
-      return new NextResponse("Forbidden", { status: 403 });
+      return NextResponse.json({ error: "利用が許可されていません" }, { status: 403 });
     }
     if (!isApi) {
       return NextResponse.redirect(new URL("/forbidden", nextUrl));

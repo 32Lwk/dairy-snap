@@ -11,3 +11,6 @@ web/.git_backup*/
 # Environment files (do not push secrets)
 web/.env
 
+# Local upload cache (dev)
+.uploads/
+

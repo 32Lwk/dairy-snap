@@ -237,12 +237,15 @@ export function EntryChat({
     try {
       const res = await fetch(`/api/chat-threads/${id}`, { method: "DELETE" });
       if (!res.ok) {
-        setError("スレッドの削除に失敗しました");
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(typeof data.error === "string" ? data.error : "スレッドの削除に失敗しました");
         return;
       }
       setMessages([]);
       setTid(null);
       router.refresh();
+    } catch {
+      setError("通信に失敗しました。接続やログイン状態を確認してください。");
     } finally {
       setBusy(false);
     }
