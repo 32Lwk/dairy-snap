@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-cert
 COPY web/package.json web/package-lock.json ./
 COPY web/prisma ./prisma/
 COPY web/prisma.config.ts ./
-RUN npm ci
+RUN npm ci --ignore-scripts
 
 FROM base AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates \
@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-cert
 COPY --from=deps /app/node_modules ./node_modules
 COPY web/. .
 ENV SKIP_ENV_VALIDATION=1
+RUN npx prisma generate
 RUN npm run build
 
 FROM base AS runner
