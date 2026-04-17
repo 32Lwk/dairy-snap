@@ -1,10 +1,16 @@
 import type { EncryptionMode } from "@/generated/prisma/enums";
+import {
+  applyProfileSignalsToOpeningScores,
+  type OpeningProfileSignalsInput,
+} from "@/lib/calendar-opening-profile-signals";
 import type { CalendarOpeningCategory, CalendarOpeningSettings } from "@/lib/user-settings";
 import {
+  addCalendarOpeningBuiltinTextHints,
   CALENDAR_DEFAULT_CATEGORY_WEIGHT,
   formatUserProfileForPrompt,
   normalizeCalendarOpeningPriorityOrder,
   parseUserSettings,
+  pickWinningCalendarCategory,
 } from "@/lib/user-settings";
 import { prisma } from "@/server/db";
 import {
@@ -85,6 +91,8 @@ function scoreOpeningTopic(args: {
   }[];
   occupationRole: string;
   calendarOpening: CalendarOpeningSettings | undefined;
+  /** After calendar-based scores: interest / avoid / focus (layer A). */
+  profileSignals?: OpeningProfileSignalsInput | null;
 }): {
   primary: {
     evIdx: number;
@@ -107,15 +115,6 @@ function scoreOpeningTopic(args: {
   const rules = args.calendarOpening?.rules ?? [];
   const priority = normalizePriorityOrder(args.calendarOpening);
 
-  const builtin: { cat: CalendarOpeningCategory; words: string[]; w: number }[] = [
-    { cat: "job_hunt", words: ["面接", "ES", "説明会", "選考", "内定", "インターン", "面談", "リクルーター"], w: 6 },
-    { cat: "parttime", words: ["バイト", "アルバイト", "シフト", "出勤", "退勤", "勤務", "レジ"], w: 6 },
-    { cat: "date", words: ["デート", "記念日", "彼氏", "彼女", "交際", "告白"], w: 6 },
-    { cat: "school", words: ["講義", "授業", "ゼミ", "試験", "テスト", "レポート", "課題", "発表"], w: 6 },
-    { cat: "health", words: ["病院", "通院", "歯医者", "クリニック", "検診", "薬"], w: 6 },
-    { cat: "family", words: ["帰省", "家族", "友達", "友人", "飲み会", "同窓会"], w: 4 },
-    { cat: "hobby", words: ["ライブ", "映画", "展示", "イベント", "舞台", "フェス", "観戦", "配信"], w: 4 },
-  ];
 
   const roleBoost: Partial<Record<string, { cat: CalendarOpeningCategory; w: number }>> = {
     student: { cat: "school", w: 3 },
@@ -148,11 +147,7 @@ function scoreOpeningTopic(args: {
       scores.set(cat, cur);
     };
 
-    for (const b of builtin) {
-      for (const w of b.words) {
-        if (hay.includes(w.toLowerCase())) add(b.cat, b.w, `kw:${w}`);
-      }
-    }
+    addCalendarOpeningBuiltinTextHints(hay, (cat, w) => add(cat, w, "builtin"));
 
     if (rb) add(rb.cat, rb.w, `role:${args.occupationRole}`);
 
@@ -186,17 +181,11 @@ function scoreOpeningTopic(args: {
     // 最低でも「予定がある」こと自体を other に寄せる
     add("other", 1, "base");
 
-    let best: { cat: CalendarOpeningCategory; score: number; reasons: string[] } | null = null;
-    for (const cat of priority) {
-      const s = scores.get(cat);
-      if (!s) continue;
-      const cur = { cat, score: s.score, reasons: s.reasons };
-      if (!best) best = cur;
-      else if (cur.score > best.score) best = cur;
-      else if (cur.score === best.score) {
-        // priority の早い方を優先（既に順序走査なので何もしない）
-      }
-    }
+    const flat = new Map<CalendarOpeningCategory, number>();
+    for (const [cat, v] of scores) flat.set(cat, v.score);
+    applyProfileSignalsToOpeningScores(flat, args.profileSignals);
+    const winning = pickWinningCalendarCategory(flat, priority);
+    const best = scores.get(winning);
     if (!best) continue;
 
     const time = hhmmTokyoFromIsoLike(ev.start);
@@ -204,7 +193,7 @@ function scoreOpeningTopic(args: {
     const timingPenalty = hasNonPast && timing === "past" ? -100 : 0;
     picks.push({
       evIdx: i,
-      category: best.cat,
+      category: winning,
       score: best.score + timingPenalty,
       title: ev.title,
       time,
@@ -343,6 +332,13 @@ export async function buildReflectiveChatContext(params: {
           dayEvents: dayEvents.slice(0, 8),
           occupationRole: profile?.occupationRole ?? "",
           calendarOpening: profile?.calendarOpening,
+          profileSignals: profile
+            ? {
+                interestPicks: profile.interestPicks,
+                aiAvoidTopics: profile.aiAvoidTopics,
+                aiCurrentFocus: profile.aiCurrentFocus,
+              }
+            : null,
         })
       : null;
   const timing = openingReco?.primary?.timing ?? null;
@@ -351,6 +347,7 @@ export async function buildReflectiveChatContext(params: {
     openingReco && openingReco.primary
       ? [
           "### 推奨トピック（自動・開口用）",
+          "- スコアはカレンダー（予定・分類ルール）を本体とし、プロフィール（趣味・関心タグ・避けたい話題・いま関心が高いもの）で微調整しています。",
           ...(nowTokyo ? [`- 現在時刻（Asia/Tokyo）: ${nowTokyo}`] : []),
           `- 優先: ${openingReco.primary.category} / 信頼度: ${openingReco.confidence} / 予定: 「${truncate(openingReco.primary.title, 60)}」${openingReco.primary.time ? ` ${openingReco.primary.time}` : ""}`,
           ...(timing ? [`- 予定の時系列: ${timing}`] : []),

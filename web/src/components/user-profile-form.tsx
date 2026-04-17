@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AgentPersonaPreferences } from "@/components/agent-persona-preferences";
 import { InterestPicksControl } from "@/components/interest-picks-control";
@@ -44,7 +45,7 @@ import {
   type WorkLifeOption,
 } from "@/lib/onboarding-work-life";
 import { OCCUPATION_ROLE_OPTIONS } from "@/lib/occupation-role";
-import { emptyTimetable, formatTimetableSummary, serializeTimetable } from "@/lib/timetable";
+import { emptyTimetable, serializeTimetable } from "@/lib/timetable";
 import { emitLocalSettingsSavedFromJson } from "@/lib/settings-sync-client";
 import { serializeProfileForApi, type UserProfileSettings } from "@/lib/user-settings";
 import { westernZodiacJaFromYmd } from "@/lib/zodiac-western";
@@ -176,6 +177,8 @@ type Props = {
   onSaved?: () => void;
   showTitle?: boolean;
   finalizeOnboarding?: boolean;
+  /** タイトル横に表示（設定の「チャットで編集」など） */
+  headerActions?: ReactNode;
 };
 
 export function UserProfileForm({
@@ -185,6 +188,7 @@ export function UserProfileForm({
   onSaved,
   showTitle = true,
   finalizeOnboarding = false,
+  headerActions,
 }: Props) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -207,11 +211,6 @@ export function UserProfileForm({
       studentTimetableStored.trim() ? studentTimetableStored : serializeTimetable(emptyTimetable()),
     [studentTimetableStored],
   );
-  const studentTimetablePreview = useMemo(
-    () => formatTimetableSummary(studentTimetableEditorValue),
-    [studentTimetableEditorValue],
-  );
-
   useEffect(() => {
     if (!studentTimetableSheetOpen) return;
     const prev = document.body.style.overflow;
@@ -384,7 +383,10 @@ export function UserProfileForm({
     <div className="space-y-4">
       {showTitle && (
         <div>
-          <h2 className="font-medium text-zinc-900 dark:text-zinc-50">プロフィール（任意）</h2>
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <h2 className="font-medium text-zinc-900 dark:text-zinc-50">プロフィール（任意）</h2>
+            {headerActions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{headerActions}</div> : null}
+          </div>
           <p className="mt-1 text-xs text-zinc-500">
             振り返りチャットの文脈に使います。生年月日を入れると星座を自動入力します。
           </p>
@@ -505,11 +507,22 @@ export function UserProfileForm({
           <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">
             職種・業種・働き方（チャットと同じ・選択から自動）
           </p>
-          <p className="mt-1 whitespace-pre-wrap text-sm text-zinc-600 dark:text-zinc-300">
-            {form.occupationNote?.trim()
-              ? form.occupationNote
-              : "（立場に応じた質問への回答がここにまとまります）"}
-          </p>
+          {(() => {
+            const occ = form.occupationNote?.trim() ?? "";
+            const stu = form.studentLifeNotes?.trim() ?? "";
+            /** 学生は compose が studentLifeNotes にまとまり occupationNote は空になりがち */
+            const summary =
+              form.occupationRole === "student" ? stu || occ : occ || stu;
+            return summary ? (
+              <p className="mt-1 whitespace-pre-wrap text-sm text-zinc-600 dark:text-zinc-300">
+                {summary}
+              </p>
+            ) : (
+              <p className="mt-1 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+                「職業・立場」に応じた質問に答えると、ここに要約が入ります（学生は学校・通学などがここにまとまります）。
+              </p>
+            );
+          })()}
         </div>
 
         {form.occupationRole === "student" && (
@@ -633,15 +646,19 @@ export function UserProfileForm({
                 時間割を表で入力してください（任意）。
               </p>
               <p className="text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
-                オンボーディングのチャットと同じく、下のボタンから下にスライドする画面で入力できます。
+                オンボーディングのチャットと同じく、下のボタンから下にスライドする画面で入力できます。下は編集画面と同じ見た目のプレビューです。
               </p>
-              {studentTimetablePreview ? (
-                <p className="mt-2 line-clamp-3 rounded-lg border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-200">
-                  {studentTimetablePreview}
-                </p>
-              ) : (
-                <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-500">まだ入力されていません（任意）</p>
-              )}
+              <div className="mt-2 max-h-[min(50dvh,360px)] overflow-hidden rounded-t-2xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-700 dark:bg-zinc-950">
+                <div className="max-h-[inherit] overflow-auto overscroll-contain px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2">
+                  <TimetableEditor
+                    readOnly
+                    compact
+                    value={studentTimetableEditorValue}
+                    onChange={() => {}}
+                    stLevel={workLife.st_level ?? ""}
+                  />
+                </div>
+              </div>
               <button
                 type="button"
                 onClick={() => setStudentTimetableSheetOpen(true)}
@@ -718,20 +735,6 @@ export function UserProfileForm({
                   inputCls={inputCls}
                 />
               </div>
-              <label className="mt-3 block text-xs text-zinc-600 dark:text-zinc-400">
-                いちばん近い学歴はどれですか？（任意・1つ）
-                <select
-                  value={workLife.hi_edu ?? ""}
-                  onChange={(e) => patchOnboardingWorkLife({ hi_edu: e.target.value })}
-                  className={inputCls}
-                >
-                  {eduLevelOptionsForRole("student", workLife.hi_edu ?? "").map((o) => (
-                    <option key={o.value || "empty"} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
               <label className="mt-3 block text-xs text-zinc-600 dark:text-zinc-400">
                 アルバイトやパートの経験に近いものはどれですか？（任意）
                 <select
@@ -1023,31 +1026,6 @@ export function UserProfileForm({
           </div>
         )}
 
-        <div className="rounded-xl border border-zinc-200 p-3 dark:border-zinc-800 sm:col-span-2">
-          <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">
-            出身地・学歴・職歴・アルバイト（チャットと同じ・選択から自動）
-          </p>
-          <p className="mt-1 whitespace-pre-wrap text-sm text-zinc-600 dark:text-zinc-300">
-            {form.education?.trim()
-              ? form.education
-              : "（上の「育ち・出身…」の選択がここに1行でまとまります）"}
-          </p>
-        </div>
-        <label className="block text-xs text-zinc-600 dark:text-zinc-400">
-          血液型
-          <select
-            value={form.bloodType ?? ""}
-            onChange={(e) => set("bloodType", e.target.value)}
-            className={inputCls}
-          >
-            <option value="">選ばない</option>
-            <option value="A">A</option>
-            <option value="B">B</option>
-            <option value="O">O</option>
-            <option value="AB">AB</option>
-            <option value="不明">不明</option>
-          </select>
-        </label>
         <label className="block text-xs text-zinc-600 dark:text-zinc-400 sm:col-span-2">
           MBTI
           <select

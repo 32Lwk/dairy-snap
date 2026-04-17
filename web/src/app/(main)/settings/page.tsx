@@ -34,7 +34,7 @@ export default async function SettingsPage() {
       </section>
 
       <div className="mt-8">
-        <SettingsForm />
+        <SettingsForm userId={r.user.id} />
       </div>
       <p className="mt-8 text-sm">
         <Link href="/settings/bb84" className="text-blue-600 hover:underline dark:text-blue-400">

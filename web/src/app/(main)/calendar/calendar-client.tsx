@@ -1,20 +1,33 @@
 "use client";
 
+import { CalendarOpeningPriorityEditor } from "@/components/calendar-opening-priority-editor";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CALENDAR_GRID_COLOR_PRESETS, GCAL_COLOR_MAP } from "@/lib/gcal-event-color";
+import {
+  applyProfileSignalsToOpeningScores,
+  type OpeningProfileSignalsInput,
+} from "@/lib/calendar-opening-profile-signals";
 import {
   type CalendarOpeningCategory,
   type CalendarOpeningRule,
   type CalendarOpeningSettings,
   type CalendarWeekStartDay,
+  addCalendarOpeningBuiltinTextHints,
   CALENDAR_DEFAULT_CATEGORY_WEIGHT,
   calendarOpeningCategoryOptions,
   labelToUserCategoryId,
   normalizeCalendarGridDisplay,
   normalizeCalendarOpeningPriorityOrder,
+  pickWinningCalendarCategory,
   stripCalendarOpeningCustomLabel,
 } from "@/lib/user-settings";
+import {
+  emitLocalSettingsSavedFromJson,
+  extractServerSyncToken,
+  LOCAL_SETTINGS_SAVED_EVENT,
+  REMOTE_SETTINGS_UPDATED_EVENT,
+} from "@/lib/settings-sync-client";
 import { UpcomingGoogleEvents } from "./upcoming-google-events";
 import { MonthGrid } from "./month-grid";
 
@@ -40,12 +53,17 @@ const CALENDAR_WEEK_START_OPTIONS: { value: CalendarWeekStartDay; label: string 
   { value: 6, label: "土曜始まり" },
 ];
 
-function inferCategoryForEvent(ev: Ev, settings: CalendarOpeningSettings | null): CalendarOpeningCategory {
+function inferCategoryForEvent(
+  ev: Ev,
+  settings: CalendarOpeningSettings | null,
+  profileSignals: OpeningProfileSignalsInput | null,
+): CalendarOpeningCategory {
   const rules = settings?.rules ?? [];
   const priority = normalizeCalendarOpeningPriorityOrder(settings);
   const hayTitle = (ev.title ?? "").toLowerCase();
   const hayLoc = (ev.location ?? "").toLowerCase();
   const hayDesc = (ev.description ?? "").toLowerCase();
+  const haystack = `${ev.title ?? ""}\n${ev.location ?? ""}\n${ev.description ?? ""}`;
   const scores = new Map<CalendarOpeningCategory, number>();
   const add = (cat: CalendarOpeningCategory, w: number) => {
     scores.set(cat, (scores.get(cat) ?? 0) + w);
@@ -77,18 +95,37 @@ function inferCategoryForEvent(ev: Ev, settings: CalendarOpeningSettings | null)
       continue;
     }
   }
-  // 何も当たらないときは other
+  addCalendarOpeningBuiltinTextHints(haystack, add);
   add("other", 1);
-  let best: CalendarOpeningCategory = "other";
-  let bestScore = Number.NEGATIVE_INFINITY;
-  for (const cat of priority) {
-    const s = scores.get(cat) ?? Number.NEGATIVE_INFINITY;
-    if (s > bestScore) {
-      bestScore = s;
-      best = cat;
-    }
+  applyProfileSignalsToOpeningScores(scores, profileSignals);
+  return pickWinningCalendarCategory(scores, priority);
+}
+
+function parseCalendarPageSettingsPayload(profile: Record<string, unknown> | null): {
+  calendarOpening: CalendarOpeningSettings | null;
+  profileSignals: OpeningProfileSignalsInput | null;
+} {
+  if (!profile) {
+    return { calendarOpening: null, profileSignals: null };
   }
-  return best;
+  const calendarOpening =
+    profile.calendarOpening && typeof profile.calendarOpening === "object" && !Array.isArray(profile.calendarOpening)
+      ? (profile.calendarOpening as CalendarOpeningSettings)
+      : null;
+  const strArr = (k: string): string[] | undefined => {
+    const v = profile[k];
+    if (!Array.isArray(v)) return undefined;
+    const out = v.filter((x): x is string => typeof x === "string" && x.length > 0);
+    return out.length ? out : undefined;
+  };
+  return {
+    calendarOpening,
+    profileSignals: {
+      interestPicks: strArr("interestPicks"),
+      aiAvoidTopics: strArr("aiAvoidTopics"),
+      aiCurrentFocus: strArr("aiCurrentFocus"),
+    },
+  };
 }
 
 export function CalendarClient(props: {
@@ -102,6 +139,7 @@ export function CalendarClient(props: {
   initialEvents: Ev[];
 }) {
   const [opening, setOpening] = useState<CalendarOpeningSettings | null>(null);
+  const [openingProfileSignals, setOpeningProfileSignals] = useState<OpeningProfileSignalsInput | null>(null);
   const [opts, setOpts] = useState<{
     calendars: { calendarId: string; calendarName: string; calendarColorId: string }[];
     colorIds: string[];
@@ -113,6 +151,8 @@ export function CalendarClient(props: {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [customCatDraft, setCustomCatDraft] = useState("");
   const [activeCalendarId, setActiveCalendarId] = useState<string>("");
+  /** 直近の GET /api/settings の serverSyncToken（変化時だけフル再取得） */
+  const lastServerSyncTokenRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!settingsOpen) return;
@@ -140,22 +180,66 @@ export function CalendarClient(props: {
     );
   }, [settingsOpen, opts?.calendars]);
 
-  useEffect(() => {
-    // settings: calendarOpening
-    void (async () => {
-      const res = await fetch("/api/settings", { cache: "no-store", credentials: "same-origin" });
-      const json = (await res.json().catch(() => ({}))) as unknown;
-      if (!res.ok) return;
-      if (!json || typeof json !== "object" || Array.isArray(json)) return;
-      const o = json as Record<string, unknown>;
-      const profile = o.profile && typeof o.profile === "object" && !Array.isArray(o.profile) ? (o.profile as Record<string, unknown>) : null;
-      const calendarOpening =
-        profile && profile.calendarOpening && typeof profile.calendarOpening === "object" && !Array.isArray(profile.calendarOpening)
-          ? (profile.calendarOpening as CalendarOpeningSettings)
-          : null;
-      setOpening(calendarOpening);
-    })();
+  const loadFullCalendarSettings = useCallback(async () => {
+    const res = await fetch(`/api/settings?_=${Date.now()}`, { cache: "no-store", credentials: "same-origin" });
+    const json = (await res.json().catch(() => ({}))) as unknown;
+    if (!res.ok) return;
+    if (!json || typeof json !== "object" || Array.isArray(json)) return;
+    const o = json as Record<string, unknown>;
+    const tok = extractServerSyncToken(json);
+    if (tok) lastServerSyncTokenRef.current = tok;
+    const profile = o.profile && typeof o.profile === "object" && !Array.isArray(o.profile) ? (o.profile as Record<string, unknown>) : null;
+    const { calendarOpening, profileSignals } = parseCalendarPageSettingsPayload(profile);
+    setOpening(calendarOpening);
+    setOpeningProfileSignals(profileSignals);
   }, []);
+
+  const maybeRefreshCalendarSettings = useCallback(
+    async (hintToken?: string | null) => {
+      if (typeof hintToken === "string" && hintToken.length > 0) {
+        if (hintToken === lastServerSyncTokenRef.current) return;
+        await loadFullCalendarSettings();
+        return;
+      }
+      try {
+        const res = await fetch(`/api/settings?syncCheck=1&_=${Date.now()}`, {
+          cache: "no-store",
+          credentials: "same-origin",
+        });
+        if (!res.ok) return;
+        const j = (await res.json().catch(() => null)) as { serverSyncToken?: string } | null;
+        const t = j?.serverSyncToken;
+        if (typeof t !== "string" || t.length === 0) return;
+        if (t === lastServerSyncTokenRef.current) return;
+        await loadFullCalendarSettings();
+      } catch {
+        /* ignore */
+      }
+    },
+    [loadFullCalendarSettings],
+  );
+
+  useEffect(() => {
+    void loadFullCalendarSettings();
+  }, [loadFullCalendarSettings]);
+
+  useEffect(() => {
+    const onSync = (e: Event) => {
+      const t = (e as CustomEvent<{ serverSyncToken?: string }>).detail?.serverSyncToken;
+      void maybeRefreshCalendarSettings(typeof t === "string" && t.length > 0 ? t : undefined);
+    };
+    window.addEventListener(LOCAL_SETTINGS_SAVED_EVENT, onSync);
+    window.addEventListener(REMOTE_SETTINGS_UPDATED_EVENT, onSync);
+    const onVis = () => {
+      if (document.visibilityState === "visible") void maybeRefreshCalendarSettings();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.removeEventListener(LOCAL_SETTINGS_SAVED_EVENT, onSync);
+      window.removeEventListener(REMOTE_SETTINGS_UPDATED_EVENT, onSync);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [maybeRefreshCalendarSettings]);
 
   useEffect(() => {
     // classifier options (calendar list / colors) from cache
@@ -216,6 +300,9 @@ export function CalendarClient(props: {
         setErr(typeof json.error === "string" ? json.error : "保存に失敗しました");
         return;
       }
+      const tok = extractServerSyncToken(json);
+      if (tok) lastServerSyncTokenRef.current = tok;
+      emitLocalSettingsSavedFromJson(json);
       // 再取得は重いのでローカルを更新
       setOpening(next);
     } finally {
@@ -263,16 +350,16 @@ export function CalendarClient(props: {
           if (!cid || !selectedCalendarSet.has(cid)) return false;
         }
         if (hasCatFilter) {
-          const cat = inferCategoryForEvent(ev, opening);
+          const cat = inferCategoryForEvent(ev, opening, openingProfileSignals);
           if (!selectedCatSet.has(cat)) return false;
         }
         return true;
       },
       infer(ev: Ev): CalendarOpeningCategory {
-        return inferCategoryForEvent(ev, opening);
+        return inferCategoryForEvent(ev, opening, openingProfileSignals);
       },
     };
-  }, [opening, selectedCalendars, selectedCats]);
+  }, [opening, openingProfileSignals, selectedCalendars, selectedCats]);
 
   return (
     <>
@@ -540,6 +627,9 @@ export function CalendarClient(props: {
                       <p className="text-[11px] font-medium text-zinc-700 dark:text-zinc-200" id="calendar-assign-category-label">
                         このカレンダーの予定の分類
                       </p>
+                      <p className="mt-1 text-[10px] leading-snug text-zinc-500 dark:text-zinc-400">
+                        「自動」は予定テキストと分類ルールを本体とし、プロフィール（趣味・避けたい話題・関心のフォーカス）でスコアを微調整します。
+                      </p>
                       <div
                         className="mt-2 flex flex-wrap gap-2"
                         role="radiogroup"
@@ -678,29 +768,19 @@ export function CalendarClient(props: {
           <div className="mt-3 space-y-4">
             <div>
               <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">カテゴリの優先順位（上ほど優先）</p>
-              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                {effectivePriority.map((cat, idx) => (
-                  <label key={idx} className="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
-                    <span className="w-6 shrink-0 text-[11px] text-zinc-500">#{idx + 1}</span>
-                    <select
-                      value={cat}
-                      disabled={busy}
-                      onChange={(e) => {
-                        const cur = [...effectivePriority];
-                        cur[idx] = e.target.value as CalendarOpeningCategory;
-                        setOpening((prev) => ({ ...(prev ?? {}), priorityOrder: cur }));
-                      }}
-                      className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                    >
-                      {catOptions.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.custom ? `${c.label}（カスタム）` : c.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ))}
-              </div>
+              <CalendarOpeningPriorityEditor
+                priorityList={effectivePriority}
+                catOptions={catOptions}
+                disabled={busy}
+                onSetPriorityOrder={(next) =>
+                  setOpening((prev) => {
+                    const base = { ...(prev ?? {}) };
+                    const current = normalizeCalendarOpeningPriorityOrder(base);
+                    const resolved = typeof next === "function" ? next(current) : next;
+                    return { ...base, priorityOrder: resolved };
+                  })
+                }
+              />
               <button
                 type="button"
                 disabled={busy}

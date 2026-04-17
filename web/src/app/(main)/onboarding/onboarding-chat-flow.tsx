@@ -235,12 +235,15 @@ export function OnboardingChatFlow({
   onDraftChange,
   onDone,
   onOpenFormMode,
+  completeButtonLabel = "保存して今日へ",
 }: {
   userId: string;
   draft: UserProfilePayload;
   onDraftChange: (patch: Partial<UserProfilePayload>) => void;
   onDone: () => void;
   onOpenFormMode?: () => void;
+  /** 最終保存ボタンの文言（設定画面のオーバーレイなどで差し替え） */
+  completeButtonLabel?: string;
 }) {
   const [step, setStep] = useState(0);
   const [log, setLog] = useState<Bubble[]>([{ role: "assistant", content: ONBOARDING_ASSISTANT_WELCOME }]);
@@ -569,7 +572,7 @@ export function OnboardingChatFlow({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           profile: { ...profile, zodiac: zOut },
-          finalizeOnboarding: true,
+          ...(!draft.onboardingCompletedAt ? { finalizeOnboarding: true } : {}),
         }),
       });
       const json = await res.json().catch(() => ({}));
@@ -1242,7 +1245,7 @@ export function OnboardingChatFlow({
               onClick={() => void saveAll()}
               className={`${primaryBtnCls} disabled:opacity-50`}
             >
-              {saving ? "保存中…" : "保存して今日へ"}
+              {saving ? "保存中…" : completeButtonLabel}
             </button>
             {onOpenFormMode && (
               <div className="w-full text-left">
