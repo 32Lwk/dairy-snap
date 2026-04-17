@@ -2,6 +2,7 @@ import { google, calendar_v3 } from "googleapis";
 import { prisma } from "@/server/db";
 
 export type CalendarEventBrief = {
+  eventId: string;
   calendarId: string;
   calendarName: string;
   /** Googleの colorId（イベント色があれば優先、なければカレンダー色） */
@@ -11,6 +12,7 @@ export type CalendarEventBrief = {
   end: string;
   location: string;
   description: string;
+  fixedCategory?: string;
 };
 
 export type CalendarFetchFailureReason =
@@ -19,6 +21,7 @@ export type CalendarFetchFailureReason =
   | "oauth_not_configured"
   | "invalid_grant"
   | "calendar_api_error"
+  | "db_schema_out_of_sync"
   | "unknown";
 
 export type CalendarFetchResult =
@@ -32,7 +35,9 @@ type GoogleCalEvent = calendar_v3.Schema$Event;
 function toBrief(ev: GoogleCalEvent, meta: { calendarId: string; calendarName: string; calendarColorId: string }): CalendarEventBrief {
   const eventColorId = ev.colorId ?? "";
   const colorId = eventColorId || meta.calendarColorId || "";
+  const eventId = ev.id ?? "";
   return {
+    eventId,
     calendarId: meta.calendarId,
     calendarName: meta.calendarName,
     colorId,
@@ -86,6 +91,16 @@ async function listReadableCalendars(cal: ReturnType<typeof google.calendar>): P
 function sortKeyIso(start: string): number {
   const ms = Date.parse(start);
   return Number.isFinite(ms) ? ms : Number.POSITIVE_INFINITY;
+}
+
+function looksLikeDbSchemaOutOfSync(msg: string): boolean {
+  const s = msg.toLowerCase();
+  // Postgres: column "fixedCategory" does not exist
+  if (s.includes("column") && s.includes("fixedcategory") && s.includes("does not exist")) return true;
+  // Prisma runtime errors that indicate schema mismatch
+  if (s.includes("invalid `prisma.") && s.includes("googlecalendareventcache")) return true;
+  if (s.includes("the column") && s.includes("fixedcategory")) return true;
+  return false;
 }
 
 function dateFromIsoLikeTokyo(isoLike: string, isEnd: boolean): Date {
@@ -313,6 +328,7 @@ export async function fetchCalendarEventsForUser(
       orderBy: { startAt: "asc" },
       take: limit,
       select: {
+        eventId: true,
         calendarId: true,
         calendarName: true,
         calendarColorId: true,
@@ -322,11 +338,13 @@ export async function fetchCalendarEventsForUser(
         endIso: true,
         location: true,
         description: true,
+        fixedCategory: true,
       },
     });
 
     const events: CalendarEventBrief[] = rows
       .map((r) => ({
+        eventId: r.eventId,
         calendarId: r.calendarId,
         calendarName: r.calendarName ?? r.calendarId,
         colorId: r.eventColorId ?? r.calendarColorId ?? "",
@@ -335,6 +353,7 @@ export async function fetchCalendarEventsForUser(
         end: r.endIso,
         location: r.location,
         description: r.description,
+        ...(r.fixedCategory ? { fixedCategory: r.fixedCategory } : {}),
       }))
       .filter((e) => e.start)
       .sort((a, b) => sortKeyIso(a.start) - sortKeyIso(b.start));
@@ -359,6 +378,14 @@ export async function fetchCalendarEventsForUser(
         ok: false,
         reason: "invalid_grant",
         detail: "認証に失敗しました。Google を再連携してください。",
+      };
+    }
+    if (looksLikeDbSchemaOutOfSync(msg)) {
+      return {
+        ok: false,
+        reason: "db_schema_out_of_sync",
+        detail:
+          "DBのマイグレーションが未適用の可能性があります。開発環境では `npx prisma migrate dev` を実行してから再試行してください。",
       };
     }
     return { ok: false, reason: "calendar_api_error", detail: msg };
@@ -432,6 +459,7 @@ export async function fetchCalendarEventsForDay(
       orderBy: { startAt: "asc" },
       take: 50,
       select: {
+        eventId: true,
         calendarId: true,
         calendarName: true,
         calendarColorId: true,
@@ -441,11 +469,13 @@ export async function fetchCalendarEventsForDay(
         endIso: true,
         location: true,
         description: true,
+        fixedCategory: true,
       },
     });
 
     const events: CalendarEventBrief[] = rows
       .map((r) => ({
+        eventId: r.eventId,
         calendarId: r.calendarId,
         calendarName: r.calendarName ?? r.calendarId,
         colorId: r.eventColorId ?? r.calendarColorId ?? "",
@@ -454,6 +484,7 @@ export async function fetchCalendarEventsForDay(
         end: r.endIso,
         location: r.location,
         description: r.description,
+        ...(r.fixedCategory ? { fixedCategory: r.fixedCategory } : {}),
       }))
       .filter((e) => e.start)
       .sort((a, b) => sortKeyIso(a.start) - sortKeyIso(b.start));

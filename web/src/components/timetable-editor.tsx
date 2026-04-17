@@ -341,6 +341,8 @@ type Props = {
   onChange: (next: string) => void;
   stLevel: string;
   compact?: boolean;
+  /** 閲覧のみ（プレビュー）。編集系 UI を出さず、パターン切替のみ可能 */
+  readOnly?: boolean;
 };
 
 function updateActivePattern(
@@ -352,13 +354,22 @@ function updateActivePattern(
   return { ...bundle, patterns };
 }
 
-export function TimetableEditor({ value, onChange, stLevel, compact = false }: Props) {
+export function TimetableEditor({
+  value,
+  onChange,
+  stLevel,
+  compact = false,
+  readOnly = false,
+}: Props) {
   const hsPalette = useHighSchoolSubjectPalette(stLevel);
 
   const [bundle, setBundle] = useState<TimetableBundle>(() => {
     const p = parseTimetableStored(value);
     return p ?? emptyTimetable();
   });
+
+  /** readOnly 時はパターン切替だけローカル（保存文字列は変えない） */
+  const [browsePatternIdx, setBrowsePatternIdx] = useState(0);
 
   const [periodModal, setPeriodModal] = useState<number | null>(null);
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
@@ -371,16 +382,23 @@ export function TimetableEditor({ value, onChange, stLevel, compact = false }: P
   useEffect(() => {
     const p = parseTimetableStored(value);
     setBundle(p ?? emptyTimetable());
-  }, [value]);
+    if (readOnly && p) {
+      setBrowsePatternIdx(
+        Math.min(p.activePatternIndex, Math.max(0, p.patterns.length - 1)),
+      );
+    }
+  }, [value, readOnly]);
 
-  const data = bundle.patterns[bundle.activePatternIndex] ?? bundle.patterns[0];
+  const patternIndexForView = readOnly ? browsePatternIdx : bundle.activePatternIndex;
+  const data = bundle.patterns[patternIndexForView] ?? bundle.patterns[0];
 
   const commit = useCallback(
     (next: TimetableBundle) => {
+      if (readOnly) return;
       setBundle(next);
       onChange(serializeTimetable(next));
     },
-    [onChange],
+    [onChange, readOnly],
   );
 
   const setValidityRange = useCallback(
@@ -570,26 +588,32 @@ export function TimetableEditor({ value, onChange, stLevel, compact = false }: P
           <span className="shrink-0 whitespace-nowrap">学期・年度（任意）</span>
           <input
             value={bundle.scenarioLabel ?? ""}
+            readOnly={readOnly}
             onChange={(e) => commit({ ...bundle, scenarioLabel: e.target.value })}
             placeholder="2025年度 前期"
-            className="min-w-0 flex-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-950"
+            className={`min-w-0 flex-1 rounded-md border border-zinc-200 px-2 py-1 text-xs dark:border-zinc-700 ${
+              readOnly ? "cursor-default bg-zinc-50 dark:bg-zinc-900/80" : "bg-white dark:bg-zinc-950"
+            }`}
           />
         </label>
         <label className="flex min-w-0 flex-1 basis-0 items-center gap-2 text-[10px] text-zinc-600 dark:text-zinc-400">
           <span className="shrink-0 whitespace-nowrap">パターン名</span>
           <input
             value={data.label}
+            readOnly={readOnly}
             onChange={(e) =>
               commit(updateActivePattern(bundle, (pat) => ({ ...pat, label: e.target.value })))
             }
             placeholder="A週・メイン"
-            className="min-w-0 flex-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-950"
+            className={`min-w-0 flex-1 rounded-md border border-zinc-200 px-2 py-1 text-xs dark:border-zinc-700 ${
+              readOnly ? "cursor-default bg-zinc-50 dark:bg-zinc-900/80" : "bg-white dark:bg-zinc-950"
+            }`}
           />
         </label>
       </div>
 
-      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
-        <span className="w-full shrink-0 text-[10px] text-zinc-500 dark:text-zinc-400 sm:w-auto">
+      <div className="flex min-w-0 flex-nowrap items-center gap-x-2 overflow-x-auto overscroll-x-contain">
+        <span className="shrink-0 whitespace-nowrap text-[10px] text-zinc-500 dark:text-zinc-400">
           有効期間（任意・両端の日付を含みます）
         </span>
         <label className="flex min-w-0 flex-1 basis-[8.5rem] items-center gap-1.5 text-[10px] text-zinc-600 dark:text-zinc-400">
@@ -597,8 +621,11 @@ export function TimetableEditor({ value, onChange, stLevel, compact = false }: P
           <input
             type="date"
             value={bundle.validFrom ?? ""}
+            readOnly={readOnly}
             onChange={(e) => setValidityRange({ validFrom: e.target.value })}
-            className="min-w-0 flex-1 rounded-md border border-zinc-200 bg-white px-1.5 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-950"
+            className={`min-w-0 flex-1 rounded-md border border-zinc-200 px-1.5 py-1 text-xs dark:border-zinc-700 ${
+              readOnly ? "cursor-default bg-zinc-50 dark:bg-zinc-900/80" : "bg-white dark:bg-zinc-950"
+            }`}
           />
         </label>
         <span className="shrink-0 text-[10px] text-zinc-400">〜</span>
@@ -607,8 +634,11 @@ export function TimetableEditor({ value, onChange, stLevel, compact = false }: P
           <input
             type="date"
             value={bundle.validTo ?? ""}
+            readOnly={readOnly}
             onChange={(e) => setValidityRange({ validTo: e.target.value })}
-            className="min-w-0 flex-1 rounded-md border border-zinc-200 bg-white px-1.5 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-950"
+            className={`min-w-0 flex-1 rounded-md border border-zinc-200 px-1.5 py-1 text-xs dark:border-zinc-700 ${
+              readOnly ? "cursor-default bg-zinc-50 dark:bg-zinc-900/80" : "bg-white dark:bg-zinc-950"
+            }`}
           />
         </label>
       </div>
@@ -617,10 +647,12 @@ export function TimetableEditor({ value, onChange, stLevel, compact = false }: P
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[10px] text-zinc-500 dark:text-zinc-400">別パターンに切り替え</span>
           <select
-            value={bundle.activePatternIndex}
-            onChange={(e) =>
-              commit({ ...bundle, activePatternIndex: Number.parseInt(e.target.value, 10) || 0 })
-            }
+            value={patternIndexForView}
+            onChange={(e) => {
+              const i = Number.parseInt(e.target.value, 10) || 0;
+              if (readOnly) setBrowsePatternIdx(i);
+              else commit({ ...bundle, activePatternIndex: i });
+            }}
             className="max-w-[12rem] rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
           >
             {bundle.patterns.map((p, i) => (
@@ -629,69 +661,75 @@ export function TimetableEditor({ value, onChange, stLevel, compact = false }: P
               </option>
             ))}
           </select>
-          <button type="button" className={btnSm} onClick={removePattern}>
-            このパターンを削除
-          </button>
+          {!readOnly ? (
+            <button type="button" className={btnSm} onClick={removePattern}>
+              このパターンを削除
+            </button>
+          ) : null}
         </div>
       ) : null}
 
-      <div className="flex flex-wrap items-center gap-2">
-        {missingStd ? (
-          <button type="button" className={btnSm} onClick={addStdWeekdays}>
-            月〜金を足す
-          </button>
-        ) : null}
-        <button type="button" className={btnSm} onClick={addWeekendOrExtra}>
-          ＋曜日（土・日）
-        </button>
-        <div className="flex min-w-0 flex-1 flex-wrap items-end gap-1 [flex-basis:14rem]">
-          <input
-            value={newPatternName}
-            onChange={(e) => setNewPatternName(e.target.value)}
-            placeholder="新パターン名（例: B週・後期）"
-            className="min-w-0 flex-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] dark:border-zinc-700 dark:bg-zinc-950"
-          />
-          <button type="button" className={btnSm} onClick={addPattern}>
-            パターンを追加
-          </button>
-        </div>
-      </div>
+      {!readOnly ? (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            {missingStd ? (
+              <button type="button" className={btnSm} onClick={addStdWeekdays}>
+                月〜金を足す
+              </button>
+            ) : null}
+            <button type="button" className={btnSm} onClick={addWeekendOrExtra}>
+              ＋曜日（土・日）
+            </button>
+            <div className="flex min-w-0 flex-1 flex-wrap items-end gap-1 [flex-basis:14rem]">
+              <input
+                value={newPatternName}
+                onChange={(e) => setNewPatternName(e.target.value)}
+                placeholder="新パターン名（例: B週・後期）"
+                className="min-w-0 flex-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] dark:border-zinc-700 dark:bg-zinc-950"
+              />
+              <button type="button" className={btnSm} onClick={addPattern}>
+                パターンを追加
+              </button>
+            </div>
+          </div>
 
-      <p className="text-[10px] text-zinc-500 dark:text-zinc-400">
-        A週/B週など別の表は「パターンを追加」で増やせます（枠だけ引き継ぎ、科目マスは空です）。列だけ増やすときは下の「全時限の時間をまとめて設定」の右の「列を追加」から入力してください。
-      </p>
+          <p className="text-[10px] text-zinc-500 dark:text-zinc-400">
+            A週/B週など別の表は「パターンを追加」で増やせます（枠だけ引き継ぎ、科目マスは空です）。列だけ増やすときは下の「全時限の時間をまとめて設定」の右の「列を追加」から入力してください。
+          </p>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <button type="button" className={btnSm} onClick={addPeriod} disabled={data.periodCount >= MAX_PERIODS}>
-          ＋時限を追加
-        </button>
-        <button type="button" className={btnSm} onClick={removePeriod} disabled={data.periodCount <= 1}>
-          最後の時限を削除
-        </button>
-        <button
-          type="button"
-          className={btnSm}
-          onClick={() => {
-            setBulkModalKey((k) => k + 1);
-            setBulkModalOpen(true);
-          }}
-        >
-          全時限の時間をまとめて設定
-        </button>
-        <button
-          type="button"
-          className={btnSm}
-          onClick={() => {
-            setAddColumnModalKey((k) => k + 1);
-            setAddColumnModalOpen(true);
-          }}
-        >
-          列を追加
-        </button>
-        <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
-          標準は{DEFAULT_PERIOD_COUNT}限（最大{MAX_PERIODS}限）
-        </span>
-      </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" className={btnSm} onClick={addPeriod} disabled={data.periodCount >= MAX_PERIODS}>
+              ＋時限を追加
+            </button>
+            <button type="button" className={btnSm} onClick={removePeriod} disabled={data.periodCount <= 1}>
+              最後の時限を削除
+            </button>
+            <button
+              type="button"
+              className={btnSm}
+              onClick={() => {
+                setBulkModalKey((k) => k + 1);
+                setBulkModalOpen(true);
+              }}
+            >
+              全時限の時間をまとめて設定
+            </button>
+            <button
+              type="button"
+              className={btnSm}
+              onClick={() => {
+                setAddColumnModalKey((k) => k + 1);
+                setAddColumnModalOpen(true);
+              }}
+            >
+              列を追加
+            </button>
+            <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
+              標準は{DEFAULT_PERIOD_COUNT}限（最大{MAX_PERIODS}限）
+            </span>
+          </div>
+        </>
+      ) : null}
 
       <div className={compact ? "overflow-x-auto" : ""}>
         <table className="w-full min-w-[280px] table-fixed border-collapse text-xs">
@@ -713,7 +751,7 @@ export function TimetableEditor({ value, onChange, stLevel, compact = false }: P
                 >
                   <div className="flex flex-col items-center gap-0.5">
                     <span>{col.label}</span>
-                    {data.columns.length > 1 ? (
+                    {data.columns.length > 1 && !readOnly ? (
                       <button
                         type="button"
                         className="text-[10px] text-zinc-500 underline dark:text-zinc-400"
@@ -731,24 +769,41 @@ export function TimetableEditor({ value, onChange, stLevel, compact = false }: P
             {Array.from({ length: data.periodCount }, (_, i) => i + 1).map((period) => (
               <tr key={period}>
                 <td className="border border-zinc-200 bg-zinc-50 p-1 align-top dark:border-zinc-700 dark:bg-zinc-900/50">
-                  <button
-                    type="button"
-                    className="w-full min-w-0 text-left text-[11px] font-medium leading-snug text-zinc-700 dark:text-zinc-200"
-                    onClick={() => setPeriodModal(period - 1)}
-                  >
-                    {period}限
-                    <span className="mt-0.5 block break-words text-[10px] font-normal text-zinc-500 dark:text-zinc-400">
-                      {(() => {
-                        const meta = data.periodMeta[period - 1];
-                        const st = meta?.start;
-                        const dur = effectiveDurationMin(data, period - 1);
-                        if (st && dur != null) return `${st} / ${dur}分`;
-                        if (st) return `開始 ${st}`;
-                        if (dur != null) return `${dur}分`;
-                        return "時間を設定";
-                      })()}
-                    </span>
-                  </button>
+                  {readOnly ? (
+                    <div className="w-full min-w-0 text-left text-[11px] font-medium leading-snug text-zinc-700 dark:text-zinc-200">
+                      {period}限
+                      <span className="mt-0.5 block break-words text-[10px] font-normal text-zinc-500 dark:text-zinc-400">
+                        {(() => {
+                          const meta = data.periodMeta[period - 1];
+                          const st = meta?.start;
+                          const dur = effectiveDurationMin(data, period - 1);
+                          if (st && dur != null) return `${st} / ${dur}分`;
+                          if (st) return `開始 ${st}`;
+                          if (dur != null) return `${dur}分`;
+                          return "時間を設定";
+                        })()}
+                      </span>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="w-full min-w-0 text-left text-[11px] font-medium leading-snug text-zinc-700 dark:text-zinc-200"
+                      onClick={() => setPeriodModal(period - 1)}
+                    >
+                      {period}限
+                      <span className="mt-0.5 block break-words text-[10px] font-normal text-zinc-500 dark:text-zinc-400">
+                        {(() => {
+                          const meta = data.periodMeta[period - 1];
+                          const st = meta?.start;
+                          const dur = effectiveDurationMin(data, period - 1);
+                          if (st && dur != null) return `${st} / ${dur}分`;
+                          if (st) return `開始 ${st}`;
+                          if (dur != null) return `${dur}分`;
+                          return "時間を設定";
+                        })()}
+                      </span>
+                    </button>
+                  )}
                 </td>
                 {data.columns.map((col) => {
                   const k = cellKey(col.id, period);
@@ -757,9 +812,14 @@ export function TimetableEditor({ value, onChange, stLevel, compact = false }: P
                     <td key={k} className="border border-zinc-200 p-0 dark:border-zinc-700">
                       <input
                         value={v}
+                        readOnly={readOnly}
                         onChange={(e) => setCell(col.id, period, e.target.value)}
                         onFocus={() => setLastCell({ colId: col.id, period })}
-                        className="h-10 w-full min-w-[4.5rem] border-0 bg-transparent px-1.5 py-1 text-xs outline-none focus:ring-1 focus:ring-emerald-500/40 dark:text-zinc-100"
+                        className={`h-10 w-full min-w-[4.5rem] border-0 px-1.5 py-1 text-xs outline-none dark:text-zinc-100 ${
+                          readOnly
+                            ? "cursor-default bg-transparent"
+                            : "bg-transparent focus:ring-1 focus:ring-emerald-500/40"
+                        }`}
                         placeholder="科目"
                       />
                     </td>
@@ -771,7 +831,7 @@ export function TimetableEditor({ value, onChange, stLevel, compact = false }: P
         </table>
       </div>
 
-      {hsPalette ? (
+      {!readOnly && hsPalette ? (
         <div className="flex flex-wrap gap-1.5">
           <span className="w-full text-[10px] text-zinc-500 dark:text-zinc-400">
             よく使う科目（表のマスを一度タップしてから押すとそのコマに入ります）
@@ -800,11 +860,11 @@ export function TimetableEditor({ value, onChange, stLevel, compact = false }: P
             クリア
           </button>
         </div>
-      ) : (
+      ) : !readOnly ? (
         <p className="text-[10px] text-zinc-500 dark:text-zinc-400">大学生・高専・短大などは各マスに自由入力できます。</p>
-      )}
+      ) : null}
 
-      {periodModal !== null && (
+      {periodModal !== null && !readOnly && (
         <PeriodModalInner
           periodIndex={periodModal}
           start={data.periodMeta[periodModal]?.start ?? ""}
@@ -818,7 +878,7 @@ export function TimetableEditor({ value, onChange, stLevel, compact = false }: P
         />
       )}
 
-      {bulkModalOpen ? (
+      {bulkModalOpen && !readOnly ? (
         <BulkPeriodsModalInner
           key={bulkModalKey}
           pattern={data}
@@ -827,7 +887,7 @@ export function TimetableEditor({ value, onChange, stLevel, compact = false }: P
         />
       ) : null}
 
-      {addColumnModalOpen ? (
+      {addColumnModalOpen && !readOnly ? (
         <AddColumnModalInner
           key={addColumnModalKey}
           onClose={() => setAddColumnModalOpen(false)}

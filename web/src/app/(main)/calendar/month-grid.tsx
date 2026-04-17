@@ -7,6 +7,7 @@ import type { CalendarWeekStartDay } from "@/lib/user-settings";
 
 type EntryBrief = { entryDateYmd: string; title: string | null };
 type Ev = {
+  eventId?: string;
   title: string;
   start: string;
   end: string;
@@ -14,6 +15,7 @@ type Ev = {
   calendarName?: string;
   colorId?: string;
   calendarId?: string;
+  fixedCategory?: string;
 };
 
 const WEEK_LABELS_JA = ["日", "月", "火", "水", "木", "金", "土"] as const;

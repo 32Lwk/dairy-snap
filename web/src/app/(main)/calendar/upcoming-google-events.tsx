@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { resolveGcalEventColor } from "@/lib/gcal-event-color";
 
 type Ev = {
+  eventId?: string;
   title: string;
   start: string;
   end: string;
@@ -12,6 +13,7 @@ type Ev = {
   calendarName?: string;
   colorId?: string;
   calendarId?: string;
+  fixedCategory?: string;
 };
 
 function tokyoHm(isoLike: string): string {

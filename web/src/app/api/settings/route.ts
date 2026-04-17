@@ -64,6 +64,9 @@ const profilePatchSchema = z
     aiCurrentFocus: z.array(z.string().max(80)).max(32).optional(),
     aiHealthComfort: z.string().max(32).optional(),
     aiHousehold: z.string().max(32).optional(),
+    aiMemoryRecallStyle: z.string().max(32).optional(),
+    aiMemoryNamePolicy: z.string().max(32).optional(),
+    aiMemoryForgetBias: z.string().max(32).optional(),
     /** 時間割エディタの完全データ（TT_JSON_V1 形式） */
     studentTimetable: z.string().max(120_000).optional(),
     /** 職業・暮らしウィザード回答（st_timetable_note は含めない想定） */

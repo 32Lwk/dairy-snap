@@ -1,25 +1,39 @@
 "use client";
 
+import { CalendarOpeningPriorityEditor } from "@/components/calendar-opening-priority-editor";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CALENDAR_GRID_COLOR_PRESETS, GCAL_COLOR_MAP } from "@/lib/gcal-event-color";
+import {
+  applyProfileSignalsToOpeningScores,
+  type OpeningProfileSignalsInput,
+} from "@/lib/calendar-opening-profile-signals";
 import {
   type CalendarOpeningCategory,
   type CalendarOpeningRule,
   type CalendarOpeningSettings,
   type CalendarWeekStartDay,
+  addCalendarOpeningBuiltinTextHints,
   CALENDAR_DEFAULT_CATEGORY_WEIGHT,
   calendarOpeningCategoryOptions,
   labelToUserCategoryId,
   normalizeCalendarGridDisplay,
   normalizeCalendarOpeningPriorityOrder,
+  pickWinningCalendarCategory,
   stripCalendarOpeningCustomLabel,
 } from "@/lib/user-settings";
+import {
+  emitLocalSettingsSavedFromJson,
+  extractServerSyncToken,
+  LOCAL_SETTINGS_SAVED_EVENT,
+  REMOTE_SETTINGS_UPDATED_EVENT,
+} from "@/lib/settings-sync-client";
 import { UpcomingGoogleEvents } from "./upcoming-google-events";
 import { MonthGrid } from "./month-grid";
 
 type EntryBrief = { entryDateYmd: string; title: string | null };
 type Ev = {
+  eventId?: string;
   title: string;
   start: string;
   end: string;
@@ -28,6 +42,7 @@ type Ev = {
   colorId?: string;
   calendarId?: string;
   description?: string;
+  fixedCategory?: string;
 };
 
 const CALENDAR_WEEK_START_OPTIONS: { value: CalendarWeekStartDay; label: string }[] = [
@@ -40,12 +55,19 @@ const CALENDAR_WEEK_START_OPTIONS: { value: CalendarWeekStartDay; label: string 
   { value: 6, label: "土曜始まり" },
 ];
 
-function inferCategoryForEvent(ev: Ev, settings: CalendarOpeningSettings | null): CalendarOpeningCategory {
+function inferCategoryForEvent(
+  ev: Ev,
+  settings: CalendarOpeningSettings | null,
+  profileSignals: OpeningProfileSignalsInput | null,
+): CalendarOpeningCategory {
+  const fixed = (ev.fixedCategory ?? "").trim();
+  if (fixed) return fixed as CalendarOpeningCategory;
   const rules = settings?.rules ?? [];
   const priority = normalizeCalendarOpeningPriorityOrder(settings);
   const hayTitle = (ev.title ?? "").toLowerCase();
   const hayLoc = (ev.location ?? "").toLowerCase();
   const hayDesc = (ev.description ?? "").toLowerCase();
+  const haystack = `${ev.title ?? ""}\n${ev.location ?? ""}\n${ev.description ?? ""}`;
   const scores = new Map<CalendarOpeningCategory, number>();
   const add = (cat: CalendarOpeningCategory, w: number) => {
     scores.set(cat, (scores.get(cat) ?? 0) + w);
@@ -77,18 +99,83 @@ function inferCategoryForEvent(ev: Ev, settings: CalendarOpeningSettings | null)
       continue;
     }
   }
-  // 何も当たらないときは other
+  addCalendarOpeningBuiltinTextHints(haystack, add);
   add("other", 1);
-  let best: CalendarOpeningCategory = "other";
-  let bestScore = Number.NEGATIVE_INFINITY;
-  for (const cat of priority) {
-    const s = scores.get(cat) ?? Number.NEGATIVE_INFINITY;
-    if (s > bestScore) {
-      bestScore = s;
-      best = cat;
+  applyProfileSignalsToOpeningScores(scores, profileSignals);
+  return pickWinningCalendarCategory(scores, priority);
+}
+
+function inferCategoryForEventIgnoreCalendarDefault(
+  ev: Ev,
+  settings: CalendarOpeningSettings | null,
+  profileSignals: OpeningProfileSignalsInput | null,
+): CalendarOpeningCategory {
+  const rules = settings?.rules ?? [];
+  const priority = normalizeCalendarOpeningPriorityOrder(settings);
+  const hayTitle = (ev.title ?? "").toLowerCase();
+  const hayLoc = (ev.location ?? "").toLowerCase();
+  const hayDesc = (ev.description ?? "").toLowerCase();
+  const haystack = `${ev.title ?? ""}\n${ev.location ?? ""}\n${ev.description ?? ""}`;
+  const scores = new Map<CalendarOpeningCategory, number>();
+  const add = (cat: CalendarOpeningCategory, w: number) => {
+    scores.set(cat, (scores.get(cat) ?? 0) + w);
+  };
+  for (const r of rules) {
+    const w = typeof r.weight === "number" ? r.weight : 5;
+    const v = (r.value ?? "").toLowerCase();
+    if (!v) continue;
+    if (r.kind === "calendarId") {
+      if (ev.calendarId && ev.calendarId === r.value) add(r.category, w);
+      continue;
+    }
+    if (r.kind === "colorId") {
+      if (ev.colorId && ev.colorId === r.value) add(r.category, w);
+      continue;
+    }
+    if (r.kind === "keyword") {
+      if (hayTitle.includes(v)) add(r.category, w);
+      continue;
+    }
+    if (r.kind === "location") {
+      if (hayLoc.includes(v)) add(r.category, w);
+      continue;
+    }
+    if (r.kind === "description") {
+      if (hayDesc.includes(v)) add(r.category, w);
+      continue;
     }
   }
-  return best;
+  addCalendarOpeningBuiltinTextHints(haystack, add);
+  add("other", 1);
+  applyProfileSignalsToOpeningScores(scores, profileSignals);
+  return pickWinningCalendarCategory(scores, priority);
+}
+
+function parseCalendarPageSettingsPayload(profile: Record<string, unknown> | null): {
+  calendarOpening: CalendarOpeningSettings | null;
+  profileSignals: OpeningProfileSignalsInput | null;
+} {
+  if (!profile) {
+    return { calendarOpening: null, profileSignals: null };
+  }
+  const calendarOpening =
+    profile.calendarOpening && typeof profile.calendarOpening === "object" && !Array.isArray(profile.calendarOpening)
+      ? (profile.calendarOpening as CalendarOpeningSettings)
+      : null;
+  const strArr = (k: string): string[] | undefined => {
+    const v = profile[k];
+    if (!Array.isArray(v)) return undefined;
+    const out = v.filter((x): x is string => typeof x === "string" && x.length > 0);
+    return out.length ? out : undefined;
+  };
+  return {
+    calendarOpening,
+    profileSignals: {
+      interestPicks: strArr("interestPicks"),
+      aiAvoidTopics: strArr("aiAvoidTopics"),
+      aiCurrentFocus: strArr("aiCurrentFocus"),
+    },
+  };
 }
 
 export function CalendarClient(props: {
@@ -102,6 +189,7 @@ export function CalendarClient(props: {
   initialEvents: Ev[];
 }) {
   const [opening, setOpening] = useState<CalendarOpeningSettings | null>(null);
+  const [openingProfileSignals, setOpeningProfileSignals] = useState<OpeningProfileSignalsInput | null>(null);
   const [opts, setOpts] = useState<{
     calendars: { calendarId: string; calendarName: string; calendarColorId: string }[];
     colorIds: string[];
@@ -110,9 +198,15 @@ export function CalendarClient(props: {
   const [selectedCats, setSelectedCats] = useState<CalendarOpeningCategory[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
+  const [calendarAutoFixErr, setCalendarAutoFixErr] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [customCatDraft, setCustomCatDraft] = useState("");
   const [activeCalendarId, setActiveCalendarId] = useState<string>("");
+  const [titleFixDraft, setTitleFixDraft] = useState("");
+  const [recentFixEvents, setRecentFixEvents] = useState<Ev[] | null>(null);
+  /** 直近の GET /api/settings の serverSyncToken（変化時だけフル再取得） */
+  const lastServerSyncTokenRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!settingsOpen) return;
@@ -130,6 +224,12 @@ export function CalendarClient(props: {
 
   useEffect(() => {
     if (!settingsOpen) return;
+    setInfo(null);
+    setCalendarAutoFixErr(null);
+  }, [settingsOpen]);
+
+  useEffect(() => {
+    if (!settingsOpen) return;
     const cals = opts?.calendars ?? [];
     if (!cals.length) {
       setActiveCalendarId("");
@@ -140,22 +240,66 @@ export function CalendarClient(props: {
     );
   }, [settingsOpen, opts?.calendars]);
 
-  useEffect(() => {
-    // settings: calendarOpening
-    void (async () => {
-      const res = await fetch("/api/settings", { cache: "no-store", credentials: "same-origin" });
-      const json = (await res.json().catch(() => ({}))) as unknown;
-      if (!res.ok) return;
-      if (!json || typeof json !== "object" || Array.isArray(json)) return;
-      const o = json as Record<string, unknown>;
-      const profile = o.profile && typeof o.profile === "object" && !Array.isArray(o.profile) ? (o.profile as Record<string, unknown>) : null;
-      const calendarOpening =
-        profile && profile.calendarOpening && typeof profile.calendarOpening === "object" && !Array.isArray(profile.calendarOpening)
-          ? (profile.calendarOpening as CalendarOpeningSettings)
-          : null;
-      setOpening(calendarOpening);
-    })();
+  const loadFullCalendarSettings = useCallback(async () => {
+    const res = await fetch(`/api/settings?_=${Date.now()}`, { cache: "no-store", credentials: "same-origin" });
+    const json = (await res.json().catch(() => ({}))) as unknown;
+    if (!res.ok) return;
+    if (!json || typeof json !== "object" || Array.isArray(json)) return;
+    const o = json as Record<string, unknown>;
+    const tok = extractServerSyncToken(json);
+    if (tok) lastServerSyncTokenRef.current = tok;
+    const profile = o.profile && typeof o.profile === "object" && !Array.isArray(o.profile) ? (o.profile as Record<string, unknown>) : null;
+    const { calendarOpening, profileSignals } = parseCalendarPageSettingsPayload(profile);
+    setOpening(calendarOpening);
+    setOpeningProfileSignals(profileSignals);
   }, []);
+
+  const maybeRefreshCalendarSettings = useCallback(
+    async (hintToken?: string | null) => {
+      if (typeof hintToken === "string" && hintToken.length > 0) {
+        if (hintToken === lastServerSyncTokenRef.current) return;
+        await loadFullCalendarSettings();
+        return;
+      }
+      try {
+        const res = await fetch(`/api/settings?syncCheck=1&_=${Date.now()}`, {
+          cache: "no-store",
+          credentials: "same-origin",
+        });
+        if (!res.ok) return;
+        const j = (await res.json().catch(() => null)) as { serverSyncToken?: string } | null;
+        const t = j?.serverSyncToken;
+        if (typeof t !== "string" || t.length === 0) return;
+        if (t === lastServerSyncTokenRef.current) return;
+        await loadFullCalendarSettings();
+      } catch {
+        /* ignore */
+      }
+    },
+    [loadFullCalendarSettings],
+  );
+
+  useEffect(() => {
+    void loadFullCalendarSettings();
+  }, [loadFullCalendarSettings]);
+
+  useEffect(() => {
+    const onSync = (e: Event) => {
+      const t = (e as CustomEvent<{ serverSyncToken?: string }>).detail?.serverSyncToken;
+      void maybeRefreshCalendarSettings(typeof t === "string" && t.length > 0 ? t : undefined);
+    };
+    window.addEventListener(LOCAL_SETTINGS_SAVED_EVENT, onSync);
+    window.addEventListener(REMOTE_SETTINGS_UPDATED_EVENT, onSync);
+    const onVis = () => {
+      if (document.visibilityState === "visible") void maybeRefreshCalendarSettings();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.removeEventListener(LOCAL_SETTINGS_SAVED_EVENT, onSync);
+      window.removeEventListener(REMOTE_SETTINGS_UPDATED_EVENT, onSync);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [maybeRefreshCalendarSettings]);
 
   useEffect(() => {
     // classifier options (calendar list / colors) from cache
@@ -202,6 +346,243 @@ export function CalendarClient(props: {
 
   const noDisplayFilter = selectedCalendars.length === 0 && selectedCats.length === 0;
 
+  async function autoFixCalendarCategory(calendarId: string) {
+    if (!calendarId) return;
+    setBusy(true);
+    setErr(null);
+    setInfo(null);
+    setCalendarAutoFixErr(null);
+    try {
+      const now = new Date();
+      const to = new Intl.DateTimeFormat("sv-SE", {
+        timeZone: "Asia/Tokyo",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      })
+        .format(now)
+        .replaceAll("/", "-");
+      const fromD = new Date(now);
+      fromD.setDate(fromD.getDate() - 45);
+      const from = new Intl.DateTimeFormat("sv-SE", {
+        timeZone: "Asia/Tokyo",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      })
+        .format(fromD)
+        .replaceAll("/", "-");
+
+      const res = await fetch(`/api/calendar/events?from=${from}&to=${to}&limit=2000`, {
+        cache: "no-store",
+        credentials: "same-origin",
+      });
+      const json = (await res.json().catch(() => ({}))) as { events?: Ev[]; error?: string; hint?: string };
+      if (!res.ok) {
+        const base = typeof json.error === "string" ? json.error : "予定の取得に失敗しました";
+        const hint = typeof json.hint === "string" && json.hint.trim().length ? `\n${json.hint}` : "";
+        setCalendarAutoFixErr(`${base}${hint}`);
+        return;
+      }
+      const all = Array.isArray(json.events) ? json.events : [];
+      const target = all.filter((e) => (e.calendarId ?? "") === calendarId);
+
+      // 予定が少ないと誤推定しやすいので、最低件数を要求
+      if (target.length < 8) {
+        setCalendarAutoFixErr("予定が少ないため、自動推定できませんでした（最低8件必要です）。");
+        return;
+      }
+
+      const counts = new Map<CalendarOpeningCategory, number>();
+      for (const ev of target) {
+        // 「固定カテゴリの影響」は外して、“内容・ルール”から推定する
+        const cat = inferCategoryForEventIgnoreCalendarDefault(ev, opening, openingProfileSignals);
+        counts.set(cat, (counts.get(cat) ?? 0) + 1);
+      }
+
+      const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+      const top = ranked[0];
+      if (!top) {
+        setCalendarAutoFixErr("自動推定できませんでした。");
+        return;
+      }
+      const [topCat, topN] = top;
+      const secondN = ranked[1]?.[1] ?? 0;
+      const ratio = topN / target.length;
+
+      // 閾値: 過半数 + ある程度差がある
+      if (ratio < 0.55 || topN - secondN < 2) {
+        setCalendarAutoFixErr(
+          `判定が割れています（最多: ${topCat} ${Math.round(ratio * 100)}%）。分類ルールを追加してから再実行してください。`,
+        );
+        return;
+      }
+
+      const topLabel = catOptions.find((c) => c.id === topCat)?.label ?? topCat;
+      // 反映（カレンダー固定カテゴリ）
+      const next: CalendarOpeningSettings = { ...(opening ?? {}) };
+      const map = { ...(next.calendarCategoryById ?? {}) };
+      map[calendarId] = topCat;
+      next.calendarCategoryById = map;
+      await saveCalendarOpening(next);
+      setInfo(`固定しました: ${topLabel}（${topN}/${target.length}件, ${Math.round(ratio * 100)}%）`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function retryAutoFixWithForceSync(calendarId: string) {
+    if (!calendarId) return;
+    setBusy(true);
+    setCalendarAutoFixErr(null);
+    setErr(null);
+    setInfo(null);
+    try {
+      // まず同期だけ強制し、その後 autoFix を再実行
+      const now = new Date();
+      const to = new Intl.DateTimeFormat("sv-SE", {
+        timeZone: "Asia/Tokyo",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      })
+        .format(now)
+        .replaceAll("/", "-");
+      const fromD = new Date(now);
+      fromD.setDate(fromD.getDate() - 7);
+      const from = new Intl.DateTimeFormat("sv-SE", {
+        timeZone: "Asia/Tokyo",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      })
+        .format(fromD)
+        .replaceAll("/", "-");
+      await fetch(`/api/calendar/events?forceSync=1&from=${from}&to=${to}&limit=50`, {
+        cache: "no-store",
+        credentials: "same-origin",
+      }).catch(() => {});
+    } finally {
+      setBusy(false);
+    }
+    void autoFixCalendarCategory(calendarId);
+  }
+
+  async function applyFixedCategoryToEvents(calendarId: string, category: CalendarOpeningCategory) {
+    setBusy(true);
+    setErr(null);
+    setInfo(null);
+    try {
+      const res = await fetch("/api/calendar/fixed-category", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "by_calendar", calendarId, category }),
+        credentials: "same-origin",
+      });
+      const j = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; updated?: number };
+      if (!res.ok) {
+        setErr(typeof j.error === "string" ? j.error : "イベントへの固定に失敗しました");
+        return;
+      }
+      setInfo(`イベントに固定しました（${j.updated ?? 0}件）`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function applyFixedCategoryToEventsByTitle(
+    calendarId: string,
+    category: CalendarOpeningCategory,
+    titleIncludes: string,
+  ) {
+    const q = titleIncludes.trim();
+    if (!q) return;
+    setBusy(true);
+    setErr(null);
+    setInfo(null);
+    try {
+      const res = await fetch("/api/calendar/fixed-category", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "by_title", calendarId, category, titleIncludes: q }),
+        credentials: "same-origin",
+      });
+      const j = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; updated?: number };
+      if (!res.ok) {
+        setErr(typeof j.error === "string" ? j.error : "タイトル一致の固定に失敗しました");
+        return;
+      }
+      setInfo(`タイトル一致で固定しました（${j.updated ?? 0}件）`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setFixedCategoryForEvent(calendarId: string, eventId: string, category: CalendarOpeningCategory | null) {
+    if (!calendarId || !eventId) return;
+    setBusy(true);
+    setErr(null);
+    setInfo(null);
+    try {
+      const res = await fetch("/api/calendar/fixed-category", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "by_event", calendarId, eventId, category }),
+        credentials: "same-origin",
+      });
+      const j = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; updated?: number };
+      if (!res.ok) {
+        setErr(typeof j.error === "string" ? j.error : "イベント固定に失敗しました");
+        return;
+      }
+      setRecentFixEvents((prev) =>
+        (prev ?? []).map((e) => (e.eventId === eventId ? { ...e, fixedCategory: category ?? undefined } : e)),
+      );
+      setInfo("イベントを更新しました");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const loadRecentEventsForCalendar = useCallback(
+    async (calendarId: string) => {
+      if (!calendarId) return;
+      try {
+        const now = new Date();
+        const toD = new Date(now);
+        toD.setDate(toD.getDate() + 30);
+        const fromD = new Date(now);
+        fromD.setDate(fromD.getDate() - 30);
+        const fmt = (d: Date) =>
+          new Intl.DateTimeFormat("sv-SE", {
+            timeZone: "Asia/Tokyo",
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+          })
+            .format(d)
+            .replaceAll("/", "-");
+        const from = fmt(fromD);
+        const to = fmt(toD);
+        const res = await fetch(`/api/calendar/events?from=${from}&to=${to}&limit=2000`, {
+          cache: "no-store",
+          credentials: "same-origin",
+        });
+        const json = (await res.json().catch(() => ({}))) as { events?: Ev[] };
+        const all = Array.isArray(json.events) ? json.events : [];
+        const list = all
+          .filter((e) => (e.calendarId ?? "") === calendarId)
+          .slice()
+          .sort((a, b) => Date.parse(b.start) - Date.parse(a.start))
+          .slice(0, 24);
+        setRecentFixEvents(list);
+      } catch {
+        setRecentFixEvents([]);
+      }
+    },
+    [],
+  );
+
   async function saveCalendarOpening(next: CalendarOpeningSettings) {
     setBusy(true);
     setErr(null);
@@ -216,6 +597,9 @@ export function CalendarClient(props: {
         setErr(typeof json.error === "string" ? json.error : "保存に失敗しました");
         return;
       }
+      const tok = extractServerSyncToken(json);
+      if (tok) lastServerSyncTokenRef.current = tok;
+      emitLocalSettingsSavedFromJson(json);
       // 再取得は重いのでローカルを更新
       setOpening(next);
     } finally {
@@ -263,16 +647,22 @@ export function CalendarClient(props: {
           if (!cid || !selectedCalendarSet.has(cid)) return false;
         }
         if (hasCatFilter) {
-          const cat = inferCategoryForEvent(ev, opening);
+          const cat = inferCategoryForEvent(ev, opening, openingProfileSignals);
           if (!selectedCatSet.has(cat)) return false;
         }
         return true;
       },
       infer(ev: Ev): CalendarOpeningCategory {
-        return inferCategoryForEvent(ev, opening);
+        return inferCategoryForEvent(ev, opening, openingProfileSignals);
       },
     };
-  }, [opening, selectedCalendars, selectedCats]);
+  }, [opening, openingProfileSignals, selectedCalendars, selectedCats]);
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    if (!activeCalendarId) return;
+    void loadRecentEventsForCalendar(activeCalendarId);
+  }, [settingsOpen, activeCalendarId, loadRecentEventsForCalendar]);
 
   return (
     <>
@@ -405,6 +795,7 @@ export function CalendarClient(props: {
                   月グリッドの見た目・カレンダーごとの色と分類・分類ルールを設定します。一覧の絞り込みは画面上部のチップから行えます。
                 </p>
                 {err ? <p className="mt-2 text-xs text-red-600">{err}</p> : null}
+                {info ? <p className="mt-2 text-xs text-emerald-700 dark:text-emerald-300">{info}</p> : null}
               </div>
               <div className="flex shrink-0 flex-col items-end gap-2">
                 <button
@@ -540,6 +931,9 @@ export function CalendarClient(props: {
                       <p className="text-[11px] font-medium text-zinc-700 dark:text-zinc-200" id="calendar-assign-category-label">
                         このカレンダーの予定の分類
                       </p>
+                      <p className="mt-1 text-[10px] leading-snug text-zinc-500 dark:text-zinc-400">
+                        「自動」は予定テキストと分類ルールを本体とし、プロフィール（趣味・避けたい話題・関心のフォーカス）でスコアを微調整します。
+                      </p>
                       <div
                         className="mt-2 flex flex-wrap gap-2"
                         role="radiogroup"
@@ -575,7 +969,7 @@ export function CalendarClient(props: {
                                     : "border-zinc-200 bg-white text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200",
                                 ].join(" ")}
                               >
-                                自動
+                                固定しない（自動判定）
                               </button>
                               {catOptions.map((c) => {
                                 const on = assigned === c.id;
@@ -643,8 +1037,156 @@ export function CalendarClient(props: {
                         })()}
                       </div>
                       <p className="mt-2 text-[10px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-                        1つだけ選べます。「自動」はキーワード・ルール優先です。細かい条件は下の「分類ルール」でも追加できます。
+                        1つだけ選べます。「固定しない」はキーワード・ルール優先で毎回推定します。細かい条件は下の「分類ルール」でも追加できます。
                       </p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void autoFixCalendarCategory(activeCalendar.calendarId)}
+                          className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-800 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
+                        >
+                          自動推定で固定する（このカレンダー）
+                        </button>
+                        {opening?.calendarCategoryById?.[activeCalendar.calendarId] ? (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() =>
+                              void applyFixedCategoryToEvents(
+                                activeCalendar.calendarId,
+                                opening!.calendarCategoryById![activeCalendar.calendarId]!,
+                              )
+                            }
+                            className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-900 hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-100 dark:hover:bg-emerald-950/50"
+                          >
+                            イベントにも固定する（DB）
+                          </button>
+                        ) : null}
+                      </div>
+                      {calendarAutoFixErr ? (
+                        <div className="mt-2 space-y-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 dark:border-red-900/40 dark:bg-red-950/20">
+                          <p className="whitespace-pre-wrap text-[11px] text-red-700 dark:text-red-300">
+                            {calendarAutoFixErr}
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void autoFixCalendarCategory(activeCalendar.calendarId)}
+                              className="rounded-md border border-red-200 bg-white px-2 py-1 text-[11px] font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-900/50 dark:bg-zinc-950 dark:text-red-200 dark:hover:bg-red-950/30"
+                            >
+                              再試行
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void retryAutoFixWithForceSync(activeCalendar.calendarId)}
+                              className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-200 dark:hover:bg-amber-950/35"
+                            >
+                              強制同期して再試行
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
+                      {opening?.calendarCategoryById?.[activeCalendar.calendarId] ? (
+                        <div className="mt-3 rounded-lg border border-zinc-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-950">
+                          <p className="text-[11px] font-medium text-zinc-700 dark:text-zinc-200">
+                            タイトル一致でイベント固定（このカレンダー）
+                          </p>
+                          <p className="mt-0.5 text-[10px] leading-snug text-zinc-500 dark:text-zinc-400">
+                            例: 「シフト」や「出勤」。一致したイベントだけ DB に固定カテゴリを書き込みます。
+                          </p>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <input
+                              value={titleFixDraft}
+                              onChange={(e) => setTitleFixDraft(e.target.value)}
+                              maxLength={80}
+                              disabled={busy}
+                              placeholder="タイトルに含まれる文字"
+                              aria-label="タイトル一致キーワード"
+                              className="min-w-[12rem] flex-1 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-medium text-zinc-900 outline-none ring-zinc-400 focus-visible:ring-2 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:placeholder:text-zinc-500 dark:focus-visible:ring-zinc-500"
+                            />
+                            <button
+                              type="button"
+                              disabled={busy || !titleFixDraft.trim()}
+                              onClick={() =>
+                                void applyFixedCategoryToEventsByTitle(
+                                  activeCalendar.calendarId,
+                                  opening!.calendarCategoryById![activeCalendar.calendarId]!,
+                                  titleFixDraft,
+                                )
+                              }
+                              className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-900 hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-100 dark:hover:bg-emerald-950/50"
+                            >
+                              一致分だけ固定
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      <details className="mt-3 rounded-lg border border-zinc-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-950">
+                        <summary className="cursor-pointer select-none text-[11px] font-medium text-zinc-700 dark:text-zinc-200">
+                          イベント単位の固定（個別）
+                        </summary>
+                        <p className="mt-1 text-[10px] leading-snug text-zinc-500 dark:text-zinc-400">
+                          直近の予定から個別に固定カテゴリ（DB）を設定できます。「固定しない」に戻すと推定に戻ります。
+                        </p>
+                        {!recentFixEvents ? (
+                          <p className="mt-2 text-[11px] text-zinc-500">読み込み中…</p>
+                        ) : recentFixEvents.length === 0 ? (
+                          <p className="mt-2 text-[11px] text-zinc-500">（予定が見つかりません）</p>
+                        ) : (
+                          <ul className="mt-2 space-y-2">
+                            {recentFixEvents.map((ev, idx) => {
+                              const eventId = ev.eventId ?? "";
+                              const cur = (ev.fixedCategory ?? "").trim();
+                              const curValue = cur ? cur : "";
+                              return (
+                                <li
+                                  key={`${eventId || ev.start}-${idx}`}
+                                  className="rounded-lg border border-zinc-100 bg-zinc-50/70 p-2 dark:border-zinc-800 dark:bg-zinc-900/40"
+                                >
+                                  <div className="flex flex-wrap items-start justify-between gap-2">
+                                    <div className="min-w-0">
+                                      <p className="truncate text-xs font-medium text-zinc-900 dark:text-zinc-100">
+                                        {ev.title || "（無題）"}
+                                      </p>
+                                      <p className="mt-0.5 font-mono text-[10px] text-zinc-500 dark:text-zinc-400">
+                                        {ev.start}
+                                      </p>
+                                    </div>
+                                    <label className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
+                                      固定
+                                      <select
+                                        disabled={busy || !eventId}
+                                        value={curValue}
+                                        onChange={(e) => {
+                                          const v = e.target.value;
+                                          void setFixedCategoryForEvent(activeCalendar.calendarId, eventId, v ? (v as CalendarOpeningCategory) : null);
+                                        }}
+                                        className="mt-1 w-full min-w-[11rem] rounded-lg border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                                      >
+                                        <option value="">固定しない（推定に戻す）</option>
+                                        {catOptions.map((c) => (
+                                          <option key={c.id} value={c.id}>
+                                            {c.label}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                  </div>
+                                  {!eventId ? (
+                                    <p className="mt-1 text-[10px] text-amber-700 dark:text-amber-300">
+                                      eventId が取得できない予定のため固定できません
+                                    </p>
+                                  ) : null}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        )}
+                      </details>
                     </div>
                   </div>
                 ) : null}
@@ -678,29 +1220,19 @@ export function CalendarClient(props: {
           <div className="mt-3 space-y-4">
             <div>
               <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">カテゴリの優先順位（上ほど優先）</p>
-              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                {effectivePriority.map((cat, idx) => (
-                  <label key={idx} className="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
-                    <span className="w-6 shrink-0 text-[11px] text-zinc-500">#{idx + 1}</span>
-                    <select
-                      value={cat}
-                      disabled={busy}
-                      onChange={(e) => {
-                        const cur = [...effectivePriority];
-                        cur[idx] = e.target.value as CalendarOpeningCategory;
-                        setOpening((prev) => ({ ...(prev ?? {}), priorityOrder: cur }));
-                      }}
-                      className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                    >
-                      {catOptions.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.custom ? `${c.label}（カスタム）` : c.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ))}
-              </div>
+              <CalendarOpeningPriorityEditor
+                priorityList={effectivePriority}
+                catOptions={catOptions}
+                disabled={busy}
+                onSetPriorityOrder={(next) =>
+                  setOpening((prev) => {
+                    const base = { ...(prev ?? {}) };
+                    const current = normalizeCalendarOpeningPriorityOrder(base);
+                    const resolved = typeof next === "function" ? next(current) : next;
+                    return { ...base, priorityOrder: resolved };
+                  })
+                }
+              />
               <button
                 type="button"
                 disabled={busy}

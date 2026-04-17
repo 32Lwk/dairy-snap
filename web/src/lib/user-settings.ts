@@ -65,6 +65,12 @@ export type UserProfileSettings = {
   aiHealthComfort?: string;
   /** 暮らしのざっくり */
   aiHousehold?: string;
+  /** MAS: how much to store/recall memories */
+  aiMemoryRecallStyle?: string;
+  /** MAS: proper names in memory */
+  aiMemoryNamePolicy?: string;
+  /** MAS: how strongly to update/delete on contradiction */
+  aiMemoryForgetBias?: string;
   /**
    * 時間割エディタの完全データ（`TT_JSON_V1:` 接頭辞付き JSON）。
    * 曜日列・各限・開始時刻・コマ長・セル内容を欠損なく保持する。
@@ -175,6 +181,59 @@ export type CalendarOpeningSettings = {
 /** `calendarCategoryById` のスコア（キーワードルールより優先しやすい重み） */
 export const CALENDAR_DEFAULT_CATEGORY_WEIGHT = 100;
 
+const CALENDAR_OPENING_BUILTIN_TEXT_HINTS: { cat: BuiltinCalendarOpeningCategory; words: string[]; w: number }[] = [
+  { cat: "job_hunt", words: ["\u9762\u63a5", "ES", "\u8aac\u660e\u4f1a", "\u9078\u8003", "\u5185\u5b9a", "\u30a4\u30f3\u30bf\u30fc\u30f3", "\u9762\u8ac7", "\u30ea\u30af\u30eb\u30fc\u30bf\u30fc"], w: 6 },
+  { cat: "parttime", words: ["\u30d0\u30a4\u30c8", "\u30a2\u30eb\u30d0\u30a4\u30c8", "\u30b7\u30d5\u30c8", "\u51fa\u52e4", "\u9000\u52e4", "\u52e4\u52d9", "\u30ec\u30b8"], w: 6 },
+  { cat: "date", words: ["\u30c7\u30fc\u30c8", "\u8a18\u5ff5\u65e5", "\u5f7c\u6c0f", "\u5f7c\u5973", "\u4ea4\u969b", "\u544a\u767d"], w: 6 },
+  {
+    cat: "school",
+    words: ["\u8b1b\u7fa9", "\u6388\u696d", "\u30bc\u30df", "\u8a66\u9a13", "\u30c6\u30b9\u30c8", "\u30ec\u30dd\u30fc\u30c8", "\u8ab2\u984c", "\u767a\u8868"],
+    w: 6,
+  },
+  { cat: "health", words: ["\u75c5\u9662", "\u901a\u9662", "\u6b6f\u533b\u8005", "\u30af\u30ea\u30cb\u30c3\u30af", "\u691c\u8a3a", "\u85ac"], w: 6 },
+  { cat: "family", words: ["\u5e30\u7701", "\u5bb6\u65cf", "\u53cb\u9054", "\u53cb\u4eba", "\u98f2\u307f\u4f1a", "\u540c\u7a93\u4f1a"], w: 4 },
+  { cat: "hobby", words: ["\u30e9\u30a4\u30d6", "\u6620\u753b", "\u5c55\u793a", "\u30a4\u30d9\u30f3\u30c8", "\u821e\u53f0", "\u30d5\u30a7\u30b9", "\u89b3\u6226", "\u914d\u4fe1"], w: 4 },
+];
+
+/** Title / location / description keyword hints when classification rules are empty (opening scorer family). */
+export function addCalendarOpeningBuiltinTextHints(
+  haystack: string,
+  bump: (cat: CalendarOpeningCategory, w: number) => void,
+): void {
+  const hay = haystack.toLowerCase();
+  for (const b of CALENDAR_OPENING_BUILTIN_TEXT_HINTS) {
+    for (const w of b.words) {
+      if (hay.includes(w.toLowerCase())) bump(b.cat, b.w);
+    }
+  }
+}
+
+/** 最高点を全体スコアから選び、同点は priority 順（早いほど優先）でタイブレーク */
+export function pickWinningCalendarCategory(
+  scores: Map<CalendarOpeningCategory, number>,
+  priority: CalendarOpeningCategory[],
+): CalendarOpeningCategory {
+  if (scores.size === 0) return "other";
+  let maxS = Number.NEGATIVE_INFINITY;
+  for (const s of scores.values()) {
+    if (s > maxS) maxS = s;
+  }
+  const rank = new Map<CalendarOpeningCategory, number>();
+  priority.forEach((c, i) => rank.set(c, i));
+  const notInPrio = 10_000;
+  let best: CalendarOpeningCategory = "other";
+  let bestRank = Number.POSITIVE_INFINITY;
+  for (const [cat, s] of scores) {
+    if (s < maxS) continue;
+    const r = rank.get(cat) ?? notInPrio;
+    if (r < bestRank || (r === bestRank && cat.localeCompare(best) < 0)) {
+      bestRank = r;
+      best = cat;
+    }
+  }
+  return best;
+}
+
 export function normalizeCalendarGridDisplay(
   g: CalendarGridDisplaySettings | null | undefined,
 ): { weekStartsOn: CalendarWeekStartDay; maxEventsPerCell: number; calendarHexById: Record<string, string> } {
@@ -220,22 +279,48 @@ export function calendarOpeningCategoryOptions(
   return out;
 }
 
-/** 優先順位配列を正規化（組み込み・カスタムを統合、最大32件） */
+/** 組み込み + カスタムのデフォルト優先順（全件） */
+function defaultCalendarOpeningPriorityOrder(
+  opening: CalendarOpeningSettings | null | undefined,
+): CalendarOpeningCategory[] {
+  const builtins = [...CALENDAR_OPENING_BUILTIN_IDS] as CalendarOpeningCategory[];
+  const customIds = (opening?.customCategoryLabels ?? []).map((l) => labelToUserCategoryId(l));
+  const uniq: CalendarOpeningCategory[] = [];
+  const push = (x: CalendarOpeningCategory) => {
+    if (!uniq.includes(x)) uniq.push(x);
+  };
+  for (const x of builtins) push(x);
+  for (const x of customIds) push(x);
+  return uniq.slice(0, 32);
+}
+
+/**
+ * 優先順位配列を正規化（最大32件）。
+ * - `priorityOrder` 未設定: 組み込み + カスタムをすべて含む従来のデフォルト順
+ * - 設定済み: 保存された順のみ（行削除でカテゴリを優先対象から外せる）
+ */
 export function normalizeCalendarOpeningPriorityOrder(
   opening: CalendarOpeningSettings | null | undefined,
 ): CalendarOpeningCategory[] {
   const builtins = [...CALENDAR_OPENING_BUILTIN_IDS] as CalendarOpeningCategory[];
   const customIds = (opening?.customCategoryLabels ?? []).map((l) => labelToUserCategoryId(l));
   const allow = new Set<string>([...builtins, ...customIds]);
-  const po = opening?.priorityOrder ?? [];
+  const po = opening?.priorityOrder;
+
+  if (po === undefined) {
+    return defaultCalendarOpeningPriorityOrder(opening);
+  }
+
   const filtered = po.filter((x): x is CalendarOpeningCategory => typeof x === "string" && allow.has(x));
   const uniq: CalendarOpeningCategory[] = [];
-  const push = (x: CalendarOpeningCategory) => {
+  for (const x of filtered) {
     if (!uniq.includes(x)) uniq.push(x);
-  };
-  for (const x of filtered) push(x);
-  for (const x of builtins) push(x);
-  for (const x of customIds) push(x);
+  }
+
+  if (uniq.length === 0) {
+    return defaultCalendarOpeningPriorityOrder(opening);
+  }
+
   return uniq.slice(0, 32);
 }
 
@@ -477,6 +562,9 @@ function parseProfile(raw: unknown): UserProfileSettings | undefined {
   const aiEnergyPeak = str("aiEnergyPeak");
   const aiHealthComfort = str("aiHealthComfort");
   const aiHousehold = str("aiHousehold");
+  const aiMemoryRecallStyle = str("aiMemoryRecallStyle");
+  const aiMemoryNamePolicy = str("aiMemoryNamePolicy");
+  const aiMemoryForgetBias = str("aiMemoryForgetBias");
   const aiBusyWindows = parseProfileStringArray(o.aiBusyWindows);
   const aiAvoidTopics = parseProfileStringArray(o.aiAvoidTopics);
   const aiCurrentFocus = parseProfileStringArray(o.aiCurrentFocus);
@@ -511,6 +599,9 @@ function parseProfile(raw: unknown): UserProfileSettings | undefined {
   if (aiEnergyPeak) out.aiEnergyPeak = aiEnergyPeak;
   if (aiHealthComfort) out.aiHealthComfort = aiHealthComfort;
   if (aiHousehold) out.aiHousehold = aiHousehold;
+  if (aiMemoryRecallStyle) out.aiMemoryRecallStyle = aiMemoryRecallStyle;
+  if (aiMemoryNamePolicy) out.aiMemoryNamePolicy = aiMemoryNamePolicy;
+  if (aiMemoryForgetBias) out.aiMemoryForgetBias = aiMemoryForgetBias;
   if (aiBusyWindows) out.aiBusyWindows = aiBusyWindows;
   if (aiAvoidTopics) out.aiAvoidTopics = aiAvoidTopics;
   if (aiCurrentFocus) out.aiCurrentFocus = aiCurrentFocus;
@@ -654,6 +745,9 @@ export function serializeProfileForApi(
     aiCurrentFocus: arr(form.aiCurrentFocus),
     aiHealthComfort: t(form.aiHealthComfort),
     aiHousehold: t(form.aiHousehold),
+    aiMemoryRecallStyle: t(form.aiMemoryRecallStyle),
+    aiMemoryNamePolicy: t(form.aiMemoryNamePolicy),
+    aiMemoryForgetBias: t(form.aiMemoryForgetBias),
     ...(studentTimetable ? { studentTimetable } : {}),
     ...(workLifeAnswers ? { workLifeAnswers } : {}),
   };

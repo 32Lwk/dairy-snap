@@ -4,6 +4,7 @@ import { requireSession } from "@/lib/api/require-session";
 import { prisma } from "@/server/db";
 import { LIMITS, getTodayCounter, incrementChat, incrementOrchestratorCalls } from "@/server/usage";
 import { runOrchestrator, triggerSupervisorAsync } from "@/server/orchestrator";
+import { runMasMemoryExtraction } from "@/server/mas-memory";
 import { PROMPT_VERSIONS } from "@/server/prompts";
 
 export const runtime = "nodejs";
@@ -143,6 +144,17 @@ export async function POST(req: NextRequest) {
           personaInstructions,
           mbtiHint: mbtiHint || undefined,
         });
+
+        void runMasMemoryExtraction({
+          userId: session.user.id,
+          entryId: entry.id,
+          entryDateYmd: entry.entryDateYmd,
+          encryptionMode: entry.encryptionMode,
+          diaryBody: entry.body,
+          userMessage: "",
+          assistantMessage: assistantText,
+          recentTurns: [{ role: "assistant" as const, content: assistantText }],
+        }).catch(() => {});
 
         controller.enqueue(
           encoder.encode(`data: ${JSON.stringify({ done: true, threadId: thread!.id, agentsUsed })}\n\n`),

@@ -1,7 +1,9 @@
 "use client";
 
+import { CalendarOpeningPriorityEditor } from "@/components/calendar-opening-priority-editor";
 import { PlaceCoordsLine } from "@/components/place-coords-line";
 import { SettingsAccountActions } from "@/components/settings-account-actions";
+import { SettingsMemoryPanel } from "@/components/settings-memory-panel";
 import { UserProfileForm, type UserProfilePayload } from "@/components/user-profile-form";
 import type {
   CalendarOpeningCategory,
@@ -11,15 +13,14 @@ import type {
 import {
   calendarOpeningCategoryOptions,
   hydrateProfilePayloadForForms,
-  labelToUserCategoryId,
   normalizeCalendarOpeningPriorityOrder,
-  stripCalendarOpeningCustomLabel,
 } from "@/lib/user-settings";
 import {
   emitLocalSettingsSavedFromJson,
   REMOTE_SETTINGS_UPDATED_EVENT,
 } from "@/lib/settings-sync-client";
 import { reverseGeocodeClient } from "@/lib/reverse-geocode-client";
+import { OnboardingChatFlow } from "@/app/(main)/onboarding/onboarding-chat-flow";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
@@ -46,7 +47,7 @@ type SettingsPayload = {
   serverSyncToken?: string;
 };
 
-export function SettingsForm() {
+export function SettingsForm({ userId }: { userId: string }) {
   const [data, setData] = useState<SettingsPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -61,7 +62,10 @@ export function SettingsForm() {
     calendars: { calendarId: string; calendarName: string; calendarColorId: string }[];
     colorIds: string[];
   } | null>(null);
-  const [customCatDraft, setCustomCatDraft] = useState("");
+  const [profileChatOpen, setProfileChatOpen] = useState(false);
+  const [profileChatMode, setProfileChatMode] = useState<"chat" | "form">("chat");
+  const [profileChatDraft, setProfileChatDraft] = useState<UserProfilePayload | null>(null);
+  const [profileFormMountKey, setProfileFormMountKey] = useState(0);
 
   const applySettingsJson = useCallback((json: SettingsPayload & { defaultWeatherLocation?: unknown }) => {
     setData(json);
@@ -143,6 +147,15 @@ export function SettingsForm() {
     window.addEventListener(REMOTE_SETTINGS_UPDATED_EVENT, onRemote);
     return () => window.removeEventListener(REMOTE_SETTINGS_UPDATED_EVENT, onRemote);
   }, [reloadSettingsFromServer]);
+
+  useEffect(() => {
+    if (!profileChatOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [profileChatOpen]);
 
   async function saveDefaultLocation() {
     const lat = parseFloat(latIn);
@@ -287,31 +300,6 @@ export function SettingsForm() {
     }
   }
 
-  async function addCustomOpeningCategory() {
-    const lab = customCatDraft.normalize("NFKC").trim();
-    if (!lab) return;
-    if (lab.length > 24) {
-      setError("カテゴリ名は24文字以内にしてください");
-      return;
-    }
-    const id = labelToUserCategoryId(lab);
-    const labels = opening?.customCategoryLabels ?? [];
-    if (labels.some((x) => labelToUserCategoryId(x) === id)) {
-      setError("同じカテゴリが既にあります");
-      return;
-    }
-    if (labels.length >= 16) {
-      setError("カスタムカテゴリは16件までです");
-      return;
-    }
-    setError(null);
-    setCustomCatDraft("");
-    await saveCalendarOpening({
-      ...(opening ?? {}),
-      customCategoryLabels: [...labels, lab],
-    });
-  }
-
   if (!data && !error) {
     return <p className="mt-6 text-sm text-zinc-500">読み込み中…</p>;
   }
@@ -321,7 +309,8 @@ export function SettingsForm() {
   if (!data) return null;
 
   return (
-    <div className="mt-6 space-y-6">
+    <>
+      <div className="mt-6 space-y-6">
       {data.email && (
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
           ログイン中: <span className="font-medium">{data.email}</span>
@@ -380,6 +369,19 @@ export function SettingsForm() {
           key={data.serverSyncToken ?? "profile"}
           initial={hydrateProfilePayloadForForms(data.profile ?? {})}
           onSaved={() => void reloadSettingsFromServer()}
+          headerActions={
+            <button
+              type="button"
+              onClick={() => {
+                setProfileChatDraft(hydrateProfilePayloadForForms(data.profile ?? {}));
+                setProfileChatMode("chat");
+                setProfileChatOpen(true);
+              }}
+              className="rounded-lg border border-emerald-600 bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-900 hover:bg-emerald-100 dark:border-emerald-500 dark:bg-emerald-950/40 dark:text-emerald-100 dark:hover:bg-emerald-900/50 sm:text-sm"
+            >
+              チャットで編集
+            </button>
+          }
         />
       </section>
 
@@ -392,77 +394,22 @@ export function SettingsForm() {
         <div className="mt-4 space-y-4">
           <div>
             <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">カテゴリの優先順位（上ほど優先）</p>
-            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {normalizeCalendarOpeningPriorityOrder(opening).map((cat, idx) => (
-                <label key={idx} className="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
-                  <span className="w-6 shrink-0 text-[11px] text-zinc-500">#{idx + 1}</span>
-                  <select
-                    value={cat}
-                    disabled={openingBusy}
-                    onChange={(e) => {
-                      const cur = [...normalizeCalendarOpeningPriorityOrder(opening)];
-                      cur[idx] = e.target.value as CalendarOpeningCategory;
-                      setOpening((prev) => ({ ...(prev ?? {}), priorityOrder: cur }));
-                    }}
-                    className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                  >
-                    {openingCatOptions.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.custom ? `${c.label}（カスタム）` : c.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ))}
-            </div>
-            <div className="mt-3 flex flex-wrap items-end gap-2">
-              <label className="min-w-[10rem] flex-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-                カスタムカテゴリを追加
-                <input
-                  value={customCatDraft}
-                  onChange={(e) => setCustomCatDraft(e.target.value)}
-                  maxLength={24}
-                  disabled={openingBusy}
-                  placeholder="自由入力（24文字まで）"
-                  className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                />
-              </label>
-              <button
-                type="button"
-                disabled={openingBusy}
-                onClick={() => void addCustomOpeningCategory()}
-                className="shrink-0 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium dark:border-zinc-700 dark:bg-zinc-950"
-              >
-                追加
-              </button>
-            </div>
-            {openingCatOptions.some((c) => c.custom) ? (
-              <ul className="mt-2 flex flex-wrap gap-2 text-[11px] text-zinc-600 dark:text-zinc-400">
-                {openingCatOptions
-                  .filter((c) => c.custom)
-                  .map((c) => (
-                    <li
-                      key={c.id}
-                      className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 dark:border-zinc-700 dark:bg-zinc-900/50"
-                    >
-                      <span>{c.label}</span>
-                      {opening ? (
-                        <button
-                          type="button"
-                          disabled={openingBusy}
-                          className="text-zinc-400 hover:text-red-600 disabled:opacity-40 dark:hover:text-red-400"
-                          title="削除"
-                          onClick={() =>
-                            void saveCalendarOpening(stripCalendarOpeningCustomLabel(opening, c.label))
-                          }
-                        >
-                          ×
-                        </button>
-                      ) : null}
-                    </li>
-                  ))}
-              </ul>
-            ) : null}
+            <p className="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+              ここはカレンダー予定の分類・開口トピック用です。趣味・関心タグや「避けたい話題」「いま関心が高いもの」はプロフィール側の別ストリームとしてスコアにだけ微調整され、この優先リストには混ぜません。
+            </p>
+            <CalendarOpeningPriorityEditor
+              priorityList={normalizeCalendarOpeningPriorityOrder(opening)}
+              catOptions={openingCatOptions}
+              disabled={openingBusy}
+              onSetPriorityOrder={(next) =>
+                setOpening((prev) => {
+                  const base = { ...(prev ?? {}) };
+                  const current = normalizeCalendarOpeningPriorityOrder(base);
+                  const resolved = typeof next === "function" ? next(current) : next;
+                  return { ...base, priorityOrder: resolved };
+                })
+              }
+            />
             <button
               type="button"
               disabled={openingBusy}
@@ -629,8 +576,87 @@ export function SettingsForm() {
         </ul>
       </section>
 
+      <SettingsMemoryPanel />
+
       <SettingsAccountActions email={data.email} />
-    </div>
+      </div>
+
+      {profileChatOpen && profileChatDraft ? (
+        <div
+          className="fixed inset-0 z-[240] flex max-h-[100dvh] min-h-0 flex-col bg-zinc-50 dark:bg-zinc-950"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="settings-profile-chat-title"
+        >
+          <header className="flex shrink-0 items-start justify-between gap-3 border-b border-zinc-200 px-4 pb-3 pt-[max(1rem,env(safe-area-inset-top))] dark:border-zinc-800">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">設定</p>
+              <h2
+                id="settings-profile-chat-title"
+                className="mt-1 text-xl font-semibold text-zinc-900 dark:text-zinc-50"
+              >
+                プロフィール
+              </h2>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setProfileChatOpen(false);
+                setProfileChatDraft(null);
+              }}
+              className="shrink-0 rounded-lg px-2 py-1 text-sm text-zinc-600 hover:bg-zinc-200/80 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            >
+              閉じる
+            </button>
+          </header>
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-4 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+            {profileChatMode === "chat" ? (
+              <OnboardingChatFlow
+                userId={userId}
+                draft={profileChatDraft}
+                onDraftChange={(patch) =>
+                  setProfileChatDraft((d) => (d ? { ...d, ...patch } : d))
+                }
+                onDone={() => {
+                  setProfileChatOpen(false);
+                  setProfileChatDraft(null);
+                  void reloadSettingsFromServer();
+                }}
+                onOpenFormMode={() => {
+                  setProfileFormMountKey((k) => k + 1);
+                  setProfileChatMode("form");
+                }}
+                completeButtonLabel="保存して閉じる"
+              />
+            ) : (
+              <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden pt-3">
+                <button
+                  type="button"
+                  onClick={() => setProfileChatMode("chat")}
+                  className="shrink-0 text-left text-sm text-emerald-700 underline dark:text-emerald-400"
+                >
+                  ← チャット形式に戻る（入力内容は引き継がれます）
+                </button>
+                <div className="min-h-0 flex-1 overflow-y-auto pb-6">
+                  <UserProfileForm
+                    key={profileFormMountKey}
+                    showTitle={false}
+                    initial={profileChatDraft}
+                    value={profileChatDraft}
+                    onValuesChange={setProfileChatDraft}
+                    onSaved={() => {
+                      setProfileChatOpen(false);
+                      setProfileChatDraft(null);
+                      void reloadSettingsFromServer();
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
+    </>
   );
 }
 

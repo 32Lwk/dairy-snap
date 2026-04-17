@@ -4,6 +4,7 @@ import { requireSession } from "@/lib/api/require-session";
 import { prisma } from "@/server/db";
 import { LIMITS, getTodayCounter, incrementChat, incrementOrchestratorCalls } from "@/server/usage";
 import { runOrchestrator, triggerSupervisorAsync } from "@/server/orchestrator";
+import { runMasMemoryExtraction } from "@/server/mas-memory";
 import { PROMPT_VERSIONS } from "@/server/prompts";
 
 export const runtime = "nodejs";
@@ -153,6 +154,22 @@ export async function POST(req: NextRequest) {
             },
           },
         });
+
+        const recentTurns = [
+          ...historyMessages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
+          { role: "user" as const, content: parsed.data.message },
+          { role: "assistant" as const, content: assistantText },
+        ];
+        void runMasMemoryExtraction({
+          userId: session.user.id,
+          entryId: entry.id,
+          entryDateYmd: entry.entryDateYmd,
+          encryptionMode: entry.encryptionMode,
+          diaryBody: entry.body,
+          userMessage: parsed.data.message,
+          assistantMessage: assistantText,
+          recentTurns,
+        }).catch(() => {});
 
         triggerSupervisorAsync({
           userId: session.user.id,

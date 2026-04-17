@@ -138,6 +138,28 @@ export const AI_HOUSEHOLD_OPTIONS = [
   { value: "mixed", label: "複合（複数当てはまる）" },
 ] as const;
 
+/** MAS memory extraction: how aggressively to store and reuse memories. */
+export const AI_MEMORY_RECALL_STYLE_OPTIONS = [
+  { value: "", label: "\u9078\u3070\u306a\u3044" },
+  { value: "minimal", label: "\u8a18\u61b6\u306e\u4fdd\u5b58\u30fb\u53c2\u7167\u306f\u63a7\u3048\u3081" },
+  { value: "normal", label: "\u3075\u3064\u3046\uff08\u4f1a\u8a71\u306b\u6cbf\u3063\u3066\u4f7f\u3046\uff09" },
+  { value: "rich", label: "\u95a2\u9023\u3059\u308b\u8a18\u61b6\u3092\u7a4d\u6975\u7684\u306b\u6d3b\u304b\u3059" },
+] as const;
+
+export const AI_MEMORY_NAME_POLICY_OPTIONS = [
+  { value: "", label: "\u9078\u3070\u306a\u3044" },
+  { value: "avoid_names", label: "\u56fa\u6709\u540d\u8a5e\u306f\u907f\u3051\u3001\u4e00\u822c\u5316\u3059\u308b" },
+  { value: "neutral", label: "\u30e6\u30fc\u30b6\u30fc\u304c\u540d\u6307\u3057\u3057\u305f\u5834\u5408\u306e\u307f\u8a18\u61b6\u3057\u3066\u3088\u3044" },
+  { value: "ok_names", label: "\u56fa\u6709\u540d\u8a5e\u3082\u4e8b\u5b9f\u3068\u3057\u3066\u8a18\u61b6\u3057\u3066\u3088\u3044" },
+] as const;
+
+export const AI_MEMORY_FORGET_BIAS_OPTIONS = [
+  { value: "", label: "\u9078\u3070\u306a\u3044" },
+  { value: "gentle", label: "\u3084\u3055\u3057\u3081\uff08\u524a\u9664\u306f\u6700\u7d42\u624b\u6bb5\uff09" },
+  { value: "normal", label: "\u3075\u3064\u3046\uff08\u77db\u76fe\u306f\u66f4\u65b0\u30fb\u524a\u9664\uff09" },
+  { value: "strong", label: "\u306f\u3063\u304d\u308a\u3081\uff08\u53e4\u3044\u63a8\u6e2c\u306f\u65e9\u3081\u306b\u524a\u9664\uff09" },
+] as const;
+
 function labelMap<T extends readonly { value: string; label: string }[]>(opts: T, v: string): string | undefined {
   return opts.find((o) => o.value === v)?.label;
 }
@@ -152,6 +174,9 @@ export function formatAgentPersonaForPrompt(profile: {
   aiCurrentFocus?: string[];
   aiHealthComfort?: string;
   aiHousehold?: string;
+  aiMemoryRecallStyle?: string;
+  aiMemoryNamePolicy?: string;
+  aiMemoryForgetBias?: string;
 }): string[] {
   const lines: string[] = [];
   const addr = profile.aiAddressStyle;
@@ -209,5 +234,48 @@ export function formatAgentPersonaForPrompt(profile: {
     const lb = labelMap(AI_HOUSEHOLD_OPTIONS as unknown as { value: string; label: string }[], hh);
     if (lb) lines.push(`- 暮らしのざっくり（任意）: ${lb}`);
   }
+  const mRecall = profile.aiMemoryRecallStyle;
+  if (mRecall) {
+    const lb = labelMap(AI_MEMORY_RECALL_STYLE_OPTIONS as unknown as { value: string; label: string }[], mRecall);
+    if (lb) lines.push(`- 記憶の活かし方: ${lb}`);
+  }
+  const mName = profile.aiMemoryNamePolicy;
+  if (mName) {
+    const lb = labelMap(AI_MEMORY_NAME_POLICY_OPTIONS as unknown as { value: string; label: string }[], mName);
+    if (lb) lines.push(`- 記憶での固有名詞: ${lb}`);
+  }
+  const mForget = profile.aiMemoryForgetBias;
+  if (mForget) {
+    const lb = labelMap(AI_MEMORY_FORGET_BIAS_OPTIONS as unknown as { value: string; label: string }[], mForget);
+    if (lb) lines.push(`- 記憶の更新・削除の強さ: ${lb}`);
+  }
   return lines;
 }
+
+/** Lines for MAS memory extraction prompt (Japanese). */
+export function formatMemoryHandlingForMasPrompt(profile: {
+  aiMemoryRecallStyle?: string;
+  aiMemoryNamePolicy?: string;
+  aiMemoryForgetBias?: string;
+}): string {
+  const parts: string[] = [];
+  const rs = profile.aiMemoryRecallStyle;
+  if (rs) {
+    const lb = labelMap(AI_MEMORY_RECALL_STYLE_OPTIONS as unknown as { value: string; label: string }[], rs);
+    if (lb) parts.push(`記憶の活かし方: ${lb}`);
+  }
+  const np = profile.aiMemoryNamePolicy;
+  if (np) {
+    const lb = labelMap(AI_MEMORY_NAME_POLICY_OPTIONS as unknown as { value: string; label: string }[], np);
+    if (lb) parts.push(`固有名詞の扱い: ${lb}`);
+  }
+  const fb = profile.aiMemoryForgetBias;
+  if (fb) {
+    const lb = labelMap(AI_MEMORY_FORGET_BIAS_OPTIONS as unknown as { value: string; label: string }[], fb);
+    if (lb) parts.push(`矛盾時の更新・削除: ${lb}`);
+  }
+  return parts.length > 0
+    ? parts.join("\n")
+    : "（ユーザーは記憶の扱いを未指定）";
+}
+

@@ -11,6 +11,9 @@ import {
   AI_ENERGY_PEAK_OPTIONS,
   AI_HEALTH_COMFORT_OPTIONS,
   AI_HOUSEHOLD_OPTIONS,
+  AI_MEMORY_FORGET_BIAS_OPTIONS,
+  AI_MEMORY_NAME_POLICY_OPTIONS,
+  AI_MEMORY_RECALL_STYLE_OPTIONS,
 } from "@/lib/agent-persona-preferences";
 
 type AgentPersonaForm = UserProfileSettings & { onboardingWorkLifeAnswers?: Record<string, string> };
@@ -214,6 +217,60 @@ export function AgentPersonaPreferences({ form, patchForm }: Props) {
           </div>
         </div>
       </section>
+
+      <section className="space-y-2 border-t border-emerald-200/60 pt-3 dark:border-emerald-900/40">
+        <p className="text-[11px] font-medium text-zinc-800 dark:text-zinc-200">
+          {"\u8a18\u61b6\u306e\u6271\u3044\uff08MAS\u30fb\u4efb\u610f\uff09"}
+        </p>
+        <p className="text-[10px] leading-snug text-zinc-500 dark:text-zinc-400">
+          {
+            "\u30c1\u30e3\u30c3\u30c8\u5f8c\u306e\u77ed\u671f\u30fb\u9577\u671f\u8a18\u61b6\u306e\u62bd\u51fa\u30fb\u53c2\u7167\u306e\u5f37\u3055\u306e\u76ee\u5b89\u3067\u3059\u3002\u65e5\u4ed8\u3054\u3068\u306e\u78ba\u8a8d\u306f\u8a2d\u5b9a\u306e\u300c\u8a18\u61b6\u306e\u78ba\u8a8d\u300d\u304b\u3089\u884c\u3048\u307e\u3059\u3002"
+          }
+        </p>
+        <label className="block text-[11px] text-zinc-600 dark:text-zinc-400">
+          {"\u8a18\u61b6\u306e\u53c2\u7167\u30fb\u6d3b\u7528"}
+          <select
+            value={form.aiMemoryRecallStyle ?? ""}
+            onChange={(e) => patchForm({ ...form, aiMemoryRecallStyle: e.target.value })}
+            className="mt-0.5 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+          >
+            {AI_MEMORY_RECALL_STYLE_OPTIONS.map((o) => (
+              <option key={o.value || "empty"} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block text-[11px] text-zinc-600 dark:text-zinc-400">
+          {"\u56fa\u6709\u540d\u8a5e\u306e\u8a18\u61b6"}
+          <select
+            value={form.aiMemoryNamePolicy ?? ""}
+            onChange={(e) => patchForm({ ...form, aiMemoryNamePolicy: e.target.value })}
+            className="mt-0.5 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+          >
+            {AI_MEMORY_NAME_POLICY_OPTIONS.map((o) => (
+              <option key={o.value || "empty"} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block text-[11px] text-zinc-600 dark:text-zinc-400">
+          {"\u53e4\u3044\u63a8\u6e2c\u30fb\u77db\u76fe\u306e\u6574\u7406"}
+          <select
+            value={form.aiMemoryForgetBias ?? ""}
+            onChange={(e) => patchForm({ ...form, aiMemoryForgetBias: e.target.value })}
+            className="mt-0.5 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+          >
+            {AI_MEMORY_FORGET_BIAS_OPTIONS.map((o) => (
+              <option key={o.value || "empty"} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </section>
+
 
       <section className="space-y-2 border-t border-emerald-200/60 pt-3 dark:border-emerald-900/40">
         <p className="text-[11px] font-medium text-zinc-800 dark:text-zinc-200">4. 健康・暮らし（任意）</p>

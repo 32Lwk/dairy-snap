@@ -24,11 +24,28 @@ export async function GET(req: Request) {
   });
   if (!result.ok) {
     const detail = result.detail ?? result.reason;
+    const detailLooksInternal =
+      typeof detail === "string" &&
+      (detail.includes("Invalid `prisma.") ||
+        detail.includes("prisma.googleCalendarEventCache") ||
+        detail.includes("PrismaClient") ||
+        detail.includes("findMany() invocation"));
     if (result.reason === "oauth_not_configured") {
       return NextResponse.json({ error: "Google OAuth が未設定です", reason: result.reason }, { status: 503 });
     }
     if (result.reason === "no_google_account") {
       return NextResponse.json({ error: "Google アカウントが見つかりません", reason: result.reason }, { status: 401 });
+    }
+    if (result.reason === "db_schema_out_of_sync") {
+      return NextResponse.json(
+        {
+          error:
+            "カレンダー機能の更新が反映されていません（DB更新が必要です）。開発環境では `npx prisma migrate dev` を実行してから再試行してください。",
+          reason: result.reason,
+          hint: "それでも直らない場合は、いったんページを更新してから「強制同期して再試行」を押してください。",
+        },
+        { status: 503 },
+      );
     }
     if (result.reason === "no_refresh_token" || result.reason === "invalid_grant") {
       return NextResponse.json(
@@ -38,6 +55,17 @@ export async function GET(req: Request) {
           hint: "設定画面の「Google を再連携（カレンダー）」を実行してください。",
         },
         { status: 401 },
+      );
+    }
+    if (detailLooksInternal) {
+      return NextResponse.json(
+        {
+          error:
+            "カレンダー予定の読み込みに失敗しました。しばらくしてから「更新」を押して再試行してください。続く場合は設定で Google を再連携してください。",
+          reason: result.reason,
+          hint: "このエラーが続く場合は、設定 → Google を再連携（カレンダー）を試してください。",
+        },
+        { status: 500 },
       );
     }
     return NextResponse.json(

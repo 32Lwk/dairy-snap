@@ -23,6 +23,7 @@ import { runRomanceAgent } from "@/server/agents/romance-agent";
 import { runSupervisorAgent } from "@/server/agents/supervisor-agent";
 import type { AgentRequest, PersonaContext, WeatherContext } from "@/server/agents/types";
 import { ORCHESTRATOR_TOOLS } from "@/server/agents/types";
+import { loadShortTermContextForEntry } from "@/server/mas-memory";
 
 // ─── MBTI ルーティングヒント生成 ─────────────────────────────────────────
 
@@ -217,6 +218,9 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     aiCurrentFocus: profile?.aiCurrentFocus,
     aiHealthComfort: profile?.aiHealthComfort,
     aiHousehold: profile?.aiHousehold,
+    aiMemoryRecallStyle: profile?.aiMemoryRecallStyle,
+    aiMemoryNamePolicy: profile?.aiMemoryNamePolicy,
+    aiMemoryForgetBias: profile?.aiMemoryForgetBias,
   });
   const personaInstructions = personaLines.join("\n");
   const avoidTopics = profile?.aiAvoidTopics ?? [];
@@ -235,7 +239,10 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
   };
 
   // ── 長期記憶 ──
-  const longTermContext = await loadLongTermContext(userId);
+  const [longTermContext, shortTermContext] = await Promise.all([
+    loadLongTermContext(userId),
+    loadShortTermContextForEntry(userId, entryId),
+  ]);
 
   // ── 天気情報 ──
   const weather = await getWeatherContext({ userId, entryId, entryDateYmd }).catch(
@@ -294,6 +301,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
       ? "※ ユーザーが恋愛の話題を避けたいため query_romance は絶対に呼ばない。"
       : "",
     longTermContext ? `## 長期記憶（参考）\n${longTermContext}` : "",
+    shortTermContext ? `## 短期（この日・参考）\n${shortTermContext}` : "",
   ]
     .filter(Boolean)
     .join("\n");
