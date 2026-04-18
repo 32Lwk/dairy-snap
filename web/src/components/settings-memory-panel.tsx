@@ -250,7 +250,7 @@ export function SettingsMemoryPanel() {
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     autoComplete="off"
-                    placeholder="2026-04-17 \u306a\u3069"
+                    placeholder="例: 2026-04-17"
                     className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
                   />
                 </label>

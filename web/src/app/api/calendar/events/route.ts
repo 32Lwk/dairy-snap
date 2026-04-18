@@ -21,6 +21,7 @@ export async function GET(req: Request) {
       ? calendarIdRaw.trim()
       : undefined;
 
+  const full = url.searchParams.get("full") === "1";
   const deepSync = url.searchParams.get("deepSync") === "1";
   const deepPastRaw = url.searchParams.get("deepPastDays");
   const deepPastDays =
@@ -36,6 +37,7 @@ export async function GET(req: Request) {
     toYmd: to ?? undefined,
     limit,
     calendarId,
+    includeEventPayload: full,
     ...(deepSync && calendarId ? { deepSync: true, deepPastDays } : {}),
   });
   if (!result.ok) {

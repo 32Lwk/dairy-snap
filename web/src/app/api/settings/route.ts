@@ -141,7 +141,7 @@ const patchSchema = z.object({
 });
 
 export async function GET(req: NextRequest) {
-  const session = await requireSession();
+  const session = await requireSession({ allowDisallowed: true });
   if ("response" in session) return session.response;
 
   const user = await resolveDbUserFromSession({
@@ -183,8 +183,14 @@ export async function GET(req: NextRequest) {
   );
 }
 
+const ONBOARDING_ONLY_PATCH_KEYS = new Set([
+  "profile",
+  "finalizeOnboarding",
+  "completeOnboardingSkipProfile",
+]);
+
 export async function PATCH(req: NextRequest) {
-  const session = await requireSession();
+  const session = await requireSession({ allowDisallowed: true });
   if ("response" in session) return session.response;
 
   const resolved = await resolveDbUserFromSession({
@@ -199,6 +205,28 @@ export async function PATCH(req: NextRequest) {
   }
 
   const json = await req.json().catch(() => null);
+  const rawObj =
+    json && typeof json === "object" && !Array.isArray(json)
+      ? (json as Record<string, unknown>)
+      : {};
+
+  if (!session.user.isAllowed) {
+    for (const k of Object.keys(rawObj)) {
+      if (!ONBOARDING_ONLY_PATCH_KEYS.has(k)) {
+        return NextResponse.json(
+          { error: "このアカウントではこの設定は変更できません" },
+          { status: 403 },
+        );
+      }
+    }
+    const hasOnboardingPatch = Object.keys(rawObj).some(
+      (k) => ONBOARDING_ONLY_PATCH_KEYS.has(k) && rawObj[k] !== undefined,
+    );
+    if (!hasOnboardingPatch) {
+      return NextResponse.json({ error: "更新内容がありません" }, { status: 400 });
+    }
+  }
+
   const parsed = patchSchema.safeParse(json);
   if (!parsed.success) {
     return NextResponse.json(
@@ -211,11 +239,6 @@ export async function PATCH(req: NextRequest) {
   }
 
   const existing = { settings: resolved.settings };
-
-  const rawObj =
-    json && typeof json === "object" && !Array.isArray(json)
-      ? (json as Record<string, unknown>)
-      : {};
 
   let profilePatch: Partial<UserProfileSettings> | undefined;
 

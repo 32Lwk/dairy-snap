@@ -225,6 +225,11 @@ model GoogleCalendarEventCache {
   location    String
   description String
 
+  /// Google Calendar API event snapshot
+  eventPayload Json?
+  /// Denormalized text for search/embeddings
+  eventSearchBlob String @default("")
+
   startIso String
   endIso   String
   startAt  DateTime

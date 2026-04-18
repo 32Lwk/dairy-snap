@@ -12,13 +12,18 @@ export default async function OnboardingPage() {
   if (r.status === "session_mismatch") redirect("/login?error=session_mismatch");
 
   const profile = parseUserSettings(r.user.settings).profile;
+  const isAllowed = Boolean(r.authSession.user.isAllowed);
   if (profile?.onboardingCompletedAt) {
-    redirect("/today");
+    redirect(isAllowed ? "/today" : "/forbidden");
   }
 
   return (
     <div className="mx-auto flex h-[100dvh] min-w-0 max-w-lg flex-col px-4">
-      <OnboardingClient userId={r.user.id} initialProfile={profile ?? {}} />
+      <OnboardingClient
+        userId={r.user.id}
+        initialProfile={profile ?? {}}
+        isAllowed={isAllowed}
+      />
     </div>
   );
 }

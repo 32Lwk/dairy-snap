@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type CalendarViewMode,
   parseCalendarViewQuery,
@@ -10,6 +10,7 @@ import {
   writeCalendarViewToStorage,
 } from "@/lib/calendar-view-persistence";
 import { ResponsiveDialog } from "@/components/responsive-dialog";
+import { SearchPanel } from "@/components/search-panel";
 import { CALENDAR_GRID_COLOR_PRESETS, GCAL_COLOR_MAP } from "@/lib/gcal-event-color";
 import {
   type CalendarOpeningCategory,
@@ -46,6 +47,8 @@ import { UpcomingGoogleEvents } from "./upcoming-google-events";
 
 type EntryBrief = { entryDateYmd: string; title: string | null };
 type Ev = {
+  /** DB の google_calendar_event_cache.id（詳細は GET /api/calendar/cached-event/[cacheId]） */
+  cacheId?: string;
   eventId?: string;
   title: string;
   start: string;
@@ -187,6 +190,7 @@ export function CalendarClient(props: {
   const [info, setInfo] = useState<string | null>(null);
   const [calendarAutoFixNotice, setCalendarAutoFixNotice] = useState<CalendarAutoFixNotice | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [customCatDraft, setCustomCatDraft] = useState("");
   const [activeCalendarId, setActiveCalendarId] = useState<string>("");
   const [recentFixEvents, setRecentFixEvents] = useState<Ev[] | null>(null);
@@ -198,7 +202,6 @@ export function CalendarClient(props: {
   const settingsLoadGenRef = useRef(0);
 
   const router = useRouter();
-  const pathname = usePathname() ?? "";
   const searchParams = useSearchParams();
   const [calendarView, setCalendarView] = useState<CalendarViewMode>("grid");
 
@@ -796,14 +799,14 @@ export function CalendarClient(props: {
     <>
       <header className="fixed left-0 right-0 top-0 z-30 border-b border-zinc-200/90 bg-white/95 backdrop-blur-md dark:border-zinc-800/90 dark:bg-zinc-950/95">
         <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] md:max-w-2xl lg:max-w-3xl">
-          <h1 className="min-w-0 flex-1 truncate text-2xl font-bold text-zinc-900 dark:text-zinc-50">
+          <h1 className="min-w-0 flex-1 truncate text-2xl font-bold leading-none text-zinc-900 dark:text-zinc-50">
             カレンダー
           </h1>
           <div className="flex shrink-0 items-center gap-2">
             <button
               type="button"
               onClick={() => setSettingsOpen(true)}
-              className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-700 shadow-sm transition-colors hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:border-zinc-600 dark:hover:bg-zinc-900"
+              className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-3 text-sm font-medium leading-none text-zinc-700 shadow-sm transition-colors hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:border-zinc-600 dark:hover:bg-zinc-900"
               aria-expanded={settingsOpen}
               aria-haspopup="dialog"
               aria-controls="calendar-display-settings-dialog"
@@ -813,7 +816,7 @@ export function CalendarClient(props: {
                 xmlns="http://www.w3.org/2000/svg"
                 viewBox="0 0 20 20"
                 fill="currentColor"
-                className="h-4 w-4 text-zinc-500 dark:text-zinc-400"
+                className="block h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400"
                 aria-hidden
               >
                 <path
@@ -822,18 +825,18 @@ export function CalendarClient(props: {
                   clipRule="evenodd"
                 />
               </svg>
-              <span className="hidden sm:inline">設定</span>
+              <span className="hidden leading-none sm:inline">設定</span>
             </button>
-            <Link
-              href="/search"
-              className={`inline-flex h-10 items-center justify-center rounded-xl border px-3 text-sm font-medium shadow-sm transition-colors ${
-                pathname.startsWith("/search")
-                  ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900"
-                  : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:border-zinc-600 dark:hover:bg-zinc-900"
-              }`}
+            <button
+              type="button"
+              onClick={() => setSearchOpen(true)}
+              aria-expanded={searchOpen}
+              aria-haspopup="dialog"
+              aria-controls="calendar-search-dialog"
+              className="inline-flex h-10 items-center justify-center rounded-xl border border-zinc-200 bg-white px-3 text-sm font-medium leading-none text-zinc-700 shadow-sm transition-colors hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:border-zinc-600 dark:hover:bg-zinc-900"
             >
               検索
-            </Link>
+            </button>
           </div>
         </div>
       </header>
@@ -1565,6 +1568,36 @@ export function CalendarClient(props: {
           </button>
         </div>
           </div>
+          </div>
+        </ResponsiveDialog>
+      ) : null}
+
+      {searchOpen ? (
+        <ResponsiveDialog
+          open={searchOpen}
+          onClose={() => setSearchOpen(false)}
+          labelledBy="calendar-search-title"
+          dialogId="calendar-search-dialog"
+          zClass="z-[60]"
+        >
+          <div className="flex min-h-0 max-h-[inherit] flex-1 flex-col overflow-hidden">
+            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950">
+              <h2 id="calendar-search-title" className="text-base font-semibold text-zinc-900 dark:text-zinc-50">
+                日記を検索
+              </h2>
+              <button
+                type="button"
+                onClick={() => setSearchOpen(false)}
+                className="rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-700 shadow-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              >
+                {"\u9589\u3058\u308b"}
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <Suspense fallback={<div className="p-4 text-center text-sm text-zinc-500">読み込み中…</div>}>
+                <SearchPanel className="px-4 py-4" onNavigateHit={() => setSearchOpen(false)} />
+              </Suspense>
+            </div>
           </div>
         </ResponsiveDialog>
       ) : null}

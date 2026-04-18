@@ -1,5 +1,6 @@
 import { prisma } from "@/server/db";
 import { formatHmTokyo } from "@/lib/time/tokyo";
+import { upsertEntryEmbedding, upsertTextEmbedding } from "@/server/embeddings";
 
 function buildAppendedBody(prevBody: string, fragment: string, at: Date): string {
   const heading = `## ${formatHmTokyo(at)}`;
@@ -55,7 +56,7 @@ export async function appendToDailyEntry(params: {
       },
     });
 
-    await tx.entryAppendEvent.create({
+    const appendEv = await tx.entryAppendEvent.create({
       data: {
         entryId: entry.id,
         occurredAt,
@@ -63,6 +64,12 @@ export async function appendToDailyEntry(params: {
       },
     });
 
+    return { entry, appendEventId: appendEv.id };
+  }).then(async ({ entry, appendEventId }) => {
+    if (entry.encryptionMode === "STANDARD" && process.env.OPENAI_API_KEY) {
+      void upsertTextEmbedding(params.userId, "ENTRY_APPEND", appendEventId, fragment).catch(() => {});
+      void upsertEntryEmbedding(params.userId, entry.id, entry.body).catch(() => {});
+    }
     return entry;
   });
 }

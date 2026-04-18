@@ -37,8 +37,14 @@ export default async function proxy(req: NextRequest) {
   const isApi = nextUrl.pathname.startsWith("/api/");
   const isLogin = nextUrl.pathname === "/login";
   const isForbidden = nextUrl.pathname === "/forbidden";
+  const isOnboarding =
+    nextUrl.pathname === "/onboarding" || nextUrl.pathname.startsWith("/onboarding/");
   const isAccountMeApi = nextUrl.pathname === "/api/account/me" && req.method === "GET";
   const isAccountDeleteApi = nextUrl.pathname === "/api/account/delete" && req.method === "POST";
+  const isSettingsApi =
+    nextUrl.pathname === "/api/settings" &&
+    (req.method === "GET" || req.method === "PATCH");
+  const isSchoolsApiGet = nextUrl.pathname === "/api/schools" && req.method === "GET";
 
   const isAuthed = Boolean(token);
   const isAllowed = Boolean(token?.isAllowed);
@@ -54,13 +60,20 @@ export default async function proxy(req: NextRequest) {
     }
   }
 
+  const disallowedApiOk =
+    isAccountMeApi || isAccountDeleteApi || isSettingsApi || isSchoolsApiGet;
+
   if (isAuthed && !isAllowed && !isLogin && !isForbidden) {
-    if (isApi && !isAccountMeApi && !isAccountDeleteApi) {
+    if (isApi && !disallowedApiOk) {
       return NextResponse.json({ error: "利用が許可されていません" }, { status: 403 });
     }
-    if (!isApi) {
-      return NextResponse.redirect(new URL("/forbidden", nextUrl));
+    if (!isApi && !isOnboarding) {
+      return NextResponse.redirect(new URL("/onboarding", nextUrl));
     }
+  }
+
+  if (isAuthed && !isAllowed && isLogin) {
+    return NextResponse.redirect(new URL("/onboarding", nextUrl));
   }
 
   if (isAuthed && isAllowed && isLogin) {

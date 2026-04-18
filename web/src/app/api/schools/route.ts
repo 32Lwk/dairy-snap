@@ -11,7 +11,7 @@ import { searchSchoolsIndex } from "@/lib/school-search";
  * q のみ（全国）: 通常は2文字以上。kind が1種類なら1文字から可（走査は種別インデックスのみ）
  */
 export async function GET(req: NextRequest) {
-  const session = await requireSession();
+  const session = await requireSession({ allowDisallowed: true });
   if ("response" in session) return session.response;
 
   const pref = (req.nextUrl.searchParams.get("pref") ?? "").trim();

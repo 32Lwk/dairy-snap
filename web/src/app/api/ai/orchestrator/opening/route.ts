@@ -6,6 +6,7 @@ import { LIMITS, getTodayCounter, incrementChat, incrementOrchestratorCalls } fr
 import { runOrchestrator, triggerSupervisorAsync } from "@/server/orchestrator";
 import { runMasMemoryExtraction } from "@/server/mas-memory";
 import { PROMPT_VERSIONS } from "@/server/prompts";
+import { upsertTextEmbedding } from "@/server/embeddings";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -98,6 +99,9 @@ export async function POST(req: NextRequest) {
             agentName: "orchestrator",
           },
         });
+        if (entry.encryptionMode === "STANDARD") {
+          void upsertTextEmbedding(session.user.id, "CHAT_MESSAGE", assistant.id, assistantText).catch(() => {});
+        }
 
         await incrementChat(session.user.id);
         await incrementOrchestratorCalls(session.user.id);

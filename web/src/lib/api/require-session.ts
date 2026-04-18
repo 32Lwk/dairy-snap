@@ -9,14 +9,15 @@ export type SessionUser = {
   email: string | null | undefined;
 };
 
-export async function requireSession(): Promise<
-  { user: SessionUser } | { response: NextResponse }
-> {
+export async function requireSession(options?: {
+  /** Return session even when not on allowlist (e.g. onboarding APIs). */
+  allowDisallowed?: boolean;
+}): Promise<{ user: SessionUser } | { response: NextResponse }> {
   const session = await auth();
   if (!session?.user?.id) {
     return { response: NextResponse.json({ error: "未ログインです" }, { status: 401 }) };
   }
-  if (!session.user.isAllowed) {
+  if (!options?.allowDisallowed && !session.user.isAllowed) {
     return { response: NextResponse.json({ error: "利用が許可されていません" }, { status: 403 }) };
   }
   return {

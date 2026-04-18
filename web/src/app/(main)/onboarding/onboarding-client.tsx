@@ -58,9 +58,12 @@ function persistDraft(userId: string, draft: UserProfilePayload) {
 export function OnboardingClient({
   userId,
   initialProfile,
+  isAllowed,
 }: {
   userId: string;
   initialProfile: UserProfilePayload;
+  /** 許可リスト外のとき完了後は /forbidden へ */
+  isAllowed: boolean;
 }) {
   const router = useRouter();
   const [skipping, setSkipping] = useState(false);
@@ -106,7 +109,7 @@ export function OnboardingClient({
       const serverProfile = json.profile ?? {};
       if (serverProfile.onboardingCompletedAt) {
         clearOnboardingSessionStorage(userId);
-        router.replace("/today");
+        router.replace(isAllowed ? "/today" : "/forbidden");
         router.refresh();
         return;
       }
@@ -125,7 +128,7 @@ export function OnboardingClient({
     return () => {
       cancelled = true;
     };
-  }, [userId, router]);
+  }, [userId, router, isAllowed]);
 
   /** リロード・タブ切替の直前に未フラッシュの変更を残さない（debounce 待ちを回避） */
   useEffect(() => {
@@ -187,7 +190,7 @@ export function OnboardingClient({
         const serverProfile = json.profile;
         if (serverProfile.onboardingCompletedAt) {
           clearOnboardingSessionStorage(userId);
-          router.push("/today");
+          router.push(isAllowed ? "/today" : "/forbidden");
           router.refresh();
           return;
         }
@@ -205,7 +208,7 @@ export function OnboardingClient({
     }
     window.addEventListener(REMOTE_SETTINGS_UPDATED_EVENT, onRemoteSettings);
     return () => window.removeEventListener(REMOTE_SETTINGS_UPDATED_EVENT, onRemoteSettings);
-  }, [userId, router]);
+  }, [userId, router, isAllowed]);
 
   async function skip() {
     setSkipping(true);
@@ -223,7 +226,7 @@ export function OnboardingClient({
       }
       emitLocalSettingsSavedFromJson(json);
       clearOnboardingSessionStorage(userId);
-      router.push("/today");
+      router.push(isAllowed ? "/today" : "/forbidden");
       router.refresh();
     } finally {
       setSkipping(false);
@@ -232,7 +235,7 @@ export function OnboardingClient({
 
   function goToday() {
     clearOnboardingSessionStorage(userId);
-    router.push("/today");
+    router.push(isAllowed ? "/today" : "/forbidden");
     router.refresh();
   }
 
@@ -252,12 +255,14 @@ export function OnboardingClient({
           >
             {skipping ? "処理中…" : "スキップ"}
           </button>
-          <Link
-            href="/settings"
-            className="max-w-[11rem] text-right text-xs leading-snug text-emerald-700 underline underline-offset-2 dark:text-emerald-400"
-          >
-            設定（カレンダー連携）
-          </Link>
+          {isAllowed ? (
+            <Link
+              href="/settings"
+              className="max-w-[11rem] text-right text-xs leading-snug text-emerald-700 underline underline-offset-2 dark:text-emerald-400"
+            >
+              設定（カレンダー連携）
+            </Link>
+          ) : null}
         </div>
       </header>
 
@@ -293,6 +298,7 @@ export function OnboardingClient({
               setFormMountKey((k) => k + 1);
               setMode("form");
             }}
+            completeButtonLabel={isAllowed ? "保存して今日へ" : "保存して完了"}
           />
         </div>
         <div className={mode === "form" ? "flex h-full" : "hidden"}>

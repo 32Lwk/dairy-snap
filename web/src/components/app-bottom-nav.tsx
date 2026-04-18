@@ -10,15 +10,11 @@ const items = [
     label: "カレンダー",
     match: (p: string) => p.startsWith("/calendar") || p.startsWith("/entries"),
   },
-  { href: "/search", label: "検索", match: (p: string) => p.startsWith("/search") },
   { href: "/settings", label: "設定", match: (p: string) => p.startsWith("/settings") },
 ] as const;
 
 export function AppBottomNav() {
   const pathname = usePathname() ?? "";
-  const navItems = pathname.startsWith("/calendar")
-    ? items.filter((item) => item.href !== "/search")
-    : items;
 
   return (
     <nav
@@ -26,7 +22,7 @@ export function AppBottomNav() {
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
       <div className="mx-auto flex max-w-lg items-stretch justify-around gap-1 px-2 py-1.5 lg:max-w-6xl lg:gap-2 lg:px-6">
-        {navItems.map((item) => {
+        {items.map((item) => {
           const active = item.match(pathname);
           return (
             <Link

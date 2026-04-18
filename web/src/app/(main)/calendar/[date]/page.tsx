@@ -55,10 +55,14 @@ export default async function CalendarByDatePage({
     orderBy: { startAt: "asc" },
     take: 5000,
     select: {
+      id: true,
+      eventId: true,
       title: true,
       startIso: true,
       endIso: true,
       location: true,
+      description: true,
+      fixedCategory: true,
       calendarName: true,
       calendarColorId: true,
       eventColorId: true,
@@ -86,10 +90,14 @@ export default async function CalendarByDatePage({
         entries={entries}
         selectedDateYmd={date}
         initialEvents={initialEvents.map((e) => ({
+          cacheId: e.id,
+          eventId: e.eventId,
           title: e.title,
           start: e.startIso,
           end: e.endIso,
           location: e.location,
+          description: e.description,
+          ...(e.fixedCategory ? { fixedCategory: e.fixedCategory } : {}),
           calendarName: formatGoogleCalendarDisplayName(e.calendarId, e.calendarName),
           colorId: e.eventColorId ?? e.calendarColorId ?? "",
           calendarId: e.calendarId,

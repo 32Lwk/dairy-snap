@@ -5,6 +5,8 @@ import { prisma } from "@/server/db";
 const MODEL = "text-embedding-3-small";
 const DIM = 1536;
 
+export type EmbeddingTargetType = "DAILY_ENTRY" | "GCAL_EVENT" | "CHAT_MESSAGE" | "ENTRY_APPEND";
+
 export async function embedText(text: string): Promise<number[]> {
   const openai = getOpenAI();
   const input = text.slice(0, 8000);
@@ -20,17 +22,36 @@ function vecToSqlLiteral(vec: number[]): string {
   return `[${vec.map((n) => Number(n).toFixed(8)).join(",")}]`;
 }
 
-/** daily_entries の本文（STANDARD のみ）をベクトル化して保存 */
-export async function upsertEntryEmbedding(userId: string, entryId: string, body: string) {
-  const vec = await embedText(body);
+export async function deleteEmbedding(userId: string, targetType: string, targetId: string) {
+  await prisma.$executeRawUnsafe(
+    `DELETE FROM embeddings WHERE "userId" = $1 AND "targetType" = $2 AND "targetId" = $3`,
+    userId,
+    targetType,
+    targetId,
+  );
+}
+
+/** 任意テキストをベクトル化して保存（空文字なら行削除） */
+export async function upsertTextEmbedding(
+  userId: string,
+  targetType: EmbeddingTargetType,
+  targetId: string,
+  text: string,
+) {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    await deleteEmbedding(userId, targetType, targetId);
+    return;
+  }
+  const vec = await embedText(trimmed);
   const literal = vecToSqlLiteral(vec);
   const id = randomUUID();
 
   await prisma.$executeRawUnsafe(
     `DELETE FROM embeddings WHERE "userId" = $1 AND "targetType" = $2 AND "targetId" = $3`,
     userId,
-    "DAILY_ENTRY",
-    entryId,
+    targetType,
+    targetId,
   );
 
   await prisma.$executeRawUnsafe(
@@ -38,12 +59,17 @@ export async function upsertEntryEmbedding(userId: string, entryId: string, body
      VALUES ($1, $2, $3, $4, $5, $6, $7::vector, NOW(), NOW())`,
     id,
     userId,
-    "DAILY_ENTRY",
-    entryId,
+    targetType,
+    targetId,
     MODEL,
     DIM,
     literal,
   );
+}
+
+/** daily_entries の本文（STANDARD のみ想定） */
+export async function upsertEntryEmbedding(userId: string, entryId: string, body: string) {
+  await upsertTextEmbedding(userId, "DAILY_ENTRY", entryId, body);
 }
 
 export type VectorHit = {
