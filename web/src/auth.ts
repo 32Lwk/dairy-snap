@@ -41,7 +41,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     },
     async jwt({ token, user, trigger, session }): Promise<JWT> {
       if (user?.id) {
-        // isAllowed は ALLOWED_EMAILS と同じルールで決める（JWT 内の余計な Prisma読み取りを避け、失敗時もログインが Configuration に化けにくくする）
+        // isAllowed は AUTH_ACCESS_MODE / ALLOWED_EMAILS と同じルールで決める（JWT 内の余計な Prisma読み取りを避ける）
         token.sub = user.id;
         token.id = user.id;
         token.isAllowed = emailMatchesAllowlist(user.email);

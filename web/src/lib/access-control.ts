@@ -4,8 +4,9 @@ function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
 }
 
-/** `ALLOWED_EMAILS` が `*` または `ALL` のとき、メールが取れた Google アカウントは全員利用可 */
+/** 開放モード: AUTH_ACCESS_MODE=open、または allowlist かつ ALLOWED_EMAILS が * / ALL */
 export function isAllowlistOpenAccess(): boolean {
+  if (env.AUTH_ACCESS_MODE === "open") return true;
   const raw = env.ALLOWED_EMAILS.trim();
   return raw === "*" || raw.toLowerCase() === "all";
 }

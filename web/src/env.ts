@@ -1,7 +1,7 @@
 import { createEnv } from "@t3-oss/env-nextjs";
 import { z } from "zod";
 
-export const env = createEnv({
+const _env = createEnv({
   skipValidation:
     process.env.SKIP_ENV_VALIDATION === "1" ||
     process.env.SKIP_ENV_VALIDATION === "true",
@@ -13,7 +13,15 @@ export const env = createEnv({
     AUTH_DEBUG: z.string().optional(),
     AUTH_GOOGLE_ID: z.string().min(1),
     AUTH_GOOGLE_SECRET: z.string().min(1),
-    ALLOWED_EMAILS: z.string().min(1),
+    /**
+     * open: any Google user who signs in is allowed (ALLOWED_EMAILS ignored).
+     * allowlist: comma-separated ALLOWED_EMAILS, or * / ALL for everyone (legacy).
+     */
+    AUTH_ACCESS_MODE: z.preprocess(
+      (val) => (val === "" || val === undefined || val === null ? "allowlist" : val),
+      z.enum(["allowlist", "open"]),
+    ),
+    ALLOWED_EMAILS: z.string().default(""),
     DATABASE_URL: z.string().url(),
     UPLOADS_DIR: z.string().min(1),
     OPENAI_API_KEY: z.string().min(1).optional(),
@@ -27,6 +35,7 @@ export const env = createEnv({
     AUTH_DEBUG: process.env.AUTH_DEBUG,
     AUTH_GOOGLE_ID: process.env.AUTH_GOOGLE_ID,
     AUTH_GOOGLE_SECRET: process.env.AUTH_GOOGLE_SECRET,
+    AUTH_ACCESS_MODE: process.env.AUTH_ACCESS_MODE,
     ALLOWED_EMAILS: process.env.ALLOWED_EMAILS,
     DATABASE_URL: process.env.DATABASE_URL,
     UPLOADS_DIR: process.env.UPLOADS_DIR,
@@ -35,3 +44,10 @@ export const env = createEnv({
   },
 });
 
+if (_env.AUTH_ACCESS_MODE === "allowlist" && _env.ALLOWED_EMAILS.trim() === "") {
+  throw new Error(
+    "When AUTH_ACCESS_MODE=allowlist, set ALLOWED_EMAILS (comma-separated emails, or * / ALL).",
+  );
+}
+
+export const env = _env;
