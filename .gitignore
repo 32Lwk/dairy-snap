@@ -14,3 +14,6 @@ web/.env
 # Local upload cache (dev)
 .uploads/
 
+# Playwright / test runner output (local only)
+web/test-results/
+
