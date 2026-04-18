@@ -1,7 +1,38 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { type CSSProperties, useEffect, useRef, useState } from "react";
+import { JournalDraftPanel } from "./journal-draft-panel";
+
+/** When the on-screen keyboard shrinks visual viewport, cap chat height so the composer stays usable. */
+function useVisualViewportKeyboardMaxHeight(): CSSProperties | undefined {
+  const [style, setStyle] = useState<CSSProperties | undefined>(undefined);
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const sync = () => {
+      const innerH = window.innerHeight;
+      const h = vv.height;
+      if (!Number.isFinite(innerH) || !Number.isFinite(h) || h <= 0) {
+        setStyle(undefined);
+        return;
+      }
+      if (h >= innerH * 0.94) {
+        setStyle(undefined);
+        return;
+      }
+      setStyle({ maxHeight: Math.max(260, Math.floor(h * 0.9)) });
+    };
+    sync();
+    vv.addEventListener("resize", sync);
+    vv.addEventListener("scroll", sync);
+    return () => {
+      vv.removeEventListener("resize", sync);
+      vv.removeEventListener("scroll", sync);
+    };
+  }, []);
+  return style;
+}
 
 type Msg = { id: string; role: string; content: string };
 
@@ -127,11 +158,15 @@ export function EntryChat({
   threadId: initialThreadId,
   initialMessages,
   variant = "default",
+  journalDraftPlacement = "below-chat",
+  onThreadIdChange,
 }: {
   entryId: string;
   threadId: string | null;
   initialMessages: Msg[];
   variant?: "default" | "compact";
+  journalDraftPlacement?: "below-chat" | "none";
+  onThreadIdChange?: (threadId: string | null) => void;
 }) {
   const router = useRouter();
   const [messages, setMessages] = useState<Msg[]>(initialMessages);
@@ -143,6 +178,11 @@ export function EntryChat({
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const openingStartedRef = useRef(false);
+  const vvShellStyle = useVisualViewportKeyboardMaxHeight();
+
+  useEffect(() => {
+    onThreadIdChange?.(tid);
+  }, [tid, onThreadIdChange]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -225,8 +265,9 @@ export function EntryChat({
 
   const panelHeight =
     variant === "compact"
-      ? "min-h-[260px] max-h-[min(52vh,440px)] lg:min-h-[min(64vh,560px)] lg:max-h-[min(75vh,680px)]"
-      : "min-h-[min(48vh,380px)] max-h-[min(70vh,620px)] lg:min-h-[min(68vh,520px)] lg:max-h-[min(82vh,760px)]";
+      ? "min-h-[260px] max-h-[min(52dvh,440px)] landscape:max-h-[min(42dvh,320px)] md:min-h-[min(44dvh,400px)] md:max-h-[min(68dvh,560px)] lg:min-h-[min(64dvh,560px)] lg:max-h-[min(75dvh,680px)]"
+      : "min-h-[min(48dvh,380px)] max-h-[min(70dvh,620px)] landscape:max-h-[min(55dvh,480px)] md:min-h-[min(52dvh,420px)] md:max-h-[min(76dvh,680px)] md:landscape:max-h-[min(62dvh,540px)] lg:min-h-[min(68dvh,520px)] lg:max-h-[min(82dvh,760px)]";
+  const panelShellStyle: CSSProperties | undefined = vvShellStyle ? { ...vvShellStyle, minHeight: 0 } : undefined;
 
   async function deleteThread() {
     const id = tid ?? initialThreadId;
@@ -328,7 +369,7 @@ export function EntryChat({
               type="button"
               disabled={busy}
               onClick={() => void deleteThread()}
-              className="shrink-0 text-[11px] text-red-600 underline dark:text-red-400"
+              className="min-h-10 shrink-0 px-1 text-[11px] text-red-600 underline dark:text-red-400"
             >
               全削除
             </button>
@@ -342,7 +383,7 @@ export function EntryChat({
         </p>
       )}
 
-      <div ref={scrollRef} className={`flex flex-col ${panelHeight}`}>
+      <div ref={scrollRef} className={`flex flex-col ${panelHeight}`} style={panelShellStyle}>
         <div className="flex-1 space-y-4 overflow-y-auto overscroll-contain px-3 py-4 sm:px-4">
           {messages.length === 0 && !streaming && !busy && (
             <p className="rounded-xl bg-zinc-100/80 px-3 py-2 text-center text-xs text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
@@ -396,7 +437,7 @@ export function EntryChat({
               type="button"
               disabled={busy || !input.trim()}
               onClick={() => void send()}
-              className="shrink-0 self-end rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-40 dark:bg-emerald-500 dark:hover:bg-emerald-600"
+              className="min-h-12 min-w-[4.5rem] shrink-0 self-end rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-40 dark:bg-emerald-500 dark:hover:bg-emerald-600"
             >
               送信
             </button>
@@ -404,100 +445,15 @@ export function EntryChat({
         </div>
       </div>
 
-      {(tid ?? initialThreadId) && (
-        <DraftPanel
+      {journalDraftPlacement !== "none" && (tid ?? initialThreadId) && (
+        <JournalDraftPanel
           entryId={entryId}
           threadId={(tid ?? initialThreadId)!}
           onApplied={() => router.refresh()}
+          variant="chat-footer"
         />
       )}
     </section>
   );
 }
 
-function DraftPanel({
-  entryId,
-  threadId,
-  onApplied,
-}: {
-  entryId: string;
-  threadId: string;
-  onApplied: () => void;
-}) {
-  const [draft, setDraft] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function generate() {
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/ai/journal-draft", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entryId, threadId }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(typeof data.error === "string" ? data.error : "生成に失敗しました");
-        return;
-      }
-      setDraft(typeof data.draft === "string" ? data.draft : "");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function approve() {
-    if (!draft) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/ai/journal-draft", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entryId, draftMarkdown: draft }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(typeof data.error === "string" ? data.error : "反映に失敗しました");
-        return;
-      }
-      setDraft(null);
-      onApplied();
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="border-t border-dashed border-zinc-200 bg-zinc-50/50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/50">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">AI 日記（草案）</h3>
-      <p className="mt-1 text-[11px] text-zinc-500">プレビュー後に本文へ反映（AI 日記セクション）。誤記録防止のため自動では書き込みません。</p>
-      {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
-      <button
-        type="button"
-        disabled={busy}
-        onClick={() => void generate()}
-        className="mt-2 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium dark:border-zinc-700 dark:bg-zinc-950"
-      >
-        {busy ? "生成中…" : "会話から草案を生成"}
-      </button>
-      {draft !== null && (
-        <div className="mt-3 space-y-2">
-          <pre className="max-h-52 overflow-auto whitespace-pre-wrap rounded-xl bg-white p-3 text-xs text-zinc-800 ring-1 ring-zinc-200 dark:bg-zinc-950 dark:text-zinc-100 dark:ring-zinc-800">
-            {draft}
-          </pre>
-          <button
-            type="button"
-            disabled={busy || !draft.trim()}
-            onClick={() => void approve()}
-            className="w-full rounded-xl bg-blue-600 py-2 text-sm font-semibold text-white disabled:opacity-50"
-          >
-            本文へ反映（AI 日記セクション）
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}

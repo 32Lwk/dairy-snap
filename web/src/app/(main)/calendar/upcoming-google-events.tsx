@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { resolveGcalEventColor } from "@/lib/gcal-event-color";
+import { resolveCalendarDisplayNameForUser } from "@/lib/user-settings";
 
 type Ev = {
   eventId?: string;
@@ -37,9 +38,11 @@ function todayTokyoYmd(): string {
 export function UpcomingGoogleEvents({
   filter,
   calendarHexById,
+  calendarDisplayLabelById,
 }: {
   filter?: { apply: (ev: Ev) => boolean; infer: (ev: Ev) => string };
   calendarHexById?: Record<string, string>;
+  calendarDisplayLabelById?: Record<string, string>;
 }) {
   const hexMap = calendarHexById ?? {};
   const [events, setEvents] = useState<Ev[] | null>(null);
@@ -166,9 +169,13 @@ export function UpcomingGoogleEvents({
                       />
                       <span className="min-w-0 truncate">{ev.title || "（無題）"}</span>
                     </p>
-                    {ev.calendarName ? (
+                    {ev.calendarName || ev.calendarId ? (
                       <p className="mt-0.5 truncate text-[11px] text-zinc-500 dark:text-zinc-400">
-                        {ev.calendarName}
+                        {resolveCalendarDisplayNameForUser(
+                          ev.calendarId ?? "",
+                          ev.calendarName ?? "",
+                          calendarDisplayLabelById,
+                        )}
                         {filter ? ` · ${filter.infer(ev)}` : ""}
                       </p>
                     ) : null}

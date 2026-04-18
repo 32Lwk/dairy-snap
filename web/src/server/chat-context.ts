@@ -6,11 +6,18 @@ import {
 import type { CalendarOpeningCategory, CalendarOpeningSettings } from "@/lib/user-settings";
 import {
   addCalendarOpeningBuiltinTextHints,
+  BIRTHDAY_CALENDAR_NAME_SCORE_BOOST,
   CALENDAR_DEFAULT_CATEGORY_WEIGHT,
   formatUserProfileForPrompt,
   normalizeCalendarOpeningPriorityOrder,
   parseUserSettings,
+  PARTTIME_CALENDAR_NAME_SCORE_BOOST,
   pickWinningCalendarCategory,
+  resolveCalendarDefaultCategoryForScoring,
+  SCHOOL_CALENDAR_NAME_SCORE_BOOST,
+  suggestsBirthdayCalendarName,
+  suggestsParttimeCalendarName,
+  suggestsSchoolCalendarName,
 } from "@/lib/user-settings";
 import { prisma } from "@/server/db";
 import {
@@ -138,7 +145,7 @@ function scoreOpeningTopic(args: {
   for (let i = 0; i < args.dayEvents.length; i++) {
     const ev = args.dayEvents[i]!;
     const timing = timings[i] ?? "upcoming";
-    const hay = `${ev.title}\n${ev.location}\n${ev.description}`.toLowerCase();
+    const hay = `${ev.title}\n${ev.location}\n${ev.description}\n${ev.calendarName ?? ""}`.toLowerCase();
     const scores = new Map<CalendarOpeningCategory, { score: number; reasons: string[] }>();
     const add = (cat: CalendarOpeningCategory, w: number, reason: string) => {
       const cur = scores.get(cat) ?? { score: 0, reasons: [] };
@@ -151,7 +158,11 @@ function scoreOpeningTopic(args: {
 
     if (rb) add(rb.cat, rb.w, `role:${args.occupationRole}`);
 
-    const calDefault = args.calendarOpening?.calendarCategoryById?.[ev.calendarId];
+    const calDefault = resolveCalendarDefaultCategoryForScoring(
+      ev.calendarId,
+      ev.calendarName,
+      args.calendarOpening?.calendarCategoryById,
+    );
     if (calDefault) add(calDefault, CALENDAR_DEFAULT_CATEGORY_WEIGHT, "calendar:default");
 
     for (const r of rules) {
@@ -176,6 +187,16 @@ function scoreOpeningTopic(args: {
         if (r.value && ev.description.toLowerCase().includes(r.value.toLowerCase())) add(r.category, w, "rule:desc");
         continue;
       }
+    }
+
+    if (suggestsParttimeCalendarName(ev.calendarName)) {
+      add("parttime", PARTTIME_CALENDAR_NAME_SCORE_BOOST, "calendar:name");
+    }
+    if (suggestsBirthdayCalendarName(ev.calendarName)) {
+      add("birthday", BIRTHDAY_CALENDAR_NAME_SCORE_BOOST, "calendar:name");
+    }
+    if (suggestsSchoolCalendarName(ev.calendarName)) {
+      add("school", SCHOOL_CALENDAR_NAME_SCORE_BOOST, "calendar:name");
     }
 
     // 最低でも「予定がある」こと自体を other に寄せる

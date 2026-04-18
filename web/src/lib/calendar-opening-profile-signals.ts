@@ -145,7 +145,8 @@ function applyInterestPicks(
     }
   }
   for (const [cat, add] of acc) {
-    const capped = Math.min(add, MAX_INTEREST_BOOST_PER_CAT);
+    let capped = Math.min(add, MAX_INTEREST_BOOST_PER_CAT);
+    if (cat === "hobby") capped = Math.min(add, 4);
     if (capped !== 0) bump(scores, cat, capped);
   }
 }

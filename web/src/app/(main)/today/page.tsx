@@ -1,12 +1,11 @@
-import Link from "next/link";
 import { formatYmdTokyo } from "@/lib/time/tokyo";
 import { parseUserSettings } from "@/lib/user-settings";
 import { getResolvedAuthUser } from "@/lib/server/resolved-auth-user";
 import { prisma } from "@/server/db";
 import { upsertDailyEntryForTodayPage } from "@/server/ensure-daily-entry";
 import { redirect } from "next/navigation";
-import { EntryChat } from "../entries/[date]/entry-chat";
-import { TodayAppendForm } from "./today-append-form";
+import { TodayEntryDetailPromo } from "./today-entry-detail-promo";
+import { TodayMainGrid } from "./today-main-grid";
 
 export default async function TodayPage() {
   const r = await getResolvedAuthUser();
@@ -30,47 +29,33 @@ export default async function TodayPage() {
   const chatThread = entry?.chatThreads[0];
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-4 py-6">
-      <header className="mx-auto max-w-2xl">
-        <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">今日</p>
-        <h1 className="mt-1 text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
-          {ymd}
-        </h1>
-        <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-          まずはチャットから。追記は横（モバイルは下）のフォームへ。タイムゾーンは Asia/Tokyo 固定です。
-        </p>
+    <div className="mx-auto w-full px-4 pb-6 pt-[calc(4.5rem+env(safe-area-inset-top,0px))] md:max-w-5xl md:px-5 md:pt-[calc(4.75rem+env(safe-area-inset-top,0px))] lg:max-w-6xl lg:px-6">
+      <header className="fixed left-0 right-0 top-0 z-30 border-b border-zinc-200/90 bg-white/95 backdrop-blur-md dark:border-zinc-800/90 dark:bg-zinc-950/95">
+        <div className="mx-auto flex w-full max-w-5xl items-start justify-between gap-3 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] md:px-5 lg:max-w-6xl lg:px-6">
+          <div className="min-w-0">
+            <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">今日</p>
+            <h1 className="mt-1 text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+              {ymd}
+            </h1>
+          </div>
+          <TodayEntryDetailPromo entryDateYmd={ymd} />
+        </div>
       </header>
 
-      <div className="mt-6 grid grid-cols-1 gap-8 lg:grid-cols-12 lg:items-start lg:gap-10">
-        <div className="order-1 min-h-0 lg:col-span-8 lg:order-1">
-          <div className="lg:sticky lg:top-4 lg:z-10">
-            <EntryChat
-              key={`${entry.id}-${chatThread?.id ?? "new"}-${chatThread?.messages.length ?? 0}`}
-              entryId={entry.id}
-              threadId={chatThread?.id ?? null}
-              initialMessages={
-                chatThread?.messages.map((m) => ({
-                  id: m.id,
-                  role: m.role,
-                  content: m.content,
-                })) ?? []
-              }
-              variant="default"
-            />
-          </div>
-        </div>
-        <aside className="order-2 space-y-4 lg:col-span-4 lg:order-2">
-          <TodayAppendForm entryDateYmd={ymd} />
-          <p className="text-center text-sm text-zinc-500 lg:text-left">
-            <Link
-              href={`/entries/${ymd}`}
-              className="text-emerald-700 underline decoration-emerald-700/30 underline-offset-2 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300"
-            >
-              画像・天気・AI 操作・追記履歴は詳細ページ
-            </Link>
-          </p>
-        </aside>
-      </div>
+      <TodayMainGrid
+        entryId={entry.id}
+        initialThreadId={chatThread?.id ?? null}
+        initialMessages={
+          chatThread?.messages.map((m) => ({
+            id: m.id,
+            role: m.role,
+            content: m.content,
+          })) ?? []
+        }
+        latitude={entry.latitude}
+        longitude={entry.longitude}
+        weatherJson={entry.weatherJson}
+      />
     </div>
   );
 }

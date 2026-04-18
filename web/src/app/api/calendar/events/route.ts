@@ -15,12 +15,28 @@ export async function GET(req: Request) {
   const to = url.searchParams.get("to");
   const limitRaw = url.searchParams.get("limit");
   const limit = limitRaw && /^\d+$/.test(limitRaw) ? Number(limitRaw) : undefined;
+  const calendarIdRaw = url.searchParams.get("calendarId");
+  const calendarId =
+    typeof calendarIdRaw === "string" && calendarIdRaw.trim().length > 0
+      ? calendarIdRaw.trim()
+      : undefined;
+
+  const deepSync = url.searchParams.get("deepSync") === "1";
+  const deepPastRaw = url.searchParams.get("deepPastDays");
+  const deepPastDays =
+    deepSync && calendarId && deepPastRaw && /^\d+$/.test(deepPastRaw)
+      ? Number(deepPastRaw)
+      : deepSync && calendarId
+        ? 730
+        : undefined;
 
   const result = await fetchCalendarEventsForUser(session.user.id, {
     forceSync,
     fromYmd: from ?? undefined,
     toYmd: to ?? undefined,
     limit,
+    calendarId,
+    ...(deepSync && calendarId ? { deepSync: true, deepPastDays } : {}),
   });
   if (!result.ok) {
     const detail = result.detail ?? result.reason;

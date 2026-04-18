@@ -62,7 +62,14 @@ export function EntryImages({ entryId, images }: { entryId: string; images: Img[
             className="relative block aspect-square overflow-hidden rounded-lg border border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900"
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={`/api/images/${img.id}`} alt="" className="h-full w-full object-cover" />
+            <img
+              src={`/api/images/${img.id}`}
+              alt=""
+              className="h-full w-full max-w-full object-cover"
+              sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 320px"
+              loading="lazy"
+              decoding="async"
+            />
           </a>
         ))}
       </div>

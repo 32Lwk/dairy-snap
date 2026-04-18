@@ -57,7 +57,7 @@ function SortablePriorityRow({
     >
         <button
           type="button"
-          className="touch-none shrink-0 cursor-grab rounded px-1 py-1.5 text-zinc-400 hover:bg-zinc-200/80 hover:text-zinc-600 active:cursor-grabbing dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+          className="touch-none flex min-h-10 min-w-10 shrink-0 cursor-grab items-center justify-center rounded-lg px-1 text-zinc-400 hover:bg-zinc-200/80 hover:text-zinc-600 active:cursor-grabbing dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
           disabled={disabled}
           aria-label={`順序を変更（行 ${idx + 1}）`}
           title="ドラッグで並べ替え（タッチは長押しで移動）"
@@ -105,8 +105,8 @@ export function CalendarOpeningPriorityEditor({
   onSetPriorityOrder: SetCalendarOpeningPriorityOrder;
 }) {
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 280, tolerance: 8 } }),
+    useSensor(PointerSensor, { activationConstraint: { distance: 12 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 240, tolerance: 12 } }),
   );
 
   /** 32件上限まで。未使用カテゴリが無ければ「その他」や先頭を重複で追加（ドロップダウンで変更可） */

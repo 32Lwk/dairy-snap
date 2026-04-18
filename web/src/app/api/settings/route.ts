@@ -87,7 +87,7 @@ const profilePatchSchema = z
               kind: z.string().max(32),
               value: z.string().max(120),
               category: z.string().max(48),
-              weight: z.number().min(-50).max(50).optional(),
+              weight: z.number().min(-50).max(120).optional(),
             }),
           )
           .max(120)
@@ -109,6 +109,12 @@ const profilePatchSchema = z
           .optional()
           .refine((rec) => rec == null || Object.keys(rec).length <= 40, {
             message: "calendarCategoryById が多すぎます",
+          }),
+        calendarDisplayLabelById: z
+          .record(z.string().max(400), z.string().min(1).max(80))
+          .optional()
+          .refine((rec) => rec == null || Object.keys(rec).length <= 40, {
+            message: "calendarDisplayLabelById が多すぎます",
           }),
       })
       .optional(),
@@ -195,7 +201,13 @@ export async function PATCH(req: NextRequest) {
   const json = await req.json().catch(() => null);
   const parsed = patchSchema.safeParse(json);
   if (!parsed.success) {
-    return NextResponse.json({ error: "入力が不正です" }, { status: 400 });
+    return NextResponse.json(
+      {
+        error: "入力が不正です",
+        ...(process.env.NODE_ENV !== "production" ? { details: parsed.error.flatten() } : {}),
+      },
+      { status: 400 },
+    );
   }
 
   const existing = { settings: resolved.settings };

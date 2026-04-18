@@ -103,13 +103,14 @@ export const CALENDAR_OPENING_BUILTIN_IDS = [
   "school",
   "health",
   "family",
+  "birthday",
   "hobby",
   "other",
 ] as const;
 
 export type BuiltinCalendarOpeningCategory = (typeof CALENDAR_OPENING_BUILTIN_IDS)[number];
 
-/** 組み込み8種 + ユーザー追加（`usercat:` + スラッグ） */
+/** 組み込み9種 + ユーザー追加（`usercat:` + スラッグ） */
 export type CalendarOpeningCategory = BuiltinCalendarOpeningCategory | `usercat:${string}`;
 
 export const CALENDAR_OPENING_BUILTIN_CATS: { id: BuiltinCalendarOpeningCategory; label: string }[] = [
@@ -119,6 +120,7 @@ export const CALENDAR_OPENING_BUILTIN_CATS: { id: BuiltinCalendarOpeningCategory
   { id: "school", label: "授業/試験" },
   { id: "health", label: "通院/健康" },
   { id: "family", label: "家族/友人" },
+  { id: "birthday", label: "誕生日/記念日" },
   { id: "hobby", label: "趣味/イベント" },
   { id: "other", label: "その他" },
 ];
@@ -174,26 +176,286 @@ export type CalendarOpeningSettings = {
   customCategoryLabels?: string[];
   /** Google カレンダー ID → 分類デフォルト（ルール・キーワードより強く効かせる） */
   calendarCategoryById?: Record<string, CalendarOpeningCategory>;
+  /** Google カレンダー ID → このアプリ内だけの表示名（Google 側の名前は変えない） */
+  calendarDisplayLabelById?: Record<string, string>;
   /** カレンダー画面のグリッド表示オプション */
   gridDisplay?: CalendarGridDisplaySettings;
 };
 
-/** `calendarCategoryById` のスコア（キーワードルールより優先しやすい重み） */
-export const CALENDAR_DEFAULT_CATEGORY_WEIGHT = 100;
+/**
+ * `calendarCategoryById` のスコア加算。値が大きいと本文・カレンダー名ヒントより常に勝ち「趣味」等に張り付きやすい。
+ * 明示の calendarId ルール（CALENDAR_ID_RULE_STRONG_WEIGHT）より弱くする。
+ */
+export const CALENDAR_DEFAULT_CATEGORY_WEIGHT = 52;
+
+/** kind:calendarId でこの ID の予定をカテゴリに強く寄せるときの重み（既定カテゴリより強い）。 */
+export const CALENDAR_ID_RULE_STRONG_WEIGHT = 96;
+
+/**
+ * カレンダー表示名が勤務・シフト系のときの parttime ブースト（誤った hobby 既定より強く効かせる）。
+ */
+export const PARTTIME_CALENDAR_NAME_SCORE_BOOST = 72;
+
+/** Display name looks birthday/anniversary-themed: per-event boost toward `birthday`. */
+export const BIRTHDAY_CALENDAR_NAME_SCORE_BOOST = 58;
+
+/** Display name suggests coursework / campus in the calendar title. Per-event boost toward school. */
+export const SCHOOL_CALENDAR_NAME_SCORE_BOOST = 56;
+
+const BIRTHDAY_CALENDAR_NAME_KEYWORDS = [
+  "\u8a95\u751f\u65e5",
+  "\u304a\u8a95\u751f\u65e5",
+  "birthday",
+  "\u30d0\u30fc\u30b9\u30c7\u30fc",
+  "\u8a18\u5ff5\u65e5",
+  "anniversary",
+  "bday",
+  "\u9023\u7d61\u5148",
+  "contact",
+  "contacts",
+  "\ud83c\udf82",
+] as const;
+
+const PARTTIME_CALENDAR_NAME_KEYWORDS = [
+  "シフト",
+  "シフトボード",
+  "シフト表",
+  "バイト",
+  "アルバイト",
+  "勤務表",
+  "出勤",
+  "退勤",
+  "勤務",
+  "勤怠",
+  "就業",
+  "\u52b4\u50cd",
+  "shift",
+  "part-time",
+  "parttime",
+] as const;
+
+const SCHOOL_CALENDAR_NAME_KEYWORDS = [
+  "\u8ab2\u984c",
+  "\u63d0\u51fa",
+  "\u30ec\u30dd\u30fc\u30c8",
+  "\u5927\u5b66",
+  "\u30bc\u30df",
+  "\u6388\u696d",
+  "\u8b1b\u7fa9",
+  "\u8a66\u9a13",
+  "\u5358\u4f4d",
+  "\u5b66\u52d9",
+  "\u7de0\u5207",
+  "\u5c65\u4fee",
+  "\u30b7\u30e9\u30d0\u30b9",
+  "assignment",
+  "deadline",
+  "homework",
+  "report",
+] as const;
+
+/** カレンダー名（設定・同期キャッシュの表示名）からバイト/シフト向きか */
+export function suggestsParttimeCalendarName(name: string | null | undefined): boolean {
+  const n = (name ?? "").normalize("NFKC").trim().toLowerCase();
+  if (!n) return false;
+  for (const k of PARTTIME_CALENDAR_NAME_KEYWORDS) {
+    if (n.includes(k.toLowerCase())) return true;
+  }
+  return false;
+}
+
+/** Heuristic: calendar summary/title suggests birthdays or anniversaries. */
+export function suggestsBirthdayCalendarName(name: string | null | undefined): boolean {
+  const n = (name ?? "").normalize("NFKC").trim().toLowerCase();
+  if (!n) return false;
+  for (const k of BIRTHDAY_CALENDAR_NAME_KEYWORDS) {
+    const kk = k.toLowerCase();
+    if (n.includes(kk)) return true;
+  }
+  return false;
+}
+
+/** Heuristic: calendar name suggests coursework / campus life (not generic import label alone). */
+export function suggestsSchoolCalendarName(name: string | null | undefined): boolean {
+  const n = (name ?? "").normalize("NFKC").trim().toLowerCase();
+  if (!n) return false;
+  for (const k of SCHOOL_CALENDAR_NAME_KEYWORDS) {
+    if (n.includes(k.toLowerCase())) return true;
+  }
+  return false;
+}
+
+/** calendarIdキーの表記ゆれ（URL エンコード等）に対するフォールバック付き参照。 */
+function lookupCalendarIdRecordValue<T>(
+  map: Record<string, T> | undefined,
+  calendarId: string,
+  isPresent: (v: T) => boolean,
+): T | undefined {
+  if (!map) return undefined;
+  const id = calendarId.trim();
+  if (!id) return undefined;
+  const direct = map[id];
+  if (isPresent(direct as T)) return direct;
+  let decoded: string | null = null;
+  try {
+    decoded = decodeURIComponent(id);
+  } catch {
+    decoded = null;
+  }
+  if (decoded && decoded !== id) {
+    const v = map[decoded];
+    if (isPresent(v as T)) return v;
+  }
+  try {
+    const enc = encodeURIComponent(id);
+    if (enc !== id) {
+      const v = map[enc];
+      if (isPresent(v as T)) return v;
+    }
+  } catch {
+    /* ignore */
+  }
+  const lower = id.toLowerCase();
+  for (const k of Object.keys(map)) {
+    if (k.toLowerCase() === lower) return map[k];
+  }
+  return undefined;
+}
+
+/** calendarCategoryById のキーが URL エンコード等でイベント側 ID とずれる場合のフォールバック付き参照。 */
+export function lookupCalendarCategoryById(
+  map: Record<string, CalendarOpeningCategory> | undefined,
+  calendarId: string,
+): CalendarOpeningCategory | undefined {
+  return lookupCalendarIdRecordValue(map, calendarId, (v) => typeof v === "string" && v.length > 0);
+}
+
+/** アプリ内表示名の上書き（calendarDisplayLabelById）の参照。 */
+export function lookupCalendarDisplayLabelById(
+  map: Record<string, string> | undefined,
+  calendarId: string,
+): string | undefined {
+  const v = lookupCalendarIdRecordValue(map, calendarId, (x) => typeof x === "string" && x.trim().length > 0);
+  return typeof v === "string" ? v.trim() : undefined;
+}
+
+export function resolveCalendarDisplayNameForUser(
+  calendarId: string,
+  sourceName: string,
+  labels: Record<string, string> | undefined,
+): string {
+  const custom = lookupCalendarDisplayLabelById(labels, calendarId);
+  if (custom) return custom;
+  return sourceName;
+}
+
+/**
+ * 保存済みカレンダー既定をスコアに載せる直前に正す。
+ * 「シフトボード」等なのに過去の自動推定で hobby が残っている不整合を parttime に寄せる。
+ */
+export function resolveCalendarDefaultCategoryForScoring(
+  calendarId: string | undefined,
+  calendarName: string | undefined,
+  map: Record<string, CalendarOpeningCategory> | undefined,
+): CalendarOpeningCategory | undefined {
+  const raw = lookupCalendarCategoryById(map, calendarId ?? "");
+  if (raw === "hobby" && suggestsParttimeCalendarName(calendarName)) return "parttime";
+  if (raw === "hobby" && suggestsSchoolCalendarName(calendarName)) return "school";
+  if (raw === "hobby" && suggestsBirthdayCalendarName(calendarName)) return "birthday";
+  return raw;
+}
+
+/**
+ * この calendarId を「バイト/シフト」に寄せるルールを追加（または強度更新）し、同じ ID のカレンダー既定は外す。
+ * import で大学・店舗などが混在するカレンダーでは万能ではないが、表示名がシフトっぽくない場合のワンクリック用。
+ */
+export function upsertCalendarIdParttimeRule(
+  opening: CalendarOpeningSettings,
+  calendarId: string,
+): CalendarOpeningSettings {
+  const id = calendarId.trim();
+  if (!id) return opening;
+  const rules = [...(opening.rules ?? [])];
+  const idx = rules.findIndex((r) => r.kind === "calendarId" && r.value === id && r.category === "parttime");
+  const row: CalendarOpeningRule = {
+    kind: "calendarId",
+    value: id,
+    category: "parttime",
+    weight: CALENDAR_ID_RULE_STRONG_WEIGHT,
+  };
+  if (idx >= 0) rules[idx] = row;
+  else rules.push(row);
+
+  const next: CalendarOpeningSettings = { ...opening, rules };
+  const map = { ...(opening.calendarCategoryById ?? {}) };
+  delete map[id];
+  if (Object.keys(map).length > 0) next.calendarCategoryById = map;
+  else delete next.calendarCategoryById;
+  return next;
+}
 
 const CALENDAR_OPENING_BUILTIN_TEXT_HINTS: { cat: BuiltinCalendarOpeningCategory; words: string[]; w: number }[] = [
   { cat: "job_hunt", words: ["\u9762\u63a5", "ES", "\u8aac\u660e\u4f1a", "\u9078\u8003", "\u5185\u5b9a", "\u30a4\u30f3\u30bf\u30fc\u30f3", "\u9762\u8ac7", "\u30ea\u30af\u30eb\u30fc\u30bf\u30fc"], w: 6 },
   { cat: "parttime", words: ["\u30d0\u30a4\u30c8", "\u30a2\u30eb\u30d0\u30a4\u30c8", "\u30b7\u30d5\u30c8", "\u51fa\u52e4", "\u9000\u52e4", "\u52e4\u52d9", "\u30ec\u30b8"], w: 6 },
-  { cat: "date", words: ["\u30c7\u30fc\u30c8", "\u8a18\u5ff5\u65e5", "\u5f7c\u6c0f", "\u5f7c\u5973", "\u4ea4\u969b", "\u544a\u767d"], w: 6 },
+  {
+    cat: "date",
+    words: ["\u30c7\u30fc\u30c8", "\u5f7c\u6c0f", "\u5f7c\u5973", "\u4ea4\u969b", "\u544a\u767d", "\u7d50\u5a5a\u8a18\u5ff5\u65e5"],
+    w: 6,
+  },
+  {
+    cat: "birthday",
+    words: [
+      "\u8a95\u751f\u65e5",
+      "\u304a\u8a95\u751f\u65e5",
+      "\u30d0\u30fc\u30b9\u30c7\u30fc",
+      "birthday",
+      "\u751f\u8a95",
+      "\ud83c\udf82",
+    ],
+    w: 7,
+  },
   {
     cat: "school",
-    words: ["\u8b1b\u7fa9", "\u6388\u696d", "\u30bc\u30df", "\u8a66\u9a13", "\u30c6\u30b9\u30c8", "\u30ec\u30dd\u30fc\u30c8", "\u8ab2\u984c", "\u767a\u8868"],
+    words: [
+      "\u8b1b\u7fa9",
+      "\u6388\u696d",
+      "\u30bc\u30df",
+      "\u8a66\u9a13",
+      "\u30c6\u30b9\u30c8",
+      "\u30ec\u30dd\u30fc\u30c8",
+      "\u8ab2\u984c",
+      "\u63d0\u51fa",
+      "\u767a\u8868",
+    ],
     w: 6,
   },
   { cat: "health", words: ["\u75c5\u9662", "\u901a\u9662", "\u6b6f\u533b\u8005", "\u30af\u30ea\u30cb\u30c3\u30af", "\u691c\u8a3a", "\u85ac"], w: 6 },
   { cat: "family", words: ["\u5e30\u7701", "\u5bb6\u65cf", "\u53cb\u9054", "\u53cb\u4eba", "\u98f2\u307f\u4f1a", "\u540c\u7a93\u4f1a"], w: 4 },
-  { cat: "hobby", words: ["\u30e9\u30a4\u30d6", "\u6620\u753b", "\u5c55\u793a", "\u30a4\u30d9\u30f3\u30c8", "\u821e\u53f0", "\u30d5\u30a7\u30b9", "\u89b3\u6226", "\u914d\u4fe1"], w: 4 },
 ];
+
+/** Markers that suggest school context (extra school bump in builtin text hints). */
+const ACADEMIC_CONTEXT_MARKERS = [
+  "\u8ab2\u984c",
+  "\u63d0\u51fa",
+  "\u30ec\u30dd\u30fc\u30c8",
+  "\u5927\u5b66",
+  "\u30bc\u30df",
+  "\u6388\u696d",
+  "\u8b1b\u7fa9",
+  "\u8a66\u9a13",
+  "\u5358\u4f4d",
+  "\u5b66\u52d9",
+  "\u7de0\u5207",
+  "\u671f\u672b",
+  "\u671f\u4e2d",
+  "\u5c65\u4fee",
+  "\u30b7\u30e9\u30d0\u30b9",
+  "assignment",
+  "deadline",
+  "homework",
+  "midterm",
+  "final",
+] as const;
 
 /** Title / location / description keyword hints when classification rules are empty (opening scorer family). */
 export function addCalendarOpeningBuiltinTextHints(
@@ -201,10 +463,19 @@ export function addCalendarOpeningBuiltinTextHints(
   bump: (cat: CalendarOpeningCategory, w: number) => void,
 ): void {
   const hay = haystack.toLowerCase();
+  const acc = new Map<CalendarOpeningCategory, number>();
+  const add = (cat: CalendarOpeningCategory, w: number) => {
+    acc.set(cat, (acc.get(cat) ?? 0) + w);
+  };
   for (const b of CALENDAR_OPENING_BUILTIN_TEXT_HINTS) {
     for (const w of b.words) {
-      if (hay.includes(w.toLowerCase())) bump(b.cat, b.w);
+      if (hay.includes(w.toLowerCase())) add(b.cat, b.w);
     }
+  }
+  const hasAcademic = ACADEMIC_CONTEXT_MARKERS.some((k) => hay.includes(k.toLowerCase()));
+  if (hasAcademic) add("school", 5);
+  for (const [cat, w] of acc) {
+    if (w !== 0) bump(cat, w);
   }
 }
 
@@ -442,6 +713,11 @@ function parseCalendarOpening(raw: unknown): CalendarOpeningSettings | undefined
   let priorityOrder: CalendarOpeningCategory[] | undefined;
   if (Array.isArray(o.priorityOrder)) {
     const po = o.priorityOrder
+      .map((x) => {
+        if (typeof x !== "string") return x;
+        const t = x.trim();
+        return builtinCat.has(t.toLowerCase()) ? t.toLowerCase() : t;
+      })
       .filter((x): x is CalendarOpeningCategory => typeof x === "string" && isAllowedCategory(x))
       .slice(0, 32);
     if (po.length) {
@@ -457,7 +733,8 @@ function parseCalendarOpening(raw: unknown): CalendarOpeningSettings | undefined
       const rr = r as Record<string, unknown>;
       const kind = typeof rr.kind === "string" ? rr.kind : "";
       const value = typeof rr.value === "string" ? rr.value.trim() : "";
-      const category = typeof rr.category === "string" ? rr.category : "";
+      const categoryRaw = typeof rr.category === "string" ? rr.category.trim() : "";
+      const category = builtinCat.has(categoryRaw.toLowerCase()) ? categoryRaw.toLowerCase() : categoryRaw;
       const weightRaw = rr.weight;
       const weight =
         typeof weightRaw === "number" ? weightRaw : typeof weightRaw === "string" ? Number(weightRaw) : undefined;
@@ -484,11 +761,29 @@ function parseCalendarOpening(raw: unknown): CalendarOpeningSettings | undefined
     for (const [k, v] of Object.entries(calCatRaw as Record<string, unknown>)) {
       if (n >= 40) break;
       if (k.length > 400 || typeof v !== "string") continue;
-      if (!isAllowedCategory(v)) continue;
-      rec[k] = v as CalendarOpeningCategory;
+      const trimmed = v.trim();
+      const normalized = builtinCat.has(trimmed.toLowerCase()) ? trimmed.toLowerCase() : trimmed;
+      if (!isAllowedCategory(normalized)) continue;
+      rec[k] = normalized as CalendarOpeningCategory;
       n++;
     }
     if (Object.keys(rec).length) calendarCategoryById = rec;
+  }
+
+  let calendarDisplayLabelById: Record<string, string> | undefined;
+  const calDispRaw = o.calendarDisplayLabelById;
+  if (calDispRaw && typeof calDispRaw === "object" && !Array.isArray(calDispRaw)) {
+    const rec: Record<string, string> = {};
+    let n = 0;
+    for (const [k, v] of Object.entries(calDispRaw as Record<string, unknown>)) {
+      if (n >= 40) break;
+      if (k.length > 400 || typeof v !== "string") continue;
+      const lab = v.normalize("NFKC").trim().slice(0, 80);
+      if (!lab) continue;
+      rec[k] = lab;
+      n++;
+    }
+    if (Object.keys(rec).length) calendarDisplayLabelById = rec;
   }
 
   let gridDisplay: CalendarGridDisplaySettings | undefined;
@@ -529,6 +824,8 @@ function parseCalendarOpening(raw: unknown): CalendarOpeningSettings | undefined
   if (rules?.length) out.rules = rules;
   if (customCategoryLabels?.length) out.customCategoryLabels = customCategoryLabels;
   if (calendarCategoryById && Object.keys(calendarCategoryById).length) out.calendarCategoryById = calendarCategoryById;
+  if (calendarDisplayLabelById && Object.keys(calendarDisplayLabelById).length)
+    out.calendarDisplayLabelById = calendarDisplayLabelById;
   if (gridDisplay && Object.keys(gridDisplay).length) out.gridDisplay = gridDisplay;
   return Object.keys(out).length ? out : undefined;
 }
@@ -834,3 +1131,4 @@ export function formatUserProfileForPrompt(profile: UserProfileSettings | undefi
   lines.push(...formatAgentPersonaForPrompt(profile));
   return lines.length > 0 ? lines.join("\n") : "（未登録）";
 }
+

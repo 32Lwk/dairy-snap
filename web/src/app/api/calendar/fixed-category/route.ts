@@ -25,7 +25,20 @@ const byEventSchema = z.object({
   category: z.string().min(1).max(64).nullable(),
 });
 
-const bodySchema = z.discriminatedUnion("mode", [byCalendarSchema, byTitleSchema, byEventSchema]);
+/** タイトル完全一致（このカレンダー内）。category が null なら固定解除 */
+const byExactTitleSchema = z.object({
+  mode: z.literal("by_exact_title"),
+  calendarId: z.string().min(1).max(512),
+  title: z.string().max(1024),
+  category: z.string().min(1).max(64).nullable(),
+});
+
+const bodySchema = z.discriminatedUnion("mode", [
+  byCalendarSchema,
+  byTitleSchema,
+  byEventSchema,
+  byExactTitleSchema,
+]);
 
 export async function POST(req: Request) {
   const session = await requireSession();
@@ -51,6 +64,27 @@ export async function POST(req: Request) {
       },
     });
     return NextResponse.json({ ok: true, updated: updated.count });
+  }
+
+  if (parsed.data.mode === "by_exact_title") {
+    const { calendarId, title, category } = parsed.data;
+    const r = await prisma.googleCalendarEventCache.updateMany({
+      where: {
+        userId: session.user.id,
+        calendarId,
+        isCancelled: false,
+        title,
+      },
+      data: { fixedCategory: category ?? null },
+    });
+    await prisma.auditLog.create({
+      data: {
+        userId: session.user.id,
+        action: "calendar_event_fixed_category_apply_by_exact_title",
+        metadata: { calendarId, title, category, count: r.count },
+      },
+    });
+    return NextResponse.json({ ok: true, updated: r.count });
   }
 
   if (parsed.data.mode === "by_title") {

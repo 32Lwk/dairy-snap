@@ -22,7 +22,23 @@ import {
 import { reverseGeocodeClient } from "@/lib/reverse-geocode-client";
 import { OnboardingChatFlow } from "@/app/(main)/onboarding/onboarding-chat-flow";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useState } from "react";
+
+const WeatherLocationMapPicker = dynamic(
+  () =>
+    import("@/components/weather-location-map-picker").then((m) => ({
+      default: m.WeatherLocationMapPicker,
+    })),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-56 items-center justify-center rounded-xl border border-zinc-200 bg-zinc-100 text-sm text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 md:h-64">
+        {"\u5730\u56f3\u3092\u8aad\u307f\u8fbc\u307f\u4e2d\u2026"}
+      </div>
+    ),
+  },
+);
 
 type SettingsPayload = {
   email?: string;
@@ -206,6 +222,13 @@ export function SettingsForm({ userId }: { userId: string }) {
     }
   }
 
+  const onWeatherMapPick = useCallback((lat: number, lng: number) => {
+    setLatIn(String(lat));
+    setLonIn(String(lng));
+    setPlaceLine(null);
+    void reverseGeocodeClient(lat, lng).then(setPlaceLine);
+  }, []);
+
   async function clearDefaultLocation() {
     setSaving(true);
     setError(null);
@@ -308,6 +331,10 @@ export function SettingsForm({ userId }: { userId: string }) {
   }
   if (!data) return null;
 
+  const pickedLat = parseFloat(latIn);
+  const pickedLon = parseFloat(lonIn);
+  const pickedOk = Number.isFinite(pickedLat) && Number.isFinite(pickedLon);
+
   return (
     <>
       <div className="mt-6 space-y-6">
@@ -386,9 +413,9 @@ export function SettingsForm({ userId }: { userId: string }) {
       </section>
 
       <section className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
-        <h2 className="font-medium text-zinc-900 dark:text-zinc-50">開口メッセージの話題（カレンダー分類）</h2>
+        <h2 className="font-medium text-zinc-900 dark:text-zinc-50">日記チャットの開口トピック（カレンダー分類）</h2>
         <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-          当日のGoogleカレンダー予定がある場合、どの話題として声をかけるかを重み付けします。曖昧な予定は「どんな予定？」と確認します。
+          日記でチャットを開いたとき、当日の Google カレンダー予定からどの話題として声をかけるかを決めるルールです（優先順位・キーワードルール等）。カレンダー画面の表示設定ダイアログには出さず、ここでのみ編集します。曖昧な予定は「どんな予定？」と確認します。
         </p>
 
         <div className="mt-4 space-y-4">
@@ -487,35 +514,23 @@ export function SettingsForm({ userId }: { userId: string }) {
         <p className="mt-1 text-xs text-zinc-500">
           エントリに位置がないときの天気取得（午前・午後）に使います。エントリに位置を保存した場合はそちらが優先されます。
         </p>
-        {(() => {
-          const la = parseFloat(latIn);
-          const lo = parseFloat(lonIn);
-          const ok = !Number.isNaN(la) && !Number.isNaN(lo);
-          return (
-            <PlaceCoordsLine placeLine={placeLine} latitude={ok ? la : NaN} longitude={ok ? lo : NaN} />
-          );
-        })()}
-        <div className="mt-2 flex flex-wrap items-end gap-2">
-          <input
-            value={latIn}
-            onChange={(e) => {
-              setLatIn(e.target.value);
-              setPlaceLine(null);
-            }}
-            aria-label="緯度"
-            className="w-28 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-            inputMode="decimal"
+        <PlaceCoordsLine
+          placeLine={placeLine}
+          latitude={pickedOk ? pickedLat : NaN}
+          longitude={pickedOk ? pickedLon : NaN}
+          showCoordinates={false}
+        />
+        <div className="mt-3">
+          <WeatherLocationMapPicker
+            latitude={pickedOk ? pickedLat : null}
+            longitude={pickedOk ? pickedLon : null}
+            onPick={onWeatherMapPick}
           />
-          <input
-            value={lonIn}
-            onChange={(e) => {
-              setLonIn(e.target.value);
-              setPlaceLine(null);
-            }}
-            aria-label="経度"
-            className="w-28 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-            inputMode="decimal"
-          />
+        </div>
+        <p className="mt-2 text-xs text-zinc-500">
+          {"\u5730\u56f3\u3092\u30bf\u30c3\u30d7\u3059\u308b\u304b\u3001\u30d4\u30f3\u3092\u30c9\u30e9\u30c3\u30b0\u3057\u3066\u5730\u70b9\u3092\u6307\u5b9a\u3067\u304d\u307e\u3059\uff08OpenStreetMap\uff09\u3002"}
+        </p>
+        <div className="mt-3 flex flex-wrap items-end gap-2">
           <input
             value={labelIn}
             onChange={(e) => setLabelIn(e.target.value)}

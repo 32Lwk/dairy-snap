@@ -58,7 +58,7 @@ export function SearchClient() {
       </div>
 
       <form
-        className="flex gap-2"
+        className="flex flex-col gap-2 sm:flex-row sm:items-stretch"
         onSubmit={(e) => {
           e.preventDefault();
           router.push(`/search?q=${encodeURIComponent(q.trim())}`);
@@ -73,7 +73,7 @@ export function SearchClient() {
         />
         <button
           type="submit"
-          className="rounded-xl bg-zinc-900 px-4 py-2 text-sm font-semibold text-white dark:bg-zinc-50 dark:text-zinc-900"
+          className="min-h-12 w-full shrink-0 rounded-xl bg-zinc-900 px-4 py-2 text-sm font-semibold text-white sm:w-auto dark:bg-zinc-50 dark:text-zinc-900"
         >
           検索
         </button>

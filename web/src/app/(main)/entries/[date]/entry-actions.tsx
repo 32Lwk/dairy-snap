@@ -1,10 +1,27 @@
 "use client";
 
 import { PlaceCoordsLine } from "@/components/place-coords-line";
+import { ResponsiveDialog } from "@/components/responsive-dialog";
 import { WeatherAmPmDisplay } from "@/components/weather-am-pm-display";
 import { reverseGeocodeClient } from "@/lib/reverse-geocode-client";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+
+const WeatherLocationMapPicker = dynamic(
+  () =>
+    import("@/components/weather-location-map-picker").then((m) => ({
+      default: m.WeatherLocationMapPicker,
+    })),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-56 items-center justify-center rounded-xl border border-zinc-200 bg-zinc-100 text-sm text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
+        {"\u5730\u56f3\u3092\u8aad\u307f\u8fbc\u307f\u4e2d\u2026"}
+      </div>
+    ),
+  },
+);
 
 type WeatherJson = {
   kind?: string;
@@ -47,8 +64,53 @@ export function EntryActions({
   const [latIn, setLatIn] = useState(latitude != null ? String(latitude) : "");
   const [lonIn, setLonIn] = useState(longitude != null ? String(longitude) : "");
   const [placeLine, setPlaceLine] = useState<string | null>(null);
+  const [locationMapOpen, setLocationMapOpen] = useState(false);
+  const [draftLat, setDraftLat] = useState<number | null>(null);
+  const [draftLon, setDraftLon] = useState<number | null>(null);
+  const [draftGeoBusy, setDraftGeoBusy] = useState(false);
 
   const wj = weatherJson as WeatherJson | null;
+
+  const openLocationMap = useCallback(() => {
+    const la = parseFloat(latIn);
+    const lo = parseFloat(lonIn);
+    setDraftLat(Number.isFinite(la) ? la : null);
+    setDraftLon(Number.isFinite(lo) ? lo : null);
+    setLocationMapOpen(true);
+  }, [latIn, lonIn]);
+
+  const applyDraftLocation = useCallback(() => {
+    if (draftLat == null || draftLon == null || !Number.isFinite(draftLat) || !Number.isFinite(draftLon)) {
+      setMsg("地図をタップするか、現在地を取得して位置を指定してください");
+      return;
+    }
+    setLatIn(String(draftLat));
+    setLonIn(String(draftLon));
+    setPlaceLine(null);
+    void reverseGeocodeClient(draftLat, draftLon).then(setPlaceLine);
+    setLocationMapOpen(false);
+    setMsg(null);
+  }, [draftLat, draftLon]);
+
+  function useDraftGeolocation() {
+    if (!navigator.geolocation) {
+      setMsg("この環境では位置情報が使えません");
+      return;
+    }
+    setDraftGeoBusy(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setDraftLat(pos.coords.latitude);
+        setDraftLon(pos.coords.longitude);
+        setDraftGeoBusy(false);
+      },
+      () => {
+        setDraftGeoBusy(false);
+        setMsg("位置情報の取得に失敗しました");
+      },
+      { enableHighAccuracy: true, timeout: 15_000 },
+    );
+  }
 
   useEffect(() => {
     setLatIn(latitude != null ? String(latitude) : "");
@@ -117,7 +179,7 @@ export function EntryActions({
     const lat = parseFloat(latIn);
     const lon = parseFloat(lonIn);
     if (Number.isNaN(lat) || Number.isNaN(lon)) {
-      setMsg("緯度・経度は数値で入力してください");
+      setMsg("地図で指定するか、現在地を取得してください");
       return;
     }
     setBusy("loc");
@@ -155,7 +217,7 @@ export function EntryActions({
         setLonIn(String(lo));
         setBusy(null);
         void reverseGeocodeClient(la, lo).then(setPlaceLine);
-        setMsg("現在地を入力欄に反映しました（保存は「位置を保存」）");
+        setMsg("現在地を反映しました（「位置を保存」で確定）");
       },
       () => {
         setBusy(null);
@@ -322,31 +384,23 @@ export function EntryActions({
           const lo = parseFloat(lonIn);
           const ok = !Number.isNaN(la) && !Number.isNaN(lo);
           return (
-            <PlaceCoordsLine placeLine={placeLine} latitude={ok ? la : NaN} longitude={ok ? lo : NaN} />
+            <PlaceCoordsLine
+              placeLine={placeLine}
+              latitude={ok ? la : NaN}
+              longitude={ok ? lo : NaN}
+              showCoordinates={false}
+            />
           );
         })()}
         <div className="mt-2 flex flex-wrap items-end gap-2">
-          <input
-            value={latIn}
-            onChange={(e) => {
-              setLatIn(e.target.value);
-              setPlaceLine(null);
-            }}
-            aria-label="\u7def\u5ea6"
-            className="w-28 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-            inputMode="decimal"
-          />
-          <input
-            value={lonIn}
-            onChange={(e) => {
-              setLonIn(e.target.value);
-              setPlaceLine(null);
-            }}
-            aria-label="\u7d4c\u5ea6"
-            className="w-28 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-            inputMode="decimal"
-          />
-
+          <button
+            type="button"
+            disabled={busy !== null}
+            onClick={() => openLocationMap()}
+            className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm dark:border-zinc-700"
+          >
+            {"地図で指定"}
+          </button>
           <button
             type="button"
             disabled={busy !== null}
@@ -373,6 +427,66 @@ export function EntryActions({
           </button>
         </div>
       </div>
+
+      <ResponsiveDialog
+        open={locationMapOpen}
+        onClose={() => setLocationMapOpen(false)}
+        labelledBy="entry-location-map-title"
+        dialogId="entry-location-map-dialog"
+        zClass="z-[60]"
+      >
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-200 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] dark:border-zinc-800 md:pt-4">
+          <h2 id="entry-location-map-title" className="text-base font-semibold text-zinc-900 dark:text-zinc-50">
+            {"位置を地図で指定"}
+          </h2>
+          <button
+            type="button"
+            onClick={() => setLocationMapOpen(false)}
+            className="shrink-0 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+          >
+            {"\u9589\u3058\u308b"}
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-4">
+          <p className="text-xs text-zinc-500">
+            {"\u5730\u56f3\u3092\u30bf\u30c3\u30d7\u3059\u308b\u304b\u3001\u30d4\u30f3\u3092\u30c9\u30e9\u30c3\u30b0\u3057\u3066\u5730\u70b9\u3092\u9078\u3073\u307e\u3059\uff08OpenStreetMap\uff09\u3002"}
+          </p>
+          <div className="mt-3">
+            <WeatherLocationMapPicker
+              latitude={draftLat}
+              longitude={draftLon}
+              onPick={(lat, lng) => {
+                setDraftLat(lat);
+                setDraftLon(lng);
+              }}
+            />
+          </div>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={draftGeoBusy}
+              onClick={() => useDraftGeolocation()}
+              className="rounded-lg border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700"
+            >
+              {draftGeoBusy ? "…" : "現在地"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setLocationMapOpen(false)}
+              className="rounded-lg border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700"
+            >
+              キャンセル
+            </button>
+            <button
+              type="button"
+              onClick={() => applyDraftLocation()}
+              className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600"
+            >
+              この位置を適用
+            </button>
+          </div>
+        </div>
+      </ResponsiveDialog>
     </div>
   );
 }

@@ -48,7 +48,7 @@ export default async function EntryByDatePage({
   const chatThread = entry.chatThreads[0];
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-6">
+    <div className="mx-auto w-full px-4 py-6 md:max-w-2xl lg:max-w-6xl">
       <header className="max-w-2xl">
         <Link href="/today" className="text-sm text-emerald-700 hover:underline dark:text-emerald-400">
           ← 今日
@@ -62,9 +62,9 @@ export default async function EntryByDatePage({
         )}
       </header>
 
-      <div className="mt-6 grid grid-cols-1 gap-8 lg:grid-cols-12 lg:items-start lg:gap-10">
-        <div className="order-1 min-h-0 lg:col-span-7">
-          <div className="lg:sticky lg:top-4 lg:z-10">
+      <div className="mt-6 grid grid-cols-1 gap-8 md:grid-cols-12 md:items-start md:gap-8 lg:gap-10">
+        <div className="order-1 min-h-0 md:col-span-7">
+          <div className="md:sticky md:top-4 md:z-10 lg:sticky lg:top-4 lg:z-10">
             <EntryChat
               key={`${entry.id}-${chatThread?.id ?? "new"}-${chatThread?.messages.length ?? 0}`}
               entryId={entry.id}
@@ -81,7 +81,7 @@ export default async function EntryByDatePage({
           </div>
         </div>
 
-        <div className="order-2 space-y-6 lg:col-span-5">
+        <div className="order-2 space-y-6 md:col-span-5 lg:col-span-5">
           <article>
             <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">本文</h2>
             <pre className="mt-2 whitespace-pre-wrap rounded-2xl border border-zinc-200 bg-zinc-50/80 p-4 text-sm text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-100">

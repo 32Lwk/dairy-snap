@@ -20,3 +20,11 @@ export function formatHmTokyo(date: Date = new Date()): string {
   }).format(date);
   return s;
 }
+
+/** True if `s` is a real calendar day in Asia/Tokyo (YYYY-MM-DD). */
+export function isValidYmdTokyo(s: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const dt = new Date(`${s}T12:00:00+09:00`);
+  if (Number.isNaN(dt.getTime())) return false;
+  return formatYmdTokyo(dt) === s;
+}
