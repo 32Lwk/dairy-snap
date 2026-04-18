@@ -3,37 +3,15 @@ import Google from "next-auth/providers/google";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import type { JWT } from "next-auth/jwt";
 import { env } from "@/env";
+import { emailMatchesAllowlist } from "@/lib/access-control";
 import { prisma } from "@/server/db";
 
-function normalizeEmail(email: string) {
-  return email.trim().toLowerCase();
-}
-
-function parseAllowedEmails(value: string) {
-  return new Set(
-    value
-      .split(",")
-      .map((x) => normalizeEmail(x))
-      .filter(Boolean),
-  );
-}
-
-function getAllowedEmails() {
-  return parseAllowedEmails(env.ALLOWED_EMAILS ?? "");
-}
-
 async function syncAllowlistFlag(userId: string, email: string | null | undefined) {
-  const normalized = email ? normalizeEmail(email) : null;
-  if (!normalized) return;
+  if (!email?.trim()) return;
   await prisma.user.update({
     where: { id: userId },
-    data: { isAllowed: getAllowedEmails().has(normalized) },
+    data: { isAllowed: emailMatchesAllowlist(email) },
   });
-}
-
-function allowlistAllowsEmail(email: string | null | undefined) {
-  const normalized = email ? normalizeEmail(email) : null;
-  return Boolean(normalized && getAllowedEmails().has(normalized));
 }
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
@@ -66,17 +44,18 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         // isAllowed は ALLOWED_EMAILS と同じルールで決める（JWT 内の余計な Prisma読み取りを避け、失敗時もログインが Configuration に化けにくくする）
         token.sub = user.id;
         token.id = user.id;
-        token.isAllowed = allowlistAllowsEmail(user.email);
+        token.isAllowed = emailMatchesAllowlist(user.email);
         if (user.email) token.email = user.email;
         void syncAllowlistFlag(user.id, user.email).catch((err) => {
           console.error("[auth] syncAllowlistFlag (jwt)", err);
         });
-      }
-      if (trigger === "update" && session && typeof session === "object") {
+      } else if (trigger === "update" && session && typeof session === "object") {
         const s = session as { isAllowed?: boolean };
         if (typeof s.isAllowed === "boolean") {
           token.isAllowed = s.isAllowed;
         }
+      } else if (typeof token.email === "string" && token.email.length > 0) {
+        token.isAllowed = emailMatchesAllowlist(token.email);
       }
       return token;
     },

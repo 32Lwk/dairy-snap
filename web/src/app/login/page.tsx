@@ -1,4 +1,5 @@
 import { AuthSessionProvider } from "@/components/auth-session-provider";
+import { isAllowlistOpenAccess } from "@/lib/access-control";
 import { GoogleSignInButton } from "./google-sign-in-button";
 
 export default async function LoginPage({
@@ -9,6 +10,7 @@ export default async function LoginPage({
   const sp = await searchParams;
   const next = sp.next ?? "/";
   const sessionMismatch = sp.error === "session_mismatch";
+  const openToAllGoogle = isAllowlistOpenAccess();
 
   return (
     <div className="flex flex-1 items-center justify-center bg-zinc-50 px-6 py-16 dark:bg-black">
@@ -23,7 +25,9 @@ export default async function LoginPage({
           </p>
         ) : (
           <p className="mt-2 text-sm leading-6 text-zinc-600 dark:text-zinc-400">
-            個人用の日記です。ログイン後、許可されていないアカウントは利用できません。
+            {openToAllGoogle
+              ? "Google アカウントでログインすると利用できます。"
+              : "個人用の日記です。ログイン後、許可リストに含まれないアカウントは利用できません。"}
           </p>
         )}
 
