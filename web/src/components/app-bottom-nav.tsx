@@ -16,6 +16,9 @@ const items = [
 
 export function AppBottomNav() {
   const pathname = usePathname() ?? "";
+  const navItems = pathname.startsWith("/calendar")
+    ? items.filter((item) => item.href !== "/search")
+    : items;
 
   return (
     <nav
@@ -23,7 +26,7 @@ export function AppBottomNav() {
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
       <div className="mx-auto flex max-w-lg items-stretch justify-around gap-1 px-2 py-1.5 lg:max-w-6xl lg:gap-2 lg:px-6">
-        {items.map((item) => {
+        {navItems.map((item) => {
           const active = item.match(pathname);
           return (
             <Link

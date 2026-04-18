@@ -16,14 +16,16 @@ export default async function SettingsPage() {
   const cal = await getCalendarConnectionSummary(r.user.id);
 
   return (
-    <div className="mx-auto w-full max-w-lg px-4 pb-10 pt-6 sm:px-6 sm:pt-8 md:max-w-3xl md:pb-12 lg:max-w-4xl lg:px-10 lg:pt-10 xl:max-w-5xl">
-      <header className="border-b border-zinc-200/90 pb-6 dark:border-zinc-800 lg:pb-8">
-        <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50 lg:text-3xl">
-          設定
-        </h1>
-        <p className="mt-2 max-w-3xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400 lg:text-base">
-          暗号化モード・AI 上限・プロンプト版の参照（MVP）
-        </p>
+    <div className="mx-auto w-full max-w-lg px-4 pb-10 pt-[calc(7.5rem+env(safe-area-inset-top,0px))] sm:px-6 md:max-w-3xl md:pb-12 md:pt-[calc(8rem+env(safe-area-inset-top,0px))] lg:max-w-4xl lg:px-10 xl:max-w-5xl">
+      <header className="fixed left-0 right-0 top-0 z-30 border-b border-zinc-200/90 bg-white/95 backdrop-blur-md dark:border-zinc-800/90 dark:bg-zinc-950/95">
+        <div className="mx-auto w-full max-w-lg px-4 pb-6 pt-[max(1rem,env(safe-area-inset-top))] sm:px-6 md:max-w-3xl lg:max-w-4xl lg:px-10 lg:pb-8 xl:max-w-5xl">
+          <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50 lg:text-3xl">
+            設定
+          </h1>
+          <p className="mt-2 max-w-3xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400 lg:text-base">
+            暗号化モード・AI 上限・プロンプト版の参照（MVP）
+          </p>
+        </div>
       </header>
 
       <section className="mt-8 rounded-2xl border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/40 sm:p-5 lg:mt-10 lg:p-6">

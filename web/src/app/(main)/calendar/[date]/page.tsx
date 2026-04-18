@@ -76,7 +76,7 @@ export default async function CalendarByDatePage({
   const nextYm = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-6 md:max-w-2xl lg:max-w-3xl">
+    <div className="mx-auto max-w-3xl px-4 pb-6 pt-[calc(4.5rem+env(safe-area-inset-top,0px))] md:max-w-2xl md:pt-[calc(4.75rem+env(safe-area-inset-top,0px))] lg:max-w-3xl">
       <CalendarClient
         ym={ym}
         prevYm={prevYm}

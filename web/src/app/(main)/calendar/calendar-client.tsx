@@ -198,6 +198,7 @@ export function CalendarClient(props: {
   const settingsLoadGenRef = useRef(0);
 
   const router = useRouter();
+  const pathname = usePathname() ?? "";
   const searchParams = useSearchParams();
   const [calendarView, setCalendarView] = useState<CalendarViewMode>("grid");
 
@@ -793,32 +794,48 @@ export function CalendarClient(props: {
 
   return (
     <>
-      <header className="mb-6 flex items-center justify-between gap-3">
-        <h1 className="min-w-0 text-2xl font-bold text-zinc-900 dark:text-zinc-50">カレンダー</h1>
-        <button
-          type="button"
-          onClick={() => setSettingsOpen(true)}
-          className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-700 shadow-sm transition-colors hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:border-zinc-600 dark:hover:bg-zinc-900"
-          aria-expanded={settingsOpen}
-          aria-haspopup="dialog"
-          aria-controls="calendar-display-settings-dialog"
-          aria-label="表示・分類設定を開く"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 20 20"
-            fill="currentColor"
-            className="h-4 w-4 text-zinc-500 dark:text-zinc-400"
-            aria-hidden
-          >
-            <path
-              fillRule="evenodd"
-              d="M8.34 1.804A1 1 0 019.32 1h1.36a1 1 0 01.98.804l.295 1.473c.497.144.971.342 1.416.587l1.25-.834a1 1 0 011.262.125l.962.962a1 1 0 01.125 1.262l-.834 1.25c.245.445.443.919.587 1.416l1.473.294a1 1 0 01.804.98v1.361a1 1 0 01-.804.98l-1.473.295a6.95 6.95 0 01-.587 1.416l.834 1.25a1 1 0 01-1.262.125l-.962-.962a6.95 6.95 0 01-1.416.587l-.294 1.473a1 1 0 01-.98.804H9.32a1 1 0 01-.98-.804l-.295-1.473a6.95 6.95 0 01-1.416-.587l-1.25.834a1 1 0 01-1.262-.125l-.962-.962a1 1 0 01-.125-1.262l.834-1.25a6.95 6.95 0 01-.587-1.416l-1.473-.294A1 1 0 011 10.68V9.32a1 1 0 01.804-.98l1.473-.295c.144-.497.342-.971.587-1.416l-.834-1.25a1 1 0 01.125-1.262l.962-.962A1 1 0 015.38 3.03l1.25.834a6.95 6.95 0 011.416-.587l.294-1.473zM13 10a3 3 0 11-6 0 3 3 0 016 0z"
-              clipRule="evenodd"
-            />
-          </svg>
-          <span className="hidden sm:inline">設定</span>
-        </button>
+      <header className="fixed left-0 right-0 top-0 z-30 border-b border-zinc-200/90 bg-white/95 backdrop-blur-md dark:border-zinc-800/90 dark:bg-zinc-950/95">
+        <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] md:max-w-2xl lg:max-w-3xl">
+          <h1 className="min-w-0 flex-1 truncate text-2xl font-bold text-zinc-900 dark:text-zinc-50">
+            カレンダー
+          </h1>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-700 shadow-sm transition-colors hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:border-zinc-600 dark:hover:bg-zinc-900"
+              aria-expanded={settingsOpen}
+              aria-haspopup="dialog"
+              aria-controls="calendar-display-settings-dialog"
+              aria-label="表示・分類設定を開く"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                className="h-4 w-4 text-zinc-500 dark:text-zinc-400"
+                aria-hidden
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M8.34 1.804A1 1 0 019.32 1h1.36a1 1 0 01.98.804l.295 1.473c.497.144.971.342 1.416.587l1.25-.834a1 1 0 011.262.125l.962.962a1 1 0 01.125 1.262l-.834 1.25c.245.445.443.919.587 1.416l1.473.294a1 1 0 01.804.98v1.361a1 1 0 01-.804.98l-1.473.295a6.95 6.95 0 01-.587 1.416l.834 1.25a1 1 0 01-1.262.125l-.962-.962a6.95 6.95 0 01-1.416.587l-.294 1.473a1 1 0 01-.98.804H9.32a1 1 0 01-.98-.804l-.295-1.473a6.95 6.95 0 01-1.416-.587l-1.25.834a1 1 0 01-1.262-.125l-.962-.962a1 1 0 01-.125-1.262l.834-1.25a6.95 6.95 0 01-.587-1.416l-1.473-.294A1 1 0 011 10.68V9.32a1 1 0 01.804-.98l1.473-.295c.144-.497.342-.971.587-1.416l-.834-1.25a1 1 0 01.125-1.262l.962-.962A1 1 0 015.38 3.03l1.25.834a6.95 6.95 0 011.416-.587l.294-1.473zM13 10a3 3 0 11-6 0 3 3 0 016 0z"
+                  clipRule="evenodd"
+                />
+              </svg>
+              <span className="hidden sm:inline">設定</span>
+            </button>
+            <Link
+              href="/search"
+              className={`inline-flex h-10 items-center justify-center rounded-xl border px-3 text-sm font-medium shadow-sm transition-colors ${
+                pathname.startsWith("/search")
+                  ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900"
+                  : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:border-zinc-600 dark:hover:bg-zinc-900"
+              }`}
+            >
+              検索
+            </Link>
+          </div>
+        </div>
       </header>
 
       <div className="mt-2 flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-8">
