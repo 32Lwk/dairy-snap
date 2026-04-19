@@ -694,7 +694,7 @@ git log -1 --oneline origin/main
 | 04-17 | 5 | 認証（proxy/secureCookie）、MAS メモリ設定 |
 | 04-18 | 5 | レスポンシブ・Playwright、access-control |
 | 04-19 | 10 | 統一検索、オーケストレーター、Apple/Photos、Safari 修正 |
-| 04-20 | 5 | セキュリティレビュー、Plutchik、ローカル GCal、Photos、日記 UI、CHANGELOG 全面拡張 |
+| 04-20 | 複数 | セキュリティレビュー、Plutchik、ローカル GCal、Photos、日記 UI、および同日の CHANGELOG 反復更新 |
 
 ---
 
