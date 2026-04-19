@@ -37,6 +37,8 @@ export default async function proxy(req: NextRequest) {
   const isApi = nextUrl.pathname.startsWith("/api/");
   const isLogin = nextUrl.pathname === "/login";
   const isForbidden = nextUrl.pathname === "/forbidden";
+  const isSessionMismatchRecovery =
+    isLogin && nextUrl.searchParams.get("error") === "session_mismatch";
   const isOnboarding =
     nextUrl.pathname === "/onboarding" || nextUrl.pathname.startsWith("/onboarding/");
   const isAccountMeApi = nextUrl.pathname === "/api/account/me" && req.method === "GET";
@@ -72,11 +74,11 @@ export default async function proxy(req: NextRequest) {
     }
   }
 
-  if (isAuthed && !isAllowed && isLogin) {
+  if (isAuthed && !isAllowed && isLogin && !isSessionMismatchRecovery) {
     return NextResponse.redirect(new URL("/onboarding", nextUrl));
   }
 
-  if (isAuthed && isAllowed && isLogin) {
+  if (isAuthed && isAllowed && isLogin && !isSessionMismatchRecovery) {
     return NextResponse.redirect(new URL("/today", nextUrl));
   }
 
