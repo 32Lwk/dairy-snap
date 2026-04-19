@@ -13,6 +13,8 @@ const _env = createEnv({
     AUTH_DEBUG: z.string().optional(),
     AUTH_GOOGLE_ID: z.string().min(1),
     AUTH_GOOGLE_SECRET: z.string().min(1),
+    AUTH_APPLE_ID: z.string().min(1).optional(),
+    AUTH_APPLE_SECRET: z.string().min(1).optional(),
     /**
      * open: any Google user who signs in is allowed (ALLOWED_EMAILS ignored).
      * allowlist: comma-separated ALLOWED_EMAILS, or * / ALL for everyone (legacy).
@@ -35,6 +37,8 @@ const _env = createEnv({
     AUTH_DEBUG: process.env.AUTH_DEBUG,
     AUTH_GOOGLE_ID: process.env.AUTH_GOOGLE_ID,
     AUTH_GOOGLE_SECRET: process.env.AUTH_GOOGLE_SECRET,
+    AUTH_APPLE_ID: process.env.AUTH_APPLE_ID,
+    AUTH_APPLE_SECRET: process.env.AUTH_APPLE_SECRET,
     AUTH_ACCESS_MODE: process.env.AUTH_ACCESS_MODE,
     ALLOWED_EMAILS: process.env.ALLOWED_EMAILS,
     DATABASE_URL: process.env.DATABASE_URL,

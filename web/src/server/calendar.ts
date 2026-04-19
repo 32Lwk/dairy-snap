@@ -463,17 +463,29 @@ export async function getCalendarConnectionSummary(userId: string): Promise<{
   hasGoogleAccount: boolean;
   hasRefreshToken: boolean;
   hasCalendarReadonlyScope: boolean;
+  hasGooglePhotosPickerScope: boolean;
+  hasAppleAccount: boolean;
+  appleAuthConfigured: boolean;
   scopes: string[];
 }> {
-  const account = await prisma.account.findFirst({
-    where: { userId, provider: "google" },
-    select: { refresh_token: true, scope: true },
-  });
-  const scopes = account?.scope?.split(/\s+/).filter(Boolean) ?? [];
+  const [googleAccount, appleAccount] = await Promise.all([
+    prisma.account.findFirst({
+      where: { userId, provider: "google" },
+      select: { refresh_token: true, scope: true },
+    }),
+    prisma.account.findFirst({
+      where: { userId, provider: "apple" },
+      select: { id: true },
+    }),
+  ]);
+  const scopes = googleAccount?.scope?.split(/\s+/).filter(Boolean) ?? [];
   return {
-    hasGoogleAccount: Boolean(account),
-    hasRefreshToken: Boolean(account?.refresh_token),
+    hasGoogleAccount: Boolean(googleAccount),
+    hasRefreshToken: Boolean(googleAccount?.refresh_token),
     hasCalendarReadonlyScope: scopes.includes(CALENDAR_SCOPE),
+    hasGooglePhotosPickerScope: scopes.includes("https://www.googleapis.com/auth/photospicker.mediaitems.readonly"),
+    hasAppleAccount: Boolean(appleAccount),
+    appleAuthConfigured: Boolean(process.env.AUTH_APPLE_ID && process.env.AUTH_APPLE_SECRET),
     scopes,
   };
 }

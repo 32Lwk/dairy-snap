@@ -67,6 +67,7 @@ model User {
   tags           Tag[]
   gcalEventCache GoogleCalendarEventCache[]
   gcalSyncState  GoogleCalendarSyncState[]
+  googlePhotoSelections GooglePhotoSelection[]
   memoryShortTerms MemoryShortTerm[]
 
   @@map("users")
@@ -136,6 +137,7 @@ model DailyEntry {
   user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   appendEvents EntryAppendEvent[]
   images       Image[]
+  googlePhotoSelections GooglePhotoSelection[]
   entryTags    EntryTag[]
   chatThreads  ChatThread[]
   aiArtifacts  AIArtifact[]
@@ -181,6 +183,35 @@ model Image {
 
   @@index([entryId])
   @@map("images")
+}
+
+model GooglePhotoSelection {
+  id String @id @default(cuid())
+
+  userId       String
+  entryId      String?
+  entryDateYmd String
+
+  providerSessionId String?
+  mediaItemId       String
+  baseUrl           String
+  productUrl        String?
+  mimeType          String?
+  filename          String?
+  width             Int?
+  height            Int?
+  creationTime      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user  User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entry DailyEntry? @relation(fields: [entryId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, entryDateYmd, mediaItemId])
+  @@index([userId, entryDateYmd])
+  @@index([entryId])
+  @@map("google_photo_selections")
 }
 
 model Tag {

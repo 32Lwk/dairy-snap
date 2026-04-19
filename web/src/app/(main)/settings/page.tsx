@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getResolvedAuthUser } from "@/lib/server/resolved-auth-user";
 import { getCalendarConnectionSummary } from "@/server/calendar";
+import { AppleReconnectButton } from "./apple-reconnect";
 import { CalendarReconnectButton } from "./calendar-reconnect";
 import { SettingsForm } from "./settings-form";
 
@@ -44,10 +45,31 @@ export default async function SettingsPage() {
                 カレンダー読み取りスコープ:{" "}
                 {cal.hasCalendarReadonlyScope ? "付与済み" : "\u672a\u78ba\u8a8d\uff08\u518d\u9023\u643a\u63a8\u5968\uff09"}
               </li>
+              <li>
+                Google Photos Picker スコープ: {cal.hasGooglePhotosPickerScope ? "付与済み" : "未確認（再連携推奨）"}
+              </li>
             </ul>
           </div>
           <div className="mt-5 shrink-0 border-t border-zinc-200/80 pt-5 dark:border-zinc-700/80 lg:mt-0 lg:w-72 lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0 xl:w-80">
             <CalendarReconnectButton />
+          </div>
+        </div>
+      </section>
+
+      <section className="mt-6 w-full min-w-0 rounded-2xl border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/40 sm:p-5 lg:mt-8 lg:p-6">
+        <div className="lg:flex lg:items-start lg:gap-10 xl:gap-12">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50 lg:text-base">Apple 連携</h2>
+            <p className="mt-1 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400 lg:text-sm">
+              Apple サインイン状態を管理します。カレンダー取得は Apple 側仕様のため、別途接続設定（CalDAV 等）が必要です。
+            </p>
+            <ul className="mt-3 space-y-1.5 text-xs text-zinc-700 dark:text-zinc-300 lg:text-sm">
+              <li>Apple OAuth 設定: {cal.appleAuthConfigured ? "有効" : "未設定（環境変数が必要）"}</li>
+              <li>Apple アカウント連携: {cal.hasAppleAccount ? "あり" : "なし"}</li>
+            </ul>
+          </div>
+          <div className="mt-5 shrink-0 border-t border-zinc-200/80 pt-5 dark:border-zinc-700/80 lg:mt-0 lg:w-72 lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0 xl:w-80">
+            <AppleReconnectButton />
           </div>
         </div>
       </section>
