@@ -506,8 +506,9 @@ git log -1 --oneline origin/main
 | `22ba67d` | docs: CHANGELOG に反映コミットハッシュを追記 |
 | `2df2f2d` | docs: CHANGELOG のコミット参照を明確化 |
 | `58fdecb` | docs: CHANGELOG のコミット記述を先端非依存に整理 |
+| `aa2bb50` | docs: CHANGELOG を全日程で詳細化（日別・DB・API・運用） |
 
-機能の本体は **`c73490b`**。同日の `22ba67d`〜`58fdecb` は **本 CHANGELOG のメタ情報整備のみ**。
+機能の本体は **`c73490b`**。`22ba67d`〜`58fdecb` は **本 CHANGELOG のメタ情報整備**、`aa2bb50` は **CHANGELOG 本文の全面拡張**（本リリースノート相当）。
 
 ### `c73490b` — 全体像（規模感）
 
@@ -667,10 +668,11 @@ git log -1 --oneline origin/main
 
 ---
 
-### 同日のドキュメントのみコミット（`22ba67d`〜`58fdecb`）
+### 同日のドキュメント系コミット（`22ba67d`〜`aa2bb50`）
 
-- CHANGELOG 冒頭のコミット参照の書き方を調整し、**常に最新先端 SHA に追従する必要がない**読み方に変更。
-- 機能コードへの影響なし。
+- `22ba67d`〜`58fdecb`: CHANGELOG 冒頭のコミット参照の書き方を調整し、**常に最新先端 SHA に追従する必要がない**読み方に変更。
+- `aa2bb50`: 本ファイルを **2026-04-02〜04-20 の全日程**で再構成（日別詳細、マイグレーション列レベル、API 表、運用チェックリスト、空日の明示）。
+- いずれも **アプリの実行時挙動には直接影響しない**（ドキュメントのみ）。
 
 ---
 
@@ -690,7 +692,7 @@ git log -1 --oneline origin/main
 | 04-17 | 5 | 認証（proxy/secureCookie）、MAS メモリ設定 |
 | 04-18 | 5 | レスポンシブ・Playwright、access-control |
 | 04-19 | 10 | 統一検索、オーケストレーター、Apple/Photos、Safari 修正 |
-| 04-20 | 4 | セキュリティレビュー、Plutchik、ローカル GCal、Photos、日記 UI、CHANGELOG 整備 |
+| 04-20 | 5 | セキュリティレビュー、Plutchik、ローカル GCal、Photos、日記 UI、CHANGELOG 全面拡張 |
 
 ---
 
