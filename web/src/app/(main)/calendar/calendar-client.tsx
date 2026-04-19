@@ -66,6 +66,7 @@ type CalendarAutoFixNotice = {
   headline: string;
   body: string;
 };
+type DayPhotoItem = { id: string; thumbUrl: string; displayUrl: string; filename: string | null; productUrl: string | null };
 
 /** Individual-fix list window (matches server/calendar.ts sync range). */
 const RECENT_INDIVIDUAL_FIX_PAST_DAYS = 90;
@@ -220,6 +221,7 @@ export function CalendarClient(props: {
   const searchParams = useSearchParams();
   const dayModalOpen = searchParams.get("dayModal") === "1";
   const [calendarView, setCalendarView] = useState<CalendarViewMode>("grid");
+  const [dayPhotos, setDayPhotos] = useState<DayPhotoItem[]>([]);
 
   useEffect(() => {
     const q = parseCalendarViewQuery(searchParams.get("view"));
@@ -230,6 +232,27 @@ export function CalendarClient(props: {
     const stored = readCalendarViewFromStorage();
     if (stored) setCalendarView(stored);
   }, [searchParams]);
+
+  useEffect(() => {
+    if (!dayModalOpen || !props.selectedDateYmd) {
+      setDayPhotos([]);
+      return;
+    }
+    let alive = true;
+    void fetch(`/api/google-photos/items?date=${props.selectedDateYmd}`, { cache: "no-store" })
+      .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
+      .then(({ ok, j }) => {
+        if (!alive || !ok) return;
+        const items = Array.isArray((j as { items?: unknown[] }).items) ? (j as { items: DayPhotoItem[] }).items : [];
+        setDayPhotos(items);
+      })
+      .catch(() => {
+        if (alive) setDayPhotos([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [dayModalOpen, props.selectedDateYmd]);
 
   const commitCalendarView = useCallback(
     (next: CalendarViewMode) => {
@@ -1712,6 +1735,26 @@ export function CalendarClient(props: {
                   ))}
                 </ul>
               )}
+              {dayPhotos.length > 0 ? (
+                <section className="mt-5 rounded-xl border border-zinc-200 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+                  <h3 className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">思い出写真（Google Photos）</h3>
+                  <div className="mt-2 grid grid-cols-3 gap-2">
+                    {dayPhotos.slice(0, 9).map((p) => (
+                      <a
+                        key={p.id}
+                        href={p.productUrl || p.displayUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block aspect-square overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-700"
+                        title={p.filename ?? undefined}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={p.thumbUrl} alt={p.filename ?? "Google Photos"} className="h-full w-full object-cover" />
+                      </a>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
               <div className="mt-6 flex flex-col gap-2 border-t border-zinc-200 pt-4 dark:border-zinc-800">
                 <Link
                   href={`/entries/${props.selectedDateYmd}`}
@@ -1915,5 +1958,4 @@ function CalendarDotColorPicker({
     </div>
   );
 }
-
 

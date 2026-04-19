@@ -1,4 +1,5 @@
 import NextAuth from "next-auth";
+import Apple from "next-auth/providers/apple";
 import Google from "next-auth/providers/google";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import type { JWT } from "next-auth/jwt";
@@ -29,10 +30,18 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         params: {
           access_type: "offline",
           scope:
-            "openid email profile https://www.googleapis.com/auth/calendar.readonly",
+            "openid email profile https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/photospicker.mediaitems.readonly",
         },
       },
     }),
+    ...(env.AUTH_APPLE_ID && env.AUTH_APPLE_SECRET
+      ? [
+          Apple({
+            clientId: env.AUTH_APPLE_ID,
+            clientSecret: env.AUTH_APPLE_SECRET,
+          }),
+        ]
+      : []),
   ],
   callbacks: {
     async signIn({ user }) {
