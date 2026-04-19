@@ -6,6 +6,8 @@ import type { ChatCompletionChunk } from "openai/resources";
 import { getOpenAI } from "@/lib/ai/openai";
 import {
   chatCompletionOutputTokenLimit,
+  getAgentSocialMiniChatFallbackModel,
+  getAgentSocialMiniChatModel,
   getOrchestratorChatFallbackModel,
   getOrchestratorChatModel,
   getOrchestratorOpeningChatFallbackModel,
@@ -27,9 +29,17 @@ import { formatYmdTokyo } from "@/lib/time/tokyo";
 import {
   buildReflectiveOpeningSystemInstruction,
   diffCalendarDaysTokyo,
+  formatOrchestratorConversationScopeBlock,
   formatOrchestratorScheduleGroundingBlock,
   formatOrchestratorTemporalBlock,
+  ORCHESTRATOR_DAY_CALENDAR_HEADING,
 } from "@/lib/time/entry-temporal-context";
+import {
+  formatOrchestratorDiaryProposalGateBlock,
+  formatOrchestratorEventSceneFollowupBlock,
+  getDiaryProposalMinUserTurns,
+  getEventSceneFollowupIntensity,
+} from "@/lib/reflective-chat-diary-nudge-rules";
 import { loadAgentPrompt } from "@/server/agents/utils";
 import { getWeatherContext, formatWeatherForPrompt } from "@/server/agents/weather-tool";
 import { runSchoolAgent } from "@/server/agents/school-agent";
@@ -50,8 +60,15 @@ const OPENING_OMIT_TOOLS = new Set([
   "query_calendar_social",
 ]);
 
+/** Opening chat user line: avoids a lone "." which often elicits meta / "system will…" preambles. */
+const OPENING_TURN_USER_MESSAGE = "Begin the opening turn.";
+/** Sub-agents during opening: keep a neutral non-empty cue (some models echo "." oddly). */
+const OPENING_TOOL_USER_FALLBACK = " ";
+
 const ORCHESTRATOR_TOOL_ROUND_MAX_TOKENS = 2048;
 const ORCHESTRATOR_STREAM_MAX_TOKENS = 2048;
+/** 開口の最終ストリーム: 短文でも `max_completion_tokens` が推論と表示で割られるモデル向けに余裕を確保 */
+const ORCHESTRATOR_STREAM_MAX_TOKENS_OPENING = 4096;
 const DIARY_BODY_MAX_CHARS_ORCHESTRATOR = 12000;
 
 // --- MBTI routing hints ---
@@ -120,7 +137,7 @@ async function loadLongTermContext(userId: string): Promise<string> {
   return lines.map((l) => `- ${l}`).join("\n");
 }
 
-// ─── 開口用カレンダー要約 ─────────────────────────────────────────────────
+// ─── 対象日カレンダー要約（システム注入・全会話ターン共通）────────────────────
 
 function hhmmTokyoBrief(isoLike: string): string {
   if (!isoLike || /^\d{4}-\d{2}-\d{2}$/.test(isoLike)) return "";
@@ -144,7 +161,8 @@ function formatOpeningDayCalendarBrief(events: CalendarEventBrief[]): string {
       const t = hhmmTokyoBrief(ev.start);
       const when = t || "終日";
       const loc = ev.location?.trim() ? ` @${ev.location.trim()}` : "";
-      return `- ${when} ${ev.title}${loc}`;
+      const title = ev.title?.trim() || "（タイトルなし）";
+      return `- ${when} ${title}${loc}`;
     })
     .join("\n");
 }
@@ -238,6 +256,10 @@ export type OrchestratorParams = {
   isOpening: boolean;
   encryptionMode: string;
   currentBody: string;
+  /** Normal chat only: user message count including this send (for diary-draft suggestion gate). */
+  reflectiveUserTurnIncludingCurrent?: number;
+  /** 短文だけのターン: mini モデル＋ツールなしで軽量応答 */
+  preferMiniOrchestrator?: boolean;
 };
 
 export type OrchestratorResult = {
@@ -267,11 +289,18 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     historyMessages,
     isOpening,
     currentBody,
+    reflectiveUserTurnIncludingCurrent,
+    preferMiniOrchestrator,
   } = params;
 
   const todayYmd = formatYmdTokyo(new Date());
-  const primaryModel = isOpening ? getOrchestratorOpeningChatModel() : getOrchestratorChatModel();
-  const fallbackModel = isOpening ? getOrchestratorOpeningChatFallbackModel() : getOrchestratorChatFallbackModel();
+  const useMini = Boolean(preferMiniOrchestrator) && !isOpening;
+  let primaryModel = isOpening ? getOrchestratorOpeningChatModel() : getOrchestratorChatModel();
+  let fallbackModel = isOpening ? getOrchestratorOpeningChatFallbackModel() : getOrchestratorChatFallbackModel();
+  if (useMini) {
+    primaryModel = getAgentSocialMiniChatModel();
+    fallbackModel = getAgentSocialMiniChatFallbackModel();
+  }
 
   const [userRow, longTermContext, shortTermContext, weather, calendarRes] = await Promise.all([
     prisma.user.findUnique({
@@ -317,6 +346,15 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
   const mbtiHint = buildMbtiHint(mbti, loveMbti);
   const corrections = profile?.aiCorrections ?? [];
 
+  const diaryProposalMinUserTurns = getDiaryProposalMinUserTurns({
+    aiDepthLevel: profile?.aiDepthLevel,
+    aiChatTone: profile?.aiChatTone,
+  });
+  const eventFollowupIntensity = getEventSceneFollowupIntensity({
+    aiDepthLevel: profile?.aiDepthLevel,
+    aiChatTone: profile?.aiChatTone,
+  });
+
   const persona: PersonaContext = {
     instructions: personaInstructions,
     avoidTopics,
@@ -349,7 +387,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
       : `## エントリ日（${formatYmdWithTokyoWeekday(entryDateYmd)}）の天気`;
 
   const baseSystem = loadAgentPrompt("orchestrator");
-  const systemBlocks = [
+  let systemBlocks = [
     baseSystem,
     "",
     "## ペルソナ指示（最優先で遵守）",
@@ -363,6 +401,16 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     formatOrchestratorTemporalBlock(entryDateYmd),
     "",
     formatOrchestratorScheduleGroundingBlock(),
+    "",
+    formatOrchestratorConversationScopeBlock(),
+    "",
+    !isOpening && typeof reflectiveUserTurnIncludingCurrent === "number"
+      ? formatOrchestratorDiaryProposalGateBlock({
+          userTurnsIncludingThis: reflectiveUserTurnIncludingCurrent,
+          minUserTurnsBeforeDiaryProposal: diaryProposalMinUserTurns,
+        })
+      : "",
+    !isOpening ? formatOrchestratorEventSceneFollowupBlock(eventFollowupIntensity) : "",
     "",
     weatherSectionTitle,
     weatherText,
@@ -381,7 +429,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     isOpening && openingRecommendedForPrompt.length > 0
       ? `## 推奨エージェント（開口時・参考）\n${openingRecommendedForPrompt.join(", ")}`
       : "",
-    calendarRes.ok ? `## その日の予定（カレンダー要約・開口用）\n${formatOpeningDayCalendarBrief(calendarRes.events)}` : "",
+    calendarRes.ok ? `${ORCHESTRATOR_DAY_CALENDAR_HEADING}\n${formatOpeningDayCalendarBrief(calendarRes.events)}` : "",
     "",
     !calendarAvailable
       ? "※ Google カレンダー未連携、またはトークン無効のためカレンダー系ツールは呼ばない。"
@@ -395,6 +443,15 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
   ]
     .filter(Boolean)
     .join("\n");
+
+  if (useMini) {
+    systemBlocks += [
+      "",
+      "## Brief-turn mode（軽量・低コスト）",
+      "このターンのユーザー発言は短い確認／依頼のみと判定されている。**ツールは一切呼ばない**（query_weather / query_* も不可）。",
+      "長文の日記草案はこの返答では書かず、**1〜3文**の自然な日本語で十分。必要ならユーザーに、右欄の「会話から草案を生成」で整形できることを**一文で**添えてよい。",
+    ].join("\n");
+  }
 
   let allowedTools = ORCHESTRATOR_TOOLS.filter((t) => {
     const name = t.function.name;
@@ -414,18 +471,22 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     allowedTools = allowedTools.filter((t) => !OPENING_OMIT_TOOLS.has(t.function.name));
   }
 
+  if (useMini) {
+    allowedTools = [];
+  }
+
   const openai = getOpenAI();
   const agentsUsed: string[] = [];
 
   const messages: ChatMsg[] = [{ role: "system", content: systemBlocks }, ...historyMessages];
 
   if (isOpening) {
-    messages.push({ role: "user", content: "." });
+    messages.push({ role: "user", content: OPENING_TURN_USER_MESSAGE });
   } else if (userMessage) {
     messages.push({ role: "user", content: userMessage });
   }
 
-  const toolUserFallback = isOpening ? "." : userMessage;
+  const toolUserFallback = isOpening ? OPENING_TOOL_USER_FALLBACK : userMessage;
 
   if (allowedTools.length > 0) {
     let loopCount = 0;
@@ -561,7 +622,10 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
         model,
         stream: true,
         messages: messages as Parameters<typeof openai.chat.completions.create>[0]["messages"],
-        ...chatCompletionOutputTokenLimit(model, ORCHESTRATOR_STREAM_MAX_TOKENS),
+        ...chatCompletionOutputTokenLimit(
+          model,
+          isOpening ? ORCHESTRATOR_STREAM_MAX_TOKENS_OPENING : ORCHESTRATOR_STREAM_MAX_TOKENS,
+        ),
       }),
   );
 

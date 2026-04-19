@@ -7,7 +7,7 @@ import { CalendarReconnectButton } from "./calendar-reconnect";
 import { SettingsForm } from "./settings-form";
 
 const CALENDAR_BODY =
-  "AI \u306e\u8cea\u554f\u6587\u8108\u3068\u300c\u4e88\u5b9a\u3092\u78ba\u8a8d\u300d\u306b\u4f7f\u3044\u307e\u3059\uff08\u672a\u676530\u65e5\u30fb\u8aad\u307f\u53d6\u308a\u306e\u307f\uff09\u3002\u518d\u30ed\u30b0\u30a4\u30f3\u3067 Google \u304c refresh_token \u3092\u8fd4\u3055\u306a\u3044\u5834\u5408\u3067\u3082\u3001\u65e2\u5b58\u30c8\u30fc\u30af\u30f3\u304c\u6d88\u3048\u306a\u3044\u3088\u3046\u88dc\u6b63\u3057\u3066\u3044\u307e\u3059\u3002\u53d6\u5f97\u3067\u304d\u306a\u3044\u3068\u304d\u306f\u4e0b\u306e\u518d\u9023\u643a\u3092\u8a66\u3057\u3066\u304f\u3060\u3055\u3044\u3002";
+  "AI の質問文脈と「予定を確認」に使います。カレンダー画面の日付モーダルから予定を編集するには、Google の再連携でイベント編集スコープ（calendar.events）が付与されている必要があります。再ログインで refresh_token が返らない場合でも、既存トークンが消えないよう補正しています。取得できないときは下の再連携を試してください。";
 
 export default async function SettingsPage() {
   const r = await getResolvedAuthUser();
@@ -43,7 +43,11 @@ export default async function SettingsPage() {
               <li>リフレッシュトークン: {cal.hasRefreshToken ? "保存済み" : "未保存（再連携が必要なことがあります）"}</li>
               <li>
                 カレンダー読み取りスコープ:{" "}
-                {cal.hasCalendarReadonlyScope ? "付与済み" : "\u672a\u78ba\u8a8d\uff08\u518d\u9023\u643a\u63a8\u5968\uff09"}
+                {cal.hasCalendarReadonlyScope ? "付与済み" : "未確認（再連携推奨）"}
+              </li>
+              <li>
+                カレンダー予定の編集スコープ（calendar.events）:{" "}
+                {cal.hasCalendarEventsWriteScope ? "付与済み" : "未付与（アプリ内で予定を編集する場合は再連携）"}
               </li>
               <li>
                 Google Photos Picker スコープ: {cal.hasGooglePhotosPickerScope ? "付与済み" : "未確認（再連携推奨）"}
@@ -69,7 +73,7 @@ export default async function SettingsPage() {
             </ul>
           </div>
           <div className="mt-5 shrink-0 border-t border-zinc-200/80 pt-5 dark:border-zinc-700/80 lg:mt-0 lg:w-72 lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0 xl:w-80">
-            <AppleReconnectButton />
+            <AppleReconnectButton disabled={!cal.appleAuthConfigured} hasAppleAccount={cal.hasAppleAccount} />
           </div>
         </div>
       </section>

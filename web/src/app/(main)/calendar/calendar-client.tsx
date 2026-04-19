@@ -9,7 +9,9 @@ import {
   readCalendarViewFromStorage,
   writeCalendarViewToStorage,
 } from "@/lib/calendar-view-persistence";
+import { PlutchikDominantChip } from "@/components/plutchik-dominant-chip";
 import { ResponsiveDialog } from "@/components/responsive-dialog";
+import { WeatherAmPmDisplay } from "@/components/weather-am-pm-display";
 import { SearchPanel } from "@/components/search-panel";
 import { CALENDAR_GRID_COLOR_PRESETS, GCAL_COLOR_MAP, resolveGcalEventColor } from "@/lib/gcal-event-color";
 import {
@@ -44,6 +46,7 @@ import {
 import { MonthList, invalidateMonthListEventsCache, peekMonthListEventsCache } from "./month-list";
 import { MonthGrid, invalidateMonthGridEventsCache, peekMonthEventsCache } from "./month-grid";
 import { UpcomingGoogleEvents } from "./upcoming-google-events";
+import { CalendarEventEditDialog } from "./calendar-event-edit-dialog";
 
 type EntryBrief = { entryDateYmd: string; title: string | null };
 type Ev = {
@@ -67,6 +70,11 @@ type CalendarAutoFixNotice = {
   body: string;
 };
 type DayPhotoItem = { id: string; thumbUrl: string; displayUrl: string; filename: string | null; productUrl: string | null };
+
+type CalendarWriteDialog =
+  | { kind: "closed" }
+  | { kind: "edit"; ev: Ev }
+  | { kind: "create" };
 
 /** Individual-fix list window (matches server/calendar.ts sync range). */
 const RECENT_INDIVIDUAL_FIX_PAST_DAYS = 90;
@@ -222,6 +230,15 @@ export function CalendarClient(props: {
   const dayModalOpen = searchParams.get("dayModal") === "1";
   const [calendarView, setCalendarView] = useState<CalendarViewMode>("grid");
   const [dayPhotos, setDayPhotos] = useState<DayPhotoItem[]>([]);
+  /** 日モーダル用（GET /api/entries?date= の画像・天気・主感情） */
+  const [dayModalDominantEmotion, setDayModalDominantEmotion] = useState<string | null>(null);
+  const [dayModalWeatherJson, setDayModalWeatherJson] = useState<unknown>(null);
+  const [calendarWriteDialog, setCalendarWriteDialog] = useState<CalendarWriteDialog>({ kind: "closed" });
+  const [localCalAddOpen, setLocalCalAddOpen] = useState(false);
+  const [localCalNameDraft, setLocalCalNameDraft] = useState("");
+  const [localCalAddBusy, setLocalCalAddBusy] = useState(false);
+  const [localCalAddErr, setLocalCalAddErr] = useState<string | null>(null);
+  const [canWriteGoogleCalendar, setCanWriteGoogleCalendar] = useState(false);
 
   useEffect(() => {
     const q = parseCalendarViewQuery(searchParams.get("view"));
@@ -236,18 +253,57 @@ export function CalendarClient(props: {
   useEffect(() => {
     if (!dayModalOpen || !props.selectedDateYmd) {
       setDayPhotos([]);
+      setDayModalDominantEmotion(null);
+      setDayModalWeatherJson(null);
       return;
     }
     let alive = true;
-    void fetch(`/api/google-photos/items?date=${props.selectedDateYmd}`, { cache: "no-store" })
+    void fetch(`/api/entries?date=${encodeURIComponent(props.selectedDateYmd)}`, { cache: "no-store" })
       .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
       .then(({ ok, j }) => {
-        if (!alive || !ok) return;
-        const items = Array.isArray((j as { items?: unknown[] }).items) ? (j as { items: DayPhotoItem[] }).items : [];
+        if (!alive) return;
+        if (!ok) {
+          setDayPhotos([]);
+          setDayModalDominantEmotion(null);
+          setDayModalWeatherJson(null);
+          return;
+        }
+        const entry = (j as {
+          entry?: {
+            id: string;
+            dominantEmotion?: string | null;
+            weatherJson?: unknown;
+            images?: { id: string }[];
+          } | null;
+        }).entry;
+        if (!entry?.id) {
+          setDayPhotos([]);
+          setDayModalDominantEmotion(null);
+          setDayModalWeatherJson(null);
+          return;
+        }
+        setDayModalDominantEmotion(typeof entry.dominantEmotion === "string" ? entry.dominantEmotion : null);
+        setDayModalWeatherJson(entry.weatherJson ?? null);
+        const imgs = entry.images;
+        if (!Array.isArray(imgs) || !imgs.length) {
+          setDayPhotos([]);
+          return;
+        }
+        const items: DayPhotoItem[] = imgs.map((i) => ({
+          id: i.id,
+          thumbUrl: `/api/images/${i.id}`,
+          displayUrl: `/api/images/${i.id}`,
+          filename: null,
+          productUrl: null,
+        }));
         setDayPhotos(items);
       })
       .catch(() => {
-        if (alive) setDayPhotos([]);
+        if (alive) {
+          setDayPhotos([]);
+          setDayModalDominantEmotion(null);
+          setDayModalWeatherJson(null);
+        }
       });
     return () => {
       alive = false;
@@ -331,6 +387,20 @@ export function CalendarClient(props: {
   }, [loadFullCalendarSettings]);
 
   useEffect(() => {
+    let alive = true;
+    void fetch("/api/calendar/status", { cache: "no-store", credentials: "same-origin" })
+      .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
+      .then(({ ok, j }) => {
+        if (!alive || !ok) return;
+        setCanWriteGoogleCalendar(Boolean((j as { hasCalendarEventsWriteScope?: boolean }).hasCalendarEventsWriteScope));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
     const onSync = (e: Event) => {
       const t = (e as CustomEvent<{ serverSyncToken?: string }>).detail?.serverSyncToken;
       void maybeRefreshCalendarSettings(typeof t === "string" && t.length > 0 ? t : undefined);
@@ -348,35 +418,36 @@ export function CalendarClient(props: {
     };
   }, [maybeRefreshCalendarSettings]);
 
-  useEffect(() => {
-    // classifier options (calendar list / colors) from cache
-    void (async () => {
-      const res = await fetch("/api/calendar/classifier-options", { cache: "no-store", credentials: "same-origin" });
-      const json = (await res.json().catch(() => ({}))) as unknown;
-      if (!res.ok) return;
-      if (!json || typeof json !== "object" || Array.isArray(json)) return;
-      const o = json as Record<string, unknown>;
-      const calendarsRaw = o.calendars;
-      const colorIdsRaw = o.colorIds;
-      const calendars = Array.isArray(calendarsRaw)
-        ? calendarsRaw
-            .filter((x): x is { calendarId: string; calendarName: string; calendarColorId: string } => {
-              if (!x || typeof x !== "object" || Array.isArray(x)) return false;
-              const r = x as Record<string, unknown>;
-              return (
-                typeof r.calendarId === "string" &&
-                typeof r.calendarName === "string" &&
-                typeof r.calendarColorId === "string"
-              );
-            })
-            .slice(0, 200)
-        : [];
-      const colorIds = Array.isArray(colorIdsRaw)
-        ? colorIdsRaw.filter((x): x is string => typeof x === "string" && x.length > 0).slice(0, 200)
-        : [];
-      setOpts({ calendars, colorIds });
-    })();
+  const reloadClassifierOptions = useCallback(async () => {
+    const res = await fetch("/api/calendar/classifier-options", { cache: "no-store", credentials: "same-origin" });
+    const json = (await res.json().catch(() => ({}))) as unknown;
+    if (!res.ok) return;
+    if (!json || typeof json !== "object" || Array.isArray(json)) return;
+    const o = json as Record<string, unknown>;
+    const calendarsRaw = o.calendars;
+    const colorIdsRaw = o.colorIds;
+    const calendars = Array.isArray(calendarsRaw)
+      ? calendarsRaw
+          .filter((x): x is { calendarId: string; calendarName: string; calendarColorId: string } => {
+            if (!x || typeof x !== "object" || Array.isArray(x)) return false;
+            const r = x as Record<string, unknown>;
+            return (
+              typeof r.calendarId === "string" &&
+              typeof r.calendarName === "string" &&
+              typeof r.calendarColorId === "string"
+            );
+          })
+          .slice(0, 200)
+      : [];
+    const colorIds = Array.isArray(colorIdsRaw)
+      ? colorIdsRaw.filter((x): x is string => typeof x === "string" && x.length > 0).slice(0, 200)
+      : [];
+    setOpts({ calendars, colorIds });
   }, []);
+
+  useEffect(() => {
+    void reloadClassifierOptions();
+  }, [reloadClassifierOptions]);
 
   const catOptions = useMemo(() => calendarOpeningCategoryOptions(opening), [opening]);
 
@@ -829,7 +900,33 @@ export function CalendarClient(props: {
     return t.length > 0 ? t : null;
   }, [props.entries, props.selectedDateYmd]);
 
+  const dayModalDiaryAside = useMemo(() => {
+    type Wj = {
+      kind?: string;
+      am?: { time?: string; weatherLabel?: string; temperatureC?: number | null; weatherCode?: number | null };
+      pm?: { time?: string; weatherLabel?: string; temperatureC?: number | null; weatherCode?: number | null };
+      date?: string;
+      dataSource?: "forecast" | "archive";
+      locationNote?: string;
+      weatherLabel?: string;
+      temperature_2m?: number;
+      period?: string;
+    };
+    const wj = dayModalWeatherJson as Wj | null;
+    const hasEmotion = Boolean((dayModalDominantEmotion ?? "").trim());
+    const hasAmPm = wj?.kind === "am_pm" && wj.am && wj.pm;
+    const hasLegacyWx = typeof wj?.weatherLabel === "string" && wj.weatherLabel.trim().length > 0;
+    return {
+      show: dayPhotos.length > 0 || hasEmotion || hasAmPm || hasLegacyWx,
+      wj,
+      hasAmPm,
+      hasLegacyWx,
+      hasEmotion,
+    };
+  }, [dayModalWeatherJson, dayModalDominantEmotion, dayPhotos.length]);
+
   const closeDayModal = useCallback(() => {
+    setCalendarWriteDialog({ kind: "closed" });
     const ymd = props.selectedDateYmd ?? `${props.ym}-01`;
     const sp = new URLSearchParams(searchParams.toString());
     sp.delete("dayModal");
@@ -887,7 +984,7 @@ export function CalendarClient(props: {
   return (
     <>
       <header className="fixed left-0 right-0 top-0 z-30 border-b border-zinc-200/90 bg-white/95 backdrop-blur-md dark:border-zinc-800/90 dark:bg-zinc-950/95">
-        <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] md:max-w-2xl lg:max-w-3xl">
+        <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] md:max-w-2xl lg:max-w-5xl xl:max-w-6xl">
           <h1 className="min-w-0 flex-1 truncate text-2xl font-bold leading-none text-zinc-900 dark:text-zinc-50">
             カレンダー
           </h1>
@@ -930,8 +1027,27 @@ export function CalendarClient(props: {
         </div>
       </header>
 
-      <div className="mt-2 flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-8">
-        <div className="order-2 min-w-0 space-y-4 lg:order-1 lg:w-full lg:max-w-xl lg:shrink-0">
+      <div className="mt-2 flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,3fr)_minmax(0,7fr)] lg:items-start lg:gap-8">
+        <div className="min-w-0 space-y-4 lg:min-h-0">
+          <UpcomingGoogleEvents
+            key="upcoming-google-events"
+            filter={filterSettings}
+            calendarHexById={gridDisplay.calendarHexById}
+            calendarDisplayLabelById={opening?.calendarDisplayLabelById}
+          />
+          {props.selectedDateYmd ? (
+            <p className="text-center text-sm text-zinc-600 sm:text-left dark:text-zinc-400">
+              <Link
+                href={`/entries/${props.selectedDateYmd}`}
+                className="font-medium text-emerald-700 underline decoration-emerald-700/30 underline-offset-2 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300"
+              >
+                {props.selectedDateYmd} のエントリ（本文・画像・追記）を開く
+              </Link>
+            </p>
+          ) : null}
+        </div>
+
+        <div className="min-w-0 space-y-4 lg:min-w-0">
           <div className="space-y-1.5">
         <p className="text-[11px] font-medium text-zinc-600 dark:text-zinc-300">表示の絞り込み</p>
         <div
@@ -1038,25 +1154,6 @@ export function CalendarClient(props: {
               onDayActivate={onCalendarDayActivate}
             />
           )}
-        </div>
-
-        <div className="order-1 min-w-0 space-y-4 lg:order-2 lg:min-h-0 lg:flex-1">
-          <UpcomingGoogleEvents
-            key="upcoming-google-events"
-            filter={filterSettings}
-            calendarHexById={gridDisplay.calendarHexById}
-            calendarDisplayLabelById={opening?.calendarDisplayLabelById}
-          />
-          {props.selectedDateYmd ? (
-            <p className="text-center text-sm text-zinc-600 sm:text-left dark:text-zinc-400">
-              <Link
-                href={`/entries/${props.selectedDateYmd}`}
-                className="font-medium text-emerald-700 underline decoration-emerald-700/30 underline-offset-2 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300"
-              >
-                {props.selectedDateYmd} のエントリ（本文・画像・追記）を開く
-              </Link>
-            </p>
-          ) : null}
         </div>
       </div>
 
@@ -1181,11 +1278,84 @@ export function CalendarClient(props: {
               プルダウンで1つずつ選び、ドット色と分類のデフォルトを設定します。
             </p>
             {!opts?.calendars?.length ? (
-              <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">（カレンダー一覧は予定同期後に出ます）</p>
+              <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
+                （Google のカレンダーは予定同期後に出ます。アプリ内カレンダーは右の「＋」から追加できます）
+              </p>
             ) : (
               <>
+                <div className="mt-2 flex flex-wrap items-end justify-between gap-2">
+                  <span className="text-[13px] font-medium text-zinc-500 dark:text-zinc-400">対象カレンダー</span>
+                  <button
+                    type="button"
+                    disabled={busy || localCalAddBusy}
+                    onClick={() => {
+                      setLocalCalAddErr(null);
+                      setLocalCalAddOpen((v) => !v);
+                      if (localCalAddOpen) setLocalCalNameDraft("");
+                    }}
+                    className="shrink-0 rounded-lg border border-zinc-300 bg-zinc-100 px-2.5 py-1 text-xs font-semibold text-zinc-800 shadow-sm hover:bg-zinc-200/90 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
+                    title="このアプリにだけ保存するカレンダーを追加（Google には同期しません）"
+                  >
+                    {localCalAddOpen ? "閉じる" : "＋ アプリ内"}
+                  </button>
+                </div>
+                {localCalAddOpen ? (
+                  <div className="mt-2 rounded-xl border border-dashed border-zinc-300 bg-zinc-50/90 p-2.5 dark:border-zinc-600 dark:bg-zinc-900/50">
+                    <p className="text-[11px] leading-snug text-zinc-600 dark:text-zinc-400">
+                      Google 連携なしで予定を置けます。予定の追加は日付モーダルから行えます。
+                    </p>
+                    {localCalAddErr ? <p className="mt-1 text-xs text-red-600 dark:text-red-400">{localCalAddErr}</p> : null}
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <input
+                        type="text"
+                        value={localCalNameDraft}
+                        onChange={(e) => setLocalCalNameDraft(e.target.value)}
+                        maxLength={80}
+                        placeholder="例: 私用メモ"
+                        disabled={localCalAddBusy}
+                        className="min-w-[10rem] flex-1 rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm text-zinc-900 outline-none ring-zinc-400 focus-visible:ring-2 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:focus-visible:ring-zinc-500"
+                      />
+                      <button
+                        type="button"
+                        disabled={localCalAddBusy || !localCalNameDraft.trim()}
+                        onClick={() => {
+                          void (async () => {
+                            setLocalCalAddBusy(true);
+                            setLocalCalAddErr(null);
+                            try {
+                              const res = await fetch("/api/calendar/local-calendars", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                credentials: "same-origin",
+                                body: JSON.stringify({ name: localCalNameDraft }),
+                              });
+                              const j = (await res.json().catch(() => ({}))) as {
+                                error?: string;
+                                calendar?: { calendarId: string; calendarName: string };
+                              };
+                              if (!res.ok) {
+                                setLocalCalAddErr(typeof j.error === "string" ? j.error : "追加に失敗しました");
+                                return;
+                              }
+                              const cid = j.calendar?.calendarId;
+                              setLocalCalNameDraft("");
+                              setLocalCalAddOpen(false);
+                              await reloadClassifierOptions();
+                              if (cid) setActiveCalendarId(cid);
+                            } finally {
+                              setLocalCalAddBusy(false);
+                            }
+                          })();
+                        }}
+                        className="shrink-0 rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900"
+                      >
+                        {localCalAddBusy ? "追加中…" : "追加"}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
                 <label className="mt-2 block text-[13px] font-medium text-zinc-500 dark:text-zinc-400">
-                  対象カレンダー
+                  <span className="sr-only">対象カレンダー</span>
                   <select
                     disabled={busy}
                     value={activeCalendarId}
@@ -1680,6 +1850,7 @@ export function CalendarClient(props: {
           labelledBy="calendar-day-modal-title"
           dialogId="calendar-day-modal-dialog"
           zClass="z-[55]"
+          presentation="sheetBottom"
         >
           <div className="flex min-h-0 max-h-[inherit] flex-1 flex-col overflow-hidden">
             <div className="flex shrink-0 items-start justify-between gap-3 border-b border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950">
@@ -1694,64 +1865,152 @@ export function CalendarClient(props: {
                   <p className="mt-1 truncate text-xs text-blue-700 dark:text-blue-300">日記: {modalEntryLine}</p>
                 ) : null}
               </div>
-              <button
-                type="button"
-                onClick={closeDayModal}
-                className="shrink-0 rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-700 shadow-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-              >
-                閉じる
-              </button>
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCalendarWriteDialog({ kind: "create" })}
+                  disabled={!calendarsForUi.length}
+                  title={!calendarsForUi.length ? "カレンダー一覧の取得後に利用できます" : undefined}
+                  className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-900 shadow-sm hover:bg-emerald-100/90 disabled:cursor-not-allowed disabled:opacity-40 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-100 dark:hover:bg-emerald-950/60"
+                >
+                  予定を追加
+                </button>
+                <button
+                  type="button"
+                  onClick={closeDayModal}
+                  className="rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-700 shadow-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                >
+                  閉じる
+                </button>
+              </div>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
               {modalDayEvents.length === 0 ? (
                 <p className="text-sm text-zinc-500 dark:text-zinc-400">この日の予定はありません（絞り込み後）。</p>
               ) : (
                 <ul className="space-y-3">
-                  {modalDayEvents.map((ev, idx) => (
-                    <li
-                      key={`${ev.eventId ?? ev.start}-${idx}`}
-                      className="rounded-xl border border-zinc-200 bg-zinc-50/80 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/50"
-                    >
-                      <div className="flex items-start gap-2">
-                        <span
-                          className="mt-1.5 h-2 w-2 shrink-0 rounded-full"
-                          style={{ backgroundColor: resolveGcalEventColor(ev, gridDisplay.calendarHexById) }}
-                          aria-hidden
-                        />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
-                            {ev.title.trim() || "（無題）"}
-                          </p>
-                          <p className="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">
-                            {formatEventStartJa(ev.start)}
-                            {ev.calendarName ? ` · ${ev.calendarName}` : ""}
-                          </p>
-                          {(ev.location ?? "").trim() ? (
-                            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{ev.location}</p>
-                          ) : null}
+                  {modalDayEvents.map((ev, idx) => {
+                    const canEditThis = Boolean((ev.calendarId ?? "").trim() && (ev.eventId ?? "").trim());
+                    return (
+                      <li
+                        key={`${ev.eventId ?? ev.start}-${idx}`}
+                        className="rounded-xl border border-zinc-200 bg-zinc-50/80 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/50"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex min-w-0 flex-1 items-start gap-2">
+                            <span
+                              className="mt-1.5 h-2 w-2 shrink-0 rounded-full"
+                              style={{ backgroundColor: resolveGcalEventColor(ev, gridDisplay.calendarHexById) }}
+                              aria-hidden
+                            />
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+                                {ev.title.trim() || "（無題）"}
+                              </p>
+                              <p className="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">
+                                {formatEventStartJa(ev.start)}
+                                {ev.calendarName ? ` · ${ev.calendarName}` : ""}
+                              </p>
+                              {(ev.location ?? "").trim() ? (
+                                <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{ev.location}</p>
+                              ) : null}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setCalendarWriteDialog({ kind: "edit", ev })}
+                            disabled={!canEditThis}
+                            title={
+                              canEditThis
+                                ? "Google カレンダー上のこの予定を編集"
+                                : "この予定は識別子がないため編集できません（同期後に再試行）"
+                            }
+                            className="shrink-0 rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-700 shadow-sm hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                          >
+                            編集
+                          </button>
                         </div>
-                      </div>
-                    </li>
-                  ))}
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
-              {dayPhotos.length > 0 ? (
+              {dayModalDiaryAside.show ? (
                 <section className="mt-5 rounded-xl border border-zinc-200 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
-                  <h3 className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">思い出写真（Google Photos）</h3>
-                  <div className="mt-2 grid grid-cols-3 gap-2">
-                    {dayPhotos.slice(0, 9).map((p) => (
-                      <a
-                        key={p.id}
-                        href={p.productUrl || p.displayUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="block aspect-square overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-700"
-                        title={p.filename ?? undefined}
+                  <h3 className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">この日の日記（写真・天気・感情）</h3>
+                  <div
+                    className={
+                      dayPhotos.length > 0 &&
+                      (dayModalDiaryAside.hasEmotion ||
+                        dayModalDiaryAside.hasAmPm ||
+                        dayModalDiaryAside.hasLegacyWx)
+                        ? "mt-3 flex min-w-0 flex-col gap-4 lg:flex-row lg:items-stretch lg:gap-5"
+                        : "mt-3 flex min-w-0 flex-col gap-4"
+                    }
+                  >
+                    {dayPhotos.length > 0 ? (
+                      <div className="min-w-0 flex-1 lg:min-h-0">
+                        <div
+                          className="flex gap-2 overflow-x-auto overscroll-x-contain scroll-smooth pb-1 [-webkit-overflow-scrolling:touch] [scrollbar-width:thin] snap-x snap-mandatory lg:mt-0"
+                          role="list"
+                          aria-label="この日の画像（横にスライド）"
+                        >
+                          {dayPhotos.map((p) => (
+                            <a
+                              key={p.id}
+                              href={p.productUrl || p.displayUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              role="listitem"
+                              className="snap-center shrink-0 overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-700 [width:min(9.5rem,calc((100vw-3rem)/3*0.8))] [height:min(9.5rem,calc((100vw-3rem)/3*0.8))] sm:[width:min(10.25rem,26vw)] sm:[height:min(10.25rem,26vw)]"
+                              title={p.filename ?? undefined}
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={p.thumbUrl}
+                                alt={p.filename ?? "エントリ画像"}
+                                className="h-full w-full object-cover"
+                              />
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                    {dayModalDiaryAside.hasEmotion || dayModalDiaryAside.hasAmPm || dayModalDiaryAside.hasLegacyWx ? (
+                      <div
+                        className={[
+                          "min-w-0 shrink-0 space-y-3 lg:w-[min(100%,22rem)]",
+                          dayPhotos.length > 0
+                            ? "border-t border-zinc-200/80 pt-4 dark:border-zinc-700/80 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0"
+                            : "",
+                        ].join(" ")}
                       >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={p.thumbUrl} alt={p.filename ?? "Google Photos"} className="h-full w-full object-cover" />
-                      </a>
-                    ))}
+                        {dayModalDiaryAside.hasEmotion ? (
+                          <div className="flex flex-wrap items-center gap-3">
+                            <PlutchikDominantChip dominantKey={dayModalDominantEmotion} />
+                          </div>
+                        ) : null}
+                        {dayModalDiaryAside.hasAmPm && dayModalDiaryAside.wj?.am && dayModalDiaryAside.wj.pm ? (
+                          <WeatherAmPmDisplay
+                            am={dayModalDiaryAside.wj.am}
+                            pm={dayModalDiaryAside.wj.pm}
+                            date={dayModalDiaryAside.wj.date}
+                            dataSource={dayModalDiaryAside.wj.dataSource}
+                            locationNote={dayModalDiaryAside.wj.locationNote}
+                            compact
+                          />
+                        ) : dayModalDiaryAside.hasLegacyWx && dayModalDiaryAside.wj ? (
+                          <p className="text-sm text-zinc-700 dark:text-zinc-300">
+                            記録された天気: {dayModalDiaryAside.wj.weatherLabel}
+                            {dayModalDiaryAside.wj.temperature_2m != null
+                              ? ` / ${dayModalDiaryAside.wj.temperature_2m}°C`
+                              : ""}
+                            {dayModalDiaryAside.wj.period ? `（${dayModalDiaryAside.wj.period}）` : ""}
+                            {dayModalDiaryAside.wj.locationNote ? ` · ${dayModalDiaryAside.wj.locationNote}` : ""}
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                 </section>
               ) : null}
@@ -1775,6 +2034,45 @@ export function CalendarClient(props: {
           </div>
         </ResponsiveDialog>
       ) : null}
+
+      <CalendarEventEditDialog
+        mode={calendarWriteDialog.kind === "create" ? "create" : "edit"}
+        open={calendarWriteDialog.kind !== "closed"}
+        event={
+          calendarWriteDialog.kind === "edit" &&
+          (calendarWriteDialog.ev.eventId ?? "").trim() &&
+          (calendarWriteDialog.ev.calendarId ?? "").trim()
+            ? {
+                eventId: calendarWriteDialog.ev.eventId!.trim(),
+                calendarId: calendarWriteDialog.ev.calendarId!.trim(),
+                title: calendarWriteDialog.ev.title,
+                start: calendarWriteDialog.ev.start,
+                end: calendarWriteDialog.ev.end,
+                location: calendarWriteDialog.ev.location,
+                description: calendarWriteDialog.ev.description,
+              }
+            : null
+        }
+        createContext={
+          calendarWriteDialog.kind === "create" && props.selectedDateYmd
+            ? {
+                dateYmd: props.selectedDateYmd,
+                calendars: calendarsForUi.map((c) => ({
+                  calendarId: c.calendarId,
+                  calendarName: c.calendarName,
+                })),
+                suggestedCalendarId: (modalDayEvents[0]?.calendarId ?? "").trim() || undefined,
+              }
+            : undefined
+        }
+        canWriteGoogle={canWriteGoogleCalendar}
+        onClose={() => setCalendarWriteDialog({ kind: "closed" })}
+        onSaved={() => {
+          invalidateMonthGridEventsCache();
+          invalidateMonthListEventsCache();
+          router.refresh();
+        }}
+      />
 
       {searchOpen ? (
         <ResponsiveDialog

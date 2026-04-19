@@ -1,6 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
+import { formatYmdTokyo } from "@/lib/time/tokyo";
 
 type MemoryRowShort = {
   id: string;
@@ -40,6 +49,8 @@ type OverviewPayload = {
   shortTermGroups: ShortGroup[];
   longTermGroups: LongGroup[];
   agentMemory: AgentMem[];
+  /** 自動バックフィルが未完了のエントリ数（2通以上かつ未実行 or メッセージ増） */
+  pendingChatMemoryBackfillCount?: number;
 };
 
 function bulletsToText(b: unknown): string {
@@ -64,12 +75,25 @@ function textMatches(q: string, text: string): boolean {
   return norm(text).includes(norm(q));
 }
 
+/** 設定画面のヒント用（正午 JST で曜日を安定算出） */
+function formatEntryYmdWeekdayJa(ymd: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return ymd;
+  const dt = new Date(`${ymd}T12:00:00+09:00`);
+  if (Number.isNaN(dt.getTime())) return ymd;
+  const wd = new Intl.DateTimeFormat("ja-JP", { weekday: "short", timeZone: "Asia/Tokyo" }).format(dt);
+  return `${ymd}（${wd}）`;
+}
+
 export function SettingsMemoryPanel() {
   const [open, setOpen] = useState(false);
   const [overview, setOverview] = useState<OverviewPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [reconcileBusy, setReconcileBusy] = useState(false);
+  const [reconcileMsg, setReconcileMsg] = useState<string | null>(null);
+  const [reconcileFailNote, setReconcileFailNote] = useState<string | null>(null);
+  const [reconcileForce, setReconcileForce] = useState(false);
 
   const loadOverview = useCallback(async () => {
     setLoading(true);
@@ -190,6 +214,108 @@ export function SettingsMemoryPanel() {
     else void loadOverview();
   }
 
+  async function reconcileChatForEntry(entryId: string) {
+    setReconcileBusy(true);
+    setReconcileMsg(null);
+    setReconcileFailNote(null);
+    setErr(null);
+    try {
+      const res = await fetch("/api/settings/memory/reconcile-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ entryId, force: reconcileForce }),
+        credentials: "same-origin",
+      });
+      const j = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        ok?: boolean;
+        skipped?: boolean;
+        reason?: string;
+        processed?: { entryId: string; entryDateYmd: string }[];
+      };
+      if (!res.ok) {
+        setErr(typeof j.error === "string" ? j.error : "補完に失敗しました");
+        return;
+      }
+      if (j.skipped) {
+        setReconcileMsg(typeof j.reason === "string" ? j.reason : "スキップしました");
+        return;
+      }
+      const dates = (j.processed ?? []).map((p) => p.entryDateYmd).join(", ");
+      setReconcileMsg(dates ? `反映しました: ${dates}` : "反映しました");
+      await loadOverview();
+    } finally {
+      setReconcileBusy(false);
+    }
+  }
+
+  async function reconcileChatBatch() {
+    if (
+      !confirm(
+        "通常はチャット後に自動で走る記憶抽出が、まだ取り込めていない日だけを新しい順に補完します（前回補完時と同じメッセージ件数の日はスキップ）。OpenAI の利用が増えます。続行しますか？",
+      )
+    ) {
+      return;
+    }
+    setReconcileBusy(true);
+    setReconcileMsg(null);
+    setReconcileFailNote(null);
+    setErr(null);
+    try {
+      const res = await fetch("/api/settings/memory/reconcile-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allWithChat: true, force: reconcileForce }),
+        credentials: "same-origin",
+      });
+      const rawText = await res.text();
+      let j = {} as {
+        error?: string;
+        ok?: boolean;
+        processed?: { entryId: string; entryDateYmd: string }[];
+        hint?: string;
+        skippedUpToDate?: string[];
+        failures?: { entryDateYmd: string; reason: string; detailJa: string }[];
+        stoppedEarlyByCap?: boolean;
+        llmRuns?: number;
+        maxLlmRunsPerRequest?: number;
+      };
+      try {
+        j = JSON.parse(rawText) as typeof j;
+      } catch {
+        j = {};
+      }
+      if (!res.ok) {
+        setErr(
+          typeof j.error === "string"
+            ? j.error
+            : rawText.trim().slice(0, 240) || "一括補完に失敗しました",
+        );
+        return;
+      }
+      const n = j.processed?.length ?? 0;
+      const dates = (j.processed ?? []).map((p) => p.entryDateYmd).join(", ");
+      const skipNote =
+        j.skippedUpToDate && j.skippedUpToDate.length > 0
+          ? `（補完済みでスキップ: ${j.skippedUpToDate.join(", ")}${j.skippedUpToDate.length >= 12 ? "…" : ""}）`
+          : "";
+      setReconcileMsg(
+        n === 0
+          ? `処理した日はありませんでした。${j.hint ?? ""}${skipNote}`.trim()
+          : `${n} 日分を処理しました: ${dates}${j.hint ? `。${j.hint}` : ""}${skipNote}`,
+      );
+      const fails = j.failures ?? [];
+      if (fails.length > 0) {
+        setReconcileFailNote(
+          `一部の日で補完に失敗しました:\n${fails.map((f) => `${f.entryDateYmd} — ${f.detailJa}`).join("\n")}`,
+        );
+      }
+      await loadOverview();
+    } finally {
+      setReconcileBusy(false);
+    }
+  }
+
   const accOuter = "mb-3 overflow-hidden rounded-xl border border-zinc-200/90 bg-white dark:border-zinc-700/80 dark:bg-zinc-950/40";
   const sumOuter =
     "flex cursor-pointer list-none items-center justify-between gap-2 bg-zinc-50/95 px-3 py-2.5 text-left text-sm font-semibold text-zinc-900 hover:bg-zinc-100/90 dark:bg-zinc-900/55 dark:text-zinc-50 dark:hover:bg-zinc-800/70 [&::-webkit-details-marker]:hidden";
@@ -234,6 +360,8 @@ export function SettingsMemoryPanel() {
                   setOpen(false);
                   setErr(null);
                   setSearch("");
+                  setReconcileMsg(null);
+                  setReconcileFailNote(null);
                 }}
                 className="rounded-lg px-2 py-1 text-sm text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
               >
@@ -263,6 +391,53 @@ export function SettingsMemoryPanel() {
                     {" \u4ef6 \u00b7 \u9577\u671f "}
                     {longTotalCount}
                     {" \u4ef6"}
+                  </p>
+                ) : null}
+                {overview && !loading && (overview.entries.length > 0 || (overview.pendingChatMemoryBackfillCount ?? 0) > 0) ? (
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] leading-snug text-zinc-600 dark:text-zinc-400">
+                      日記の本文や AI 草案は<span className="font-medium">不要</span>です。各日の
+                      <span className="font-medium">振り返りチャット</span>が user/assistant 合わせて2通以上あり、かつ
+                      自動の記憶抽出がまだ追いついていない日だけが一括補完の対象です
+                      {typeof overview.pendingChatMemoryBackfillCount === "number"
+                        ? `（現在およそ ${overview.pendingChatMemoryBackfillCount} 日が未同期です）`
+                        : ""}
+                      。
+                    </p>
+                    <label className="flex cursor-pointer items-start gap-2 text-[10px] leading-snug text-zinc-600 dark:text-zinc-400">
+                      <input
+                        type="checkbox"
+                        checked={reconcileForce}
+                        onChange={(e) => setReconcileForce(e.target.checked)}
+                        className="mt-0.5 rounded border-zinc-300"
+                      />
+                      <span>
+                        強制再補完（同一メッセージ件数でも再実行。既に補完済みの会話を上書き確認したいとき）
+                      </span>
+                    </label>
+                    <button
+                      type="button"
+                      disabled={reconcileBusy}
+                      onClick={() => void reconcileChatBatch()}
+                      className="w-full rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-left text-xs font-medium text-emerald-950 hover:bg-emerald-100/90 disabled:opacity-50 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-100 dark:hover:bg-emerald-900/50"
+                    >
+                      {reconcileBusy
+                        ? "チャットから記憶を取り込み中…"
+                        : "未同期のチャットだけ記憶に一括補完（新しい順）"}
+                    </button>
+                    <p className="text-[10px] leading-snug text-zinc-500 dark:text-zinc-400">
+                      直近のメッセージを優先して読みます。前回補完時と同じメッセージ件数で済んでいるスレッドはスキップされます（新規発言後に再実行、または強制再補完）。
+                      環境変数 MEMORY_BACKFILL_MAX_ENTRIES_PER_REQUEST
+                      を数値にすると1リクエストあたりの補完回数に上限を付けられます（未設定なら未同期分をまとめて処理）。
+                    </p>
+                  </div>
+                ) : null}
+                {reconcileMsg ? (
+                  <p className="text-[11px] text-emerald-700 dark:text-emerald-300">{reconcileMsg}</p>
+                ) : null}
+                {reconcileFailNote ? (
+                  <p className="whitespace-pre-wrap text-[11px] leading-snug text-amber-900 dark:text-amber-200">
+                    {reconcileFailNote}
                   </p>
                 ) : null}
               </div>
@@ -313,6 +488,20 @@ export function SettingsMemoryPanel() {
                               </span>
                             </summary>
                             <div className="border-t border-zinc-50 bg-zinc-50/40 px-2 py-2 dark:border-zinc-800/80 dark:bg-zinc-900/20">
+                              <div className="mb-2 px-1">
+                                <button
+                                  type="button"
+                                  disabled={reconcileBusy}
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    void reconcileChatForEntry(g.entryId);
+                                  }}
+                                  className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-[10px] font-medium text-zinc-800 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                                >
+                                  この日のチャットを記憶に反映
+                                </button>
+                              </div>
                               {g.items.length === 0 ? (
                                 <p className="px-2 py-2 text-[11px] text-zinc-500">{"\u3053\u306e\u65e5\u306b\u306f\u77ed\u671f\u8a18\u61b6\u3042\u308a\u307e\u305b\u3093\u3002"}</p>
                               ) : (
@@ -323,6 +512,7 @@ export function SettingsMemoryPanel() {
                                       className="rounded-lg border border-zinc-200 bg-white p-2 shadow-sm dark:border-zinc-700 dark:bg-zinc-950"
                                     >
                                       <ShortEditor
+                                        entryDateYmd={g.entryDateYmd}
                                         initialText={bulletsToText(s.bullets)}
                                         salience={s.salience}
                                         onSave={(txt, sal) => void patchShort(s.id, txt, sal)}
@@ -379,6 +569,7 @@ export function SettingsMemoryPanel() {
                                       className="rounded-lg border border-emerald-200/70 bg-white p-2 shadow-sm dark:border-emerald-900/45 dark:bg-zinc-950"
                                     >
                                       <LongEditor
+                                        anchorDateYmd={g.key === "common" ? null : g.entryDateYmd}
                                         initialText={bulletsToText(l.bullets)}
                                         impact={l.impactScore}
                                         onSave={(txt, imp) => void patchLong(l.id, txt, imp)}
@@ -443,11 +634,13 @@ function useSyncedState<T>(value: T): [T, Dispatch<SetStateAction<T>>] {
 }
 
 function ShortEditor({
+  entryDateYmd,
   initialText,
   salience,
   onSave,
   onDelete,
 }: {
+  entryDateYmd: string;
   initialText: string;
   salience: number;
   onSave: (text: string, salience: number) => void;
@@ -455,12 +648,54 @@ function ShortEditor({
 }) {
   const [text, setText] = useSyncedState(initialText);
   const [sal, setSal] = useSyncedState(salience);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+
+  const insertDateTag = useCallback(() => {
+    const tag = `[${entryDateYmd}] `;
+    const el = taRef.current;
+    if (!el) {
+      setText((prev) => tag + prev);
+      return;
+    }
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    setText((prev) => prev.slice(0, start) + tag + prev.slice(end));
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + tag.length;
+      el.setSelectionRange(pos, pos);
+    });
+  }, [entryDateYmd, setText]);
+
+  const exampleFutureYmd = useMemo(() => {
+    const t = new Date(`${entryDateYmd}T12:00:00+09:00`).getTime() + 7 * 86400000;
+    return formatYmdTokyo(new Date(t));
+  }, [entryDateYmd]);
+
   return (
     <div className="space-y-2">
+      <p className="text-[10px] leading-snug text-zinc-500 dark:text-zinc-400">
+        基準日（このエントリ・Asia/Tokyo）: <span className="font-mono text-zinc-700 dark:text-zinc-300">{formatEntryYmdWeekdayJa(entryDateYmd)}</span>
+        。文頭に日付を付けず自然な一文で書いてください。来週・明日など<strong>相対表現の直後だけ</strong>
+        <span className="font-mono"> (YYYY-MM-DD)</span> を添えて具体日にしてください（例:{" "}
+        <span className="font-mono">来週頃({exampleFutureYmd}) 面接</span>）。時刻が話題なら{" "}
+        <span className="font-mono">HH:mm</span> も。
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={insertDateTag}
+          className="rounded border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+        >
+          {`[${entryDateYmd}] をカーソル位置に挿入`}
+        </button>
+      </div>
       <textarea
+        ref={taRef}
         value={text}
         onChange={(e) => setText(e.target.value)}
         rows={4}
+        placeholder={`例:\n打合せが長引いた\n来週頃(${exampleFutureYmd}) 10:00 面接`}
         className="w-full rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
       />
       <label className="flex items-center gap-2 text-[11px] text-zinc-600 dark:text-zinc-400">
@@ -496,11 +731,13 @@ function ShortEditor({
 }
 
 function LongEditor({
+  anchorDateYmd,
   initialText,
   impact,
   onSave,
   onDelete,
 }: {
+  anchorDateYmd: string | null;
   initialText: string;
   impact: number;
   onSave: (text: string, impact: number) => void;
@@ -508,12 +745,68 @@ function LongEditor({
 }) {
   const [text, setText] = useSyncedState(initialText);
   const [imp, setImp] = useSyncedState(impact);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+
+  const insertDateTag = useCallback(() => {
+    if (!anchorDateYmd) return;
+    const tag = `[${anchorDateYmd}] `;
+    const el = taRef.current;
+    if (!el) {
+      setText((prev) => tag + prev);
+      return;
+    }
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    setText((prev) => prev.slice(0, start) + tag + prev.slice(end));
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + tag.length;
+      el.setSelectionRange(pos, pos);
+    });
+  }, [anchorDateYmd, setText]);
+
+  const longPlaceholderExample = useMemo(
+    () =>
+      anchorDateYmd
+        ? "一人暮らしは3年目\n内向的だがチームでは発言するようになった\n記念日: 2019-06-01（毎年固定で覚えたいものだけ日付）"
+        : null,
+    [anchorDateYmd],
+  );
+
+  const longPlaceholderCommon =
+    "例:\nライトノベルより純文学寄りが好み\nストレス時は15分散歩で切り替える";
+
   return (
     <div className="space-y-2">
+      {anchorDateYmd ? (
+        <>
+          <p className="text-[10px] leading-snug text-zinc-500 dark:text-zinc-400">
+            このグループの基準日: <span className="font-mono text-zinc-700 dark:text-zinc-300">{formatEntryYmdWeekdayJa(anchorDateYmd)}</span>
+            。長期は<strong>続く特性・価値観・関係の前提</strong>向けです。些細な予定や一過性の日付は短期へ。
+            <strong>誕生日・記念日・入社日など後から照合したい固定事実</strong>にだけ <span className="font-mono">YYYY-MM-DD</span> や短い表記を。
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={insertDateTag}
+              className="rounded border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+            >
+              {`[${anchorDateYmd}] をカーソル位置に挿入`}
+            </button>
+          </div>
+        </>
+      ) : (
+        <p className="text-[10px] leading-snug text-zinc-500 dark:text-zinc-400">
+          <strong>ユーザー共通</strong>の長期です。好み・習慣・続く前提事実を。<strong>AgentMemory</strong>向けの部活・職場区分などはドメイン行に。
+          <strong>誕生日や毎年の固定イベント以外</strong>は不要な日付を書かないでください。
+        </p>
+      )}
       <textarea
+        ref={taRef}
         value={text}
         onChange={(e) => setText(e.target.value)}
         rows={4}
+        placeholder={anchorDateYmd && longPlaceholderExample ? `例:\n${longPlaceholderExample}` : longPlaceholderCommon}
         className="w-full rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
       />
       <label className="flex items-center gap-2 text-[11px] text-zinc-600 dark:text-zinc-400">

@@ -9,6 +9,8 @@ import { runOrchestrator, triggerSupervisorAsync } from "@/server/orchestrator";
 import { runMasMemoryExtraction } from "@/server/mas-memory";
 import { PROMPT_VERSIONS } from "@/server/prompts";
 import { upsertTextEmbedding } from "@/server/embeddings";
+import { computeAssistantStreamDelta, stripAssistantMetaEchoPrefix } from "@/lib/chat-assistant-sanitize";
+import { buildSecurityReviewPayload, scheduleSecurityReview } from "@/server/security-review-queue";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -84,6 +86,7 @@ export async function POST(req: NextRequest) {
 
   const encoder = new TextEncoder();
   let assistantText = "";
+  let assistantDisplayed = "";
 
   const readable = new ReadableStream({
     async start(controller) {
@@ -92,23 +95,28 @@ export async function POST(req: NextRequest) {
           const delta = part.choices[0]?.delta?.content ?? "";
           if (delta) {
             assistantText += delta;
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ delta })}\n\n`));
+            const { displayedFull, outDelta } = computeAssistantStreamDelta(assistantText, assistantDisplayed);
+            assistantDisplayed = displayedFull;
+            if (outDelta) {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ delta: outDelta })}\n\n`));
+            }
           }
         }
 
+        const storedAssistant = stripAssistantMetaEchoPrefix(assistantText);
         const latencyMs = Date.now() - started;
         const assistant = await prisma.chatMessage.update({
           where: { id: assistantMessageId },
           data: {
-            content: assistantText,
+            content: storedAssistant,
             model: orchestratorModel,
             latencyMs,
-            tokenEstimate: Math.ceil(assistantText.length / 4),
+            tokenEstimate: Math.ceil(storedAssistant.length / 4),
             agentName: "orchestrator",
           },
         });
         if (entry.encryptionMode === "STANDARD") {
-          void upsertTextEmbedding(session.user.id, "CHAT_MESSAGE", assistant.id, assistantText).catch(() => {});
+          void upsertTextEmbedding(session.user.id, "CHAT_MESSAGE", assistant.id, storedAssistant).catch(() => {});
         }
 
         await incrementChat(session.user.id);
@@ -152,25 +160,40 @@ export async function POST(req: NextRequest) {
           userId: session.user.id,
           threadId,
           agentsUsed,
-          recentMessages: [{ role: "assistant", content: assistantText }],
+          recentMessages: [{ role: "assistant", content: storedAssistant }],
           personaInstructions,
           mbtiHint: mbtiHint || undefined,
         });
 
-        void runMasMemoryExtraction({
+        const secPayload = buildSecurityReviewPayload({
+          messageId: assistant.id,
           userId: session.user.id,
+          threadId,
           entryId: entry.id,
-          entryDateYmd: entry.entryDateYmd,
-          encryptionMode: entry.encryptionMode,
-          diaryBody: entry.body,
           userMessage: "",
-          assistantMessage: assistantText,
-          recentTurns: [{ role: "assistant" as const, content: assistantText }],
-        }).catch(() => {});
+          assistantContent: storedAssistant,
+        });
+        if (secPayload) scheduleSecurityReview(secPayload);
 
         controller.enqueue(
           encoder.encode(`data: ${JSON.stringify({ done: true, threadId, agentsUsed })}\n\n`),
         );
+
+        const entryForMemory = await prisma.dailyEntry.findUnique({
+          where: { id: entry.id },
+          select: { body: true },
+        });
+        await runMasMemoryExtraction({
+          userId: session.user.id,
+          entryId: entry.id,
+          entryDateYmd: entry.entryDateYmd,
+          encryptionMode: entry.encryptionMode,
+          diaryBody: entryForMemory?.body ?? entry.body,
+          userMessage: "",
+          assistantMessage: storedAssistant,
+          recentTurns: [{ role: "assistant" as const, content: storedAssistant }],
+        }).catch(() => {});
+
         controller.close();
       } catch (e) {
         await prisma.chatMessage

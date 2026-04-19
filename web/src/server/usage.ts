@@ -51,3 +51,13 @@ export async function incrementOrchestratorCalls(userId: string) {
     update: { orchestratorCalls: { increment: 1 } },
   });
 }
+
+/** 記憶サブエージェント 1 回あたり（将来の日次上限に使用） */
+export async function incrementMemorySubAgentCalls(userId: string) {
+  const dateYmd = formatYmdTokyo();
+  return prisma.usageCounter.upsert({
+    where: { userId_dateYmd: { userId, dateYmd } },
+    create: { userId, dateYmd, memorySubAgentCalls: 1 },
+    update: { memorySubAgentCalls: { increment: 1 } },
+  });
+}

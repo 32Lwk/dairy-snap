@@ -2,19 +2,9 @@ import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { requireSession } from "@/lib/api/require-session";
 import { sha256Hex } from "@/lib/crypto/sha256";
+import { extFromMime, MAX_IMAGES_PER_ENTRY, MAX_TOTAL_IMAGE_BYTES_PER_ENTRY } from "@/lib/entry-image-limits";
 import { prisma } from "@/server/db";
 import { getObjectStorage } from "@/server/storage/local";
-
-const MAX_IMAGES_PER_ENTRY = 10;
-const MAX_TOTAL_BYTES = 50 * 1024 * 1024;
-
-function extFromMime(mime: string): string {
-  if (mime === "image/avif") return "avif";
-  if (mime === "image/webp") return "webp";
-  if (mime === "image/jpeg" || mime === "image/jpg") return "jpg";
-  if (mime === "image/png") return "png";
-  return "bin";
-}
 
 export async function POST(
   req: NextRequest,
@@ -42,7 +32,7 @@ export async function POST(
   }
 
   const buf = Buffer.from(await file.arrayBuffer());
-  const maxSingle = MAX_TOTAL_BYTES - totalBytes;
+  const maxSingle = MAX_TOTAL_IMAGE_BYTES_PER_ENTRY - totalBytes;
   if (buf.length > maxSingle) {
     return NextResponse.json(
       { error: `合計50MB以内にしてください（残り約 ${Math.max(0, Math.floor(maxSingle / 1024))} KB）` },

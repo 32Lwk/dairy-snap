@@ -77,6 +77,18 @@ export function getAgentSocialMiniChatFallbackModel(): string | null {
   );
 }
 
+/** Async security reviewer — defaults to social mini (cheap JSON). */
+export function getSecurityAgentChatModel(): string {
+  return process.env.OPENAI_SECURITY_AGENT_MODEL?.trim() || getAgentSocialMiniChatModel();
+}
+
+export function getSecurityAgentChatFallbackModel(): string | null {
+  return envFallbackOrDefault(
+    "OPENAI_SECURITY_AGENT_FALLBACK_MODEL",
+    getAgentSocialMiniChatFallbackModel() ?? OPENAI_CHAT_MODEL_FALLBACK_DEFAULT.socialMini,
+  );
+}
+
 export function getMetaChatModel(): string {
   return process.env.OPENAI_META_MODEL?.trim() || OPENAI_CHAT_MODEL_SNAPSHOT.orchestratorAgentsMetaMemoryJournal;
 }
@@ -96,10 +108,11 @@ export function getMemoryExtractionChatFallbackModel(): string | null {
   );
 }
 
+/** 会話からの日記草案は頻度が高いため、既定は mini（振り返りチャット本体のモデルより軽くする） */
 export function getJournalComposerChatModel(): string {
   return (
     process.env.OPENAI_JOURNAL_COMPOSER_MODEL?.trim() ||
-    OPENAI_CHAT_MODEL_SNAPSHOT.orchestratorAgentsMetaMemoryJournal
+    OPENAI_CHAT_MODEL_SNAPSHOT.calendarSocialOnly
   );
 }
 
@@ -107,6 +120,22 @@ export function getJournalComposerChatFallbackModel(): string | null {
   return envFallbackOrDefault(
     "OPENAI_JOURNAL_COMPOSER_FALLBACK_MODEL",
     OPENAI_CHAT_MODEL_FALLBACK_DEFAULT.reasoning,
+  );
+}
+
+/** プルチック感情分析。既定は日記草案と同系の軽量モデル。 */
+export function getPlutchikEmotionChatModel(): string {
+  return (
+    process.env.OPENAI_PLUTCHIK_EMOTION_MODEL?.trim() ||
+    process.env.OPENAI_JOURNAL_COMPOSER_MODEL?.trim() ||
+    OPENAI_CHAT_MODEL_SNAPSHOT.calendarSocialOnly
+  );
+}
+
+export function getPlutchikEmotionChatFallbackModel(): string | null {
+  return envFallbackOrDefault(
+    "OPENAI_PLUTCHIK_EMOTION_FALLBACK_MODEL",
+    getJournalComposerChatFallbackModel() ?? OPENAI_CHAT_MODEL_FALLBACK_DEFAULT.reasoning,
   );
 }
 

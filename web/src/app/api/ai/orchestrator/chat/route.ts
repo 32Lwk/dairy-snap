@@ -7,6 +7,16 @@ import { runOrchestrator, triggerSupervisorAsync } from "@/server/orchestrator";
 import { runMasMemoryExtraction } from "@/server/mas-memory";
 import { PROMPT_VERSIONS } from "@/server/prompts";
 import { upsertTextEmbedding } from "@/server/embeddings";
+import { computeAssistantStreamDelta, stripAssistantMetaEchoPrefix } from "@/lib/chat-assistant-sanitize";
+import { buildSecurityReviewPayload, scheduleSecurityReview } from "@/server/security-review-queue";
+import {
+  classifyJournalDraftMaterial,
+  countUserTurnsIncludingCurrent,
+  lastAssistantFromHistory,
+  shouldTriggerJournalDraftPanelAfterSend,
+  shouldUseMiniOrchestratorForReflectiveChat,
+} from "@/lib/reflective-chat-diary-nudge-rules";
+import { parseUserSettings } from "@/lib/user-settings";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -30,12 +40,19 @@ export async function POST(req: NextRequest) {
     return new Response(JSON.stringify({ error: "OPENAI_API_KEY が未設定です" }), { status: 503 });
   }
 
-  const entry = await prisma.dailyEntry.findFirst({
-    where: { id: parsed.data.entryId, userId: session.user.id },
-  });
+  const [entry, userRow] = await Promise.all([
+    prisma.dailyEntry.findFirst({
+      where: { id: parsed.data.entryId, userId: session.user.id },
+    }),
+    prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: { settings: true },
+    }),
+  ]);
   if (!entry) {
     return new Response(JSON.stringify({ error: "見つかりません" }), { status: 404 });
   }
+  const profile = parseUserSettings(userRow?.settings ?? {}).profile;
 
   const counter = await getTodayCounter(session.user.id);
   if (counter.chatMessages >= LIMITS.CHAT_PER_DAY) {
@@ -70,6 +87,28 @@ export async function POST(req: NextRequest) {
     .filter((m) => m.role === "user" || m.role === "assistant")
     .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
 
+  const messagesForJournalMaterial = [
+    ...historyMessages,
+    { role: "user" as const, content: parsed.data.message },
+  ];
+  const journalDraftMaterial = classifyJournalDraftMaterial(messagesForJournalMaterial, {
+    aiDepthLevel: profile?.aiDepthLevel,
+    aiChatTone: profile?.aiChatTone,
+  });
+
+  const reflectiveUserTurnIncludingCurrent = countUserTurnsIncludingCurrent(historyMessages);
+  const lastAssistantText = lastAssistantFromHistory(historyMessages);
+  const preferMiniOrchestrator = shouldUseMiniOrchestratorForReflectiveChat(
+    parsed.data.message,
+    lastAssistantText,
+    journalDraftMaterial,
+  );
+  const triggerJournalDraft = shouldTriggerJournalDraftPanelAfterSend(
+    parsed.data.message,
+    lastAssistantText,
+    journalDraftMaterial,
+  );
+
   const started = Date.now();
 
   const { stream, agentsUsed, personaInstructions, mbtiHint, orchestratorModel } = await runOrchestrator({
@@ -81,10 +120,13 @@ export async function POST(req: NextRequest) {
     isOpening: false,
     encryptionMode: entry.encryptionMode,
     currentBody: entry.body,
+    reflectiveUserTurnIncludingCurrent,
+    preferMiniOrchestrator,
   });
 
   const encoder = new TextEncoder();
   let assistantText = "";
+  let assistantDisplayed = "";
 
   const readable = new ReadableStream({
     async start(controller) {
@@ -93,24 +135,29 @@ export async function POST(req: NextRequest) {
           const delta = part.choices[0]?.delta?.content ?? "";
           if (delta) {
             assistantText += delta;
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ delta })}\n\n`));
+            const { displayedFull, outDelta } = computeAssistantStreamDelta(assistantText, assistantDisplayed);
+            assistantDisplayed = displayedFull;
+            if (outDelta) {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ delta: outDelta })}\n\n`));
+            }
           }
         }
 
+        const storedAssistant = stripAssistantMetaEchoPrefix(assistantText);
         const latencyMs = Date.now() - started;
         const assistant = await prisma.chatMessage.create({
           data: {
             threadId: thread!.id,
             role: "assistant",
-            content: assistantText,
+            content: storedAssistant,
             model: orchestratorModel,
             latencyMs,
-            tokenEstimate: Math.ceil((parsed.data.message.length + assistantText.length) / 4),
+            tokenEstimate: Math.ceil((parsed.data.message.length + storedAssistant.length) / 4),
             agentName: "orchestrator",
           },
         });
         if (entry.encryptionMode === "STANDARD") {
-          void upsertTextEmbedding(session.user.id, "CHAT_MESSAGE", assistant.id, assistantText).catch(() => {});
+          void upsertTextEmbedding(session.user.id, "CHAT_MESSAGE", assistant.id, storedAssistant).catch(() => {});
         }
 
         await incrementChat(session.user.id);
@@ -165,18 +212,8 @@ export async function POST(req: NextRequest) {
         const recentTurns = [
           ...historyMessages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
           { role: "user" as const, content: parsed.data.message },
-          { role: "assistant" as const, content: assistantText },
+          { role: "assistant" as const, content: storedAssistant },
         ];
-        void runMasMemoryExtraction({
-          userId: session.user.id,
-          entryId: entry.id,
-          entryDateYmd: entry.entryDateYmd,
-          encryptionMode: entry.encryptionMode,
-          diaryBody: entry.body,
-          userMessage: parsed.data.message,
-          assistantMessage: assistantText,
-          recentTurns,
-        }).catch(() => {});
 
         triggerSupervisorAsync({
           userId: session.user.id,
@@ -185,15 +222,52 @@ export async function POST(req: NextRequest) {
           recentMessages: [
             ...historyMessages.slice(-4),
             { role: "user", content: parsed.data.message },
-            { role: "assistant", content: assistantText },
+            { role: "assistant", content: storedAssistant },
           ],
           personaInstructions,
           mbtiHint: mbtiHint || undefined,
         });
 
+        const secPayload = buildSecurityReviewPayload({
+          messageId: assistant.id,
+          userId: session.user.id,
+          threadId: thread!.id,
+          entryId: entry.id,
+          userMessage: parsed.data.message,
+          assistantContent: storedAssistant,
+        });
+        if (secPayload) scheduleSecurityReview(secPayload);
+
         controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify({ done: true, threadId: thread!.id, agentsUsed })}\n\n`),
+          encoder.encode(
+            `data: ${JSON.stringify({
+              done: true,
+              threadId: thread!.id,
+              agentsUsed,
+              userMessageId: userMsg.id,
+              assistantMessageId: assistant.id,
+              assistantModel: orchestratorModel,
+              triggerJournalDraft,
+              journalDraftMaterial,
+            })}\n\n`,
+          ),
         );
+
+        const entryForMemory = await prisma.dailyEntry.findUnique({
+          where: { id: entry.id },
+          select: { body: true },
+        });
+        await runMasMemoryExtraction({
+          userId: session.user.id,
+          entryId: entry.id,
+          entryDateYmd: entry.entryDateYmd,
+          encryptionMode: entry.encryptionMode,
+          diaryBody: entryForMemory?.body ?? entry.body,
+          userMessage: parsed.data.message,
+          assistantMessage: storedAssistant,
+          recentTurns,
+        }).catch(() => {});
+
         controller.close();
       } catch (e) {
         controller.error(e);

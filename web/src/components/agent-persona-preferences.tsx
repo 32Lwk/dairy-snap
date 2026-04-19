@@ -66,6 +66,10 @@ export function AgentPersonaPreferences({ form, patchForm }: Props) {
         <p className="mt-1 text-[11px] leading-snug text-zinc-600 dark:text-zinc-400">
           日記や振り返りのトーンに使います。職業・暮らしの回答に合わせて、下の候補が一部変わります。
         </p>
+        <p className="mt-1.5 text-[10px] leading-snug text-zinc-500 dark:text-zinc-400">
+          振り返りチャットでは、話し方と掘り下げの深さから「日記草案を勧めるまでのあなたの発話回数の目安」と「予定や外出などをどれくらい細かく聞くか」がルールで決まります。十分一区切りついたと AI
+          が判断したときだけ草案の生成を促します。
+        </p>
       </div>
 
       <section className="space-y-2 border-t border-emerald-200/60 pt-3 dark:border-emerald-900/40">

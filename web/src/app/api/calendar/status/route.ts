@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/api/require-session";
 import { prisma } from "@/server/db";
 
-const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
+const CALENDAR_READONLY_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
+const CALENDAR_EVENTS_WRITE_SCOPE = "https://www.googleapis.com/auth/calendar.events";
 
 export const runtime = "nodejs";
 
@@ -17,12 +18,12 @@ export async function GET() {
   });
 
   const scopes = account?.scope?.split(/\s+/).filter(Boolean) ?? [];
-  const hasCalendarScope = scopes.includes(CALENDAR_SCOPE);
 
   return NextResponse.json({
     hasGoogleAccount: Boolean(account),
     hasRefreshToken: Boolean(account?.refresh_token),
-    hasCalendarReadonlyScope: hasCalendarScope,
+    hasCalendarReadonlyScope: scopes.includes(CALENDAR_READONLY_SCOPE),
+    hasCalendarEventsWriteScope: scopes.includes(CALENDAR_EVENTS_WRITE_SCOPE),
     scopes,
   });
 }

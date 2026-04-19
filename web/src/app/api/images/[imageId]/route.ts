@@ -30,3 +30,28 @@ export async function GET(
     },
   });
 }
+
+export async function DELETE(
+  _req: NextRequest,
+  ctx: { params: Promise<{ imageId: string }> },
+) {
+  const session = await requireSession();
+  if ("response" in session) return session.response;
+
+  const { imageId } = await ctx.params;
+  const image = await prisma.image.findFirst({
+    where: {
+      id: imageId,
+      entry: { userId: session.user.id },
+    },
+    select: { id: true, storageKey: true },
+  });
+  if (!image) return NextResponse.json({ error: "見つかりません" }, { status: 404 });
+
+  await prisma.image.delete({ where: { id: image.id } });
+
+  const storage = getObjectStorage();
+  await storage.delete(image.storageKey);
+
+  return NextResponse.json({ ok: true });
+}

@@ -1,7 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useLayoutEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { PlutchikEntryDetailMobile } from "@/components/plutchik-entry-detail-mobile";
+import { parsePlutchikStoredJson } from "@/lib/emotion/plutchik";
 import { EntryActions } from "./entry-actions";
 import { EntryChat } from "./entry-chat";
 import { EntryImages } from "./entry-images";
@@ -13,6 +15,8 @@ type AppendEv = { id: string; occurredAt: string; fragment: string };
 
 export function EntryByDateMainGrid({
   entryId,
+  entryDateYmd,
+  chatSecurityNoticeJa,
   initialThreadId,
   initialMessages,
   latitude,
@@ -21,8 +25,16 @@ export function EntryByDateMainGrid({
   body,
   appendEvents,
   images,
+  dominantEmotion,
+  initialPlutchikAnalysis,
+  transcriptCharCount,
+  journalDraftOpenPreviewSignal = 0,
+  savedEntryTitle = "",
+  savedEntryTagsCsv = "",
 }: {
   entryId: string;
+  entryDateYmd: string;
+  chatSecurityNoticeJa?: string | null;
   initialThreadId: string | null;
   initialMessages: Msg[];
   latitude: number | null;
@@ -31,9 +43,18 @@ export function EntryByDateMainGrid({
   body: string;
   appendEvents: AppendEv[];
   images: { id: string; mimeType: string; byteSize: number }[];
+  dominantEmotion: string | null;
+  initialPlutchikAnalysis: unknown | null;
+  transcriptCharCount: number;
+  /** ヘッダー「編集」から草案プレビューを開くときに親が進める */
+  journalDraftOpenPreviewSignal?: number;
+  savedEntryTitle?: string;
+  savedEntryTagsCsv?: string;
 }) {
   const router = useRouter();
   const [liveThreadId, setLiveThreadId] = useState<string | null>(initialThreadId);
+  const [journalDraftAutoKey, setJournalDraftAutoKey] = useState(0);
+  const [journalDraftPanelRefreshKey, setJournalDraftPanelRefreshKey] = useState(0);
   const onThreadIdChange = useCallback((id: string | null) => {
     setLiveThreadId(id);
   }, []);
@@ -46,28 +67,85 @@ export function EntryByDateMainGrid({
     window.scrollTo(0, 0);
   }, [entryId]);
 
+  const plutchikStored = useMemo(() => parsePlutchikStoredJson(initialPlutchikAnalysis ?? null), [initialPlutchikAnalysis]);
+  const hasSavedBody = body.trim().length > 0;
+
   return (
-    <div className="mt-6 grid grid-cols-1 gap-6 sm:gap-7 md:grid-cols-12 md:items-start md:gap-8 lg:gap-10">
-      <div className="order-1 min-h-0 md:col-span-7 md:order-1 lg:col-span-7">
-        <div className="md:sticky md:top-4 md:z-10 lg:sticky lg:top-4 lg:z-10">
+    <div className="mt-6 grid grid-cols-1 gap-6 sm:gap-7 md:grid-cols-12 md:items-stretch md:gap-8 lg:gap-10">
+      <div className="order-1 flex min-h-0 flex-col md:col-span-7 md:order-1 lg:col-span-7">
+        <div className="flex min-h-0 flex-1 flex-col md:sticky md:top-4 md:z-10 md:self-start lg:sticky lg:top-4 lg:z-10 lg:self-stretch">
+          {hasSavedBody ? (
+            <article className="mb-4 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
+              <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">本文</h2>
+              <pre className="mt-2 max-h-[min(52dvh,28rem)] overflow-y-auto overscroll-y-contain whitespace-pre-wrap rounded-2xl border border-zinc-200 bg-zinc-50/80 p-4 text-sm text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-100">
+                {body}
+              </pre>
+            </article>
+          ) : null}
           <EntryChat
             key={`${entryId}-${initialThreadId ?? "new"}-${initialMessages.length}`}
             entryId={entryId}
             threadId={initialThreadId}
+            chatSecurityNoticeJa={chatSecurityNoticeJa}
             initialMessages={initialMessages}
             variant="default"
             journalDraftPlacement="none"
+            conversationAccordion={hasSavedBody}
             onThreadIdChange={onThreadIdChange}
+            onJournalDraftGenerateRequest={() => setJournalDraftAutoKey((k) => k + 1)}
+            onJournalDraftContextRefresh={() => setJournalDraftPanelRefreshKey((k) => k + 1)}
           />
         </div>
       </div>
       <div className="order-2 space-y-6 md:col-span-5 md:order-2 lg:col-span-5">
-        <div className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
+        {!hasSavedBody ? (
+          <div className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
+            <JournalDraftPanel
+              entryId={entryId}
+              threadId={liveThreadId}
+              entryDateYmd={entryDateYmd}
+              images={images}
+              weatherJson={weatherJson}
+              autoGenerateKey={journalDraftAutoKey}
+              journalDraftRefreshKey={journalDraftPanelRefreshKey}
+              openPreviewSignal={journalDraftOpenPreviewSignal}
+              seedTitleWhenNoDraftCache={savedEntryTitle}
+              seedTagsWhenNoDraftCache={savedEntryTagsCsv}
+              savedEntryBodyForPreview={body}
+              showChrome
+              onApplied={() => router.refresh()}
+              variant="standalone"
+              initialPlutchikAnalysis={initialPlutchikAnalysis}
+              transcriptCharCount={transcriptCharCount}
+            />
+          </div>
+        ) : (
           <JournalDraftPanel
             entryId={entryId}
             threadId={liveThreadId}
+            entryDateYmd={entryDateYmd}
+            images={images}
+            weatherJson={weatherJson}
+            autoGenerateKey={journalDraftAutoKey}
+            journalDraftRefreshKey={journalDraftPanelRefreshKey}
+            openPreviewSignal={journalDraftOpenPreviewSignal}
+            seedTitleWhenNoDraftCache={savedEntryTitle}
+            seedTagsWhenNoDraftCache={savedEntryTagsCsv}
+            savedEntryBodyForPreview={body}
+            showChrome={false}
             onApplied={() => router.refresh()}
             variant="standalone"
+            initialPlutchikAnalysis={initialPlutchikAnalysis}
+            transcriptCharCount={transcriptCharCount}
+          />
+        )}
+
+        <div className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
+          <EntryImages
+            key={`${entryId}-${images.length}-${images[0]?.id ?? ""}`}
+            entryId={entryId}
+            entryDateYmd={entryDateYmd}
+            images={images}
           />
         </div>
 
@@ -76,20 +154,24 @@ export function EntryByDateMainGrid({
           latitude={latitude}
           longitude={longitude}
           weatherJson={weatherJson}
+          prependWeather={
+            dominantEmotion || plutchikStored.ok ? (
+              <PlutchikEntryDetailMobile
+                dominantKey={dominantEmotion}
+                analysis={plutchikStored.ok ? plutchikStored.data : null}
+              />
+            ) : null
+          }
         />
 
-        <article>
-          <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">本文</h2>
-          {body.trim() ? (
-            <pre className="mt-2 whitespace-pre-wrap rounded-2xl border border-zinc-200 bg-zinc-50/80 p-4 text-sm text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-100">
-              {body}
-            </pre>
-          ) : (
+        {!hasSavedBody ? (
+          <article>
+            <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">本文</h2>
             <p className="mt-2 rounded-2xl border border-dashed border-zinc-200/90 bg-zinc-50/50 p-4 text-sm text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-400">
-              まだ本文がありません。チャットのあと、上の「AI 日記（草案）」から反映できます。
+              まだ本文がありません。チャットのあと、右欄の「AI 日記（草案）」から反映できます。
             </p>
-          )}
-        </article>
+          </article>
+        ) : null}
 
         {appendEvents.length > 0 && (
           <section>
@@ -104,8 +186,6 @@ export function EntryByDateMainGrid({
             </ul>
           </section>
         )}
-
-        <EntryImages entryId={entryId} images={images} />
       </div>
     </div>
   );

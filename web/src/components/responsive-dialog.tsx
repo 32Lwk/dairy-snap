@@ -9,13 +9,16 @@ type ResponsiveDialogProps = {
   /** Element id for aria-labelledby */
   labelledBy: string;
   dialogId?: string;
+  /** パネル（section）に追加するクラス（例: 幅の拡大） */
+  panelClassName?: string;
   /** z-index layer (default 50) */
   zClass?: string;
   /**
-   * sheet: mobile bottom sheet, md+ centered (default).
-   * island: centered floating card at all breakpoints (vertical + horizontal inset).
+   * sheet: スマホ・タブレットは下からのシート、lg 以上は中央モーダル（既定）。
+   * island: 全ブレークポイントで中央のカード（縦横に余白）。
+   * sheetBottom: 常に画面下からのシート（lg でも中央モーダルにしない）。
    */
-  presentation?: "sheet" | "island";
+  presentation?: "sheet" | "island" | "sheetBottom";
 };
 
 function getFocusable(root: HTMLElement): HTMLElement[] {
@@ -24,9 +27,10 @@ function getFocusable(root: HTMLElement): HTMLElement[] {
 }
 
 /**
- * presentation=sheet: mobile bottom sheet, md+: centered modal.
- * presentation=island: centered floating card at all breakpoints.
- * Focus trap (Tab), Escape to close, restores body scroll and previous focus.
+ * presentation=sheet: 下シート（〜lg 未満）／lg 以上は中央モーダル。
+ * presentation=sheetBottom: 全幅域で下シートのみ。
+ * presentation=island: 全幅で中央のフローティングカード。
+ * Focus trap（Tab）、Escape で閉じる、body スクロールとフォーカスを復元。
  */
 export function ResponsiveDialog({
   open,
@@ -34,6 +38,7 @@ export function ResponsiveDialog({
   children,
   labelledBy,
   dialogId = "responsive-dialog",
+  panelClassName,
   zClass = "z-50",
   presentation = "sheet",
 }: ResponsiveDialogProps) {
@@ -100,14 +105,20 @@ export function ResponsiveDialog({
   if (!open) return null;
 
   const island = presentation === "island";
+  const sheetBottom = presentation === "sheetBottom";
 
   const overlayClass = island
     ? `fixed inset-0 ${zClass} flex items-center justify-center overflow-y-auto bg-zinc-950/50 p-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]`
-    : `fixed inset-0 ${zClass} flex items-end justify-center bg-zinc-950/50 md:items-center md:justify-center md:overflow-y-auto md:p-4 md:pt-[max(1rem,env(safe-area-inset-top))] md:pb-[max(1rem,env(safe-area-inset-bottom))]`;
+    : sheetBottom
+      ? `fixed inset-0 ${zClass} flex items-end justify-center overflow-y-auto bg-zinc-950/50 px-2 pb-[max(0.25rem,env(safe-area-inset-bottom))] pt-[max(0.5rem,env(safe-area-inset-top))] sm:px-4`
+      : `fixed inset-0 ${zClass} flex items-end justify-center bg-zinc-950/50 lg:items-center lg:justify-center lg:overflow-y-auto lg:p-4 lg:pt-[max(1rem,env(safe-area-inset-top))] lg:pb-[max(1rem,env(safe-area-inset-bottom))]`;
 
-  const panelClass = island
+  const panelBase = island
     ? "flex max-h-[min(90dvh,52rem)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl outline-none ring-1 ring-black/5 dark:border-zinc-800 dark:bg-zinc-950 dark:ring-white/10"
-    : "flex max-h-[90dvh] w-full max-w-3xl flex-col overflow-hidden rounded-t-2xl border border-zinc-200 bg-white shadow-xl outline-none dark:border-zinc-800 dark:bg-zinc-950 md:mt-0 md:max-h-[min(90dvh,52rem)] md:rounded-2xl";
+    : sheetBottom
+      ? "mx-auto flex max-h-[min(92dvh,92svh)] w-full max-w-[min(96vw,56rem)] flex-col overflow-hidden rounded-t-2xl border border-zinc-200 bg-white shadow-xl outline-none dark:border-zinc-800 dark:bg-zinc-950"
+      : "flex max-h-[min(90dvh,92svh)] w-full max-w-3xl flex-col overflow-hidden rounded-t-2xl border border-zinc-200 bg-white shadow-xl outline-none dark:border-zinc-800 dark:bg-zinc-950 lg:mt-0 lg:max-h-[min(90dvh,52rem)] lg:rounded-2xl";
+  const panelClass = [panelBase, panelClassName].filter(Boolean).join(" ");
 
   return (
     <div

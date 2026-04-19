@@ -48,6 +48,8 @@ WORKDIR /app
 USER nextjs
 EXPOSE 8080
 ENV HOSTNAME=0.0.0.0
+# Cloud Run は PORT を注入。未設定時は 8080（EXPOSE と一致）。
+ENV PORT=8080
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 

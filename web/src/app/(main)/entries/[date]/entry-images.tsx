@@ -1,8 +1,10 @@
 "use client";
 
+import { GooglePhotosImportDialog } from "@/components/google-photos-import-dialog";
+import { ResponsiveDialog } from "@/components/responsive-dialog";
+import { compressImageForDailyEntry, uploadEntryImage } from "@/lib/entry-image-upload-client";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
-import imageCompression from "browser-image-compression";
+import { useRef, useState } from "react";
 
 type Img = {
   id: string;
@@ -10,201 +12,266 @@ type Img = {
   byteSize: number;
 };
 
-export function EntryImages({ entryId, images }: { entryId: string; images: Img[] }) {
+export function EntryImages({
+  entryId,
+  entryDateYmd,
+  images,
+  /** 日記草案プレビューの右欄など。lg 以上は 1 行の横スクロール。未指定は常にグリッド */
+  galleryLayout = "default",
+}: {
+  entryId: string;
+  entryDateYmd: string;
+  images: Img[];
+  galleryLayout?: "default" | "journalPreviewAside";
+}) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [uploadLabel, setUploadLabel] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [photoBusy, setPhotoBusy] = useState(false);
-  const [photoInfo, setPhotoInfo] = useState<string | null>(null);
-  const [photoErr, setPhotoErr] = useState<string | null>(null);
-  const [picked, setPicked] = useState<
-    { id: string; thumbUrl: string; displayUrl: string; filename: string | null; productUrl: string | null }[]
-  >([]);
+  const [googlePhotosDialogOpen, setGooglePhotosDialogOpen] = useState(false);
+  const [addSourceOpen, setAddSourceOpen] = useState(false);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const dateYmd = useMemo(() => {
-    if (typeof window === "undefined") return "";
-    const seg = window.location.pathname.split("/").filter(Boolean);
-    // /entries/YYYY-MM-DD
-    const d = seg.length >= 2 ? seg[1] : "";
-    return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : "";
-  }, []);
-
-  async function loadPicked() {
-    if (!dateYmd) return;
-    const res = await fetch(`/api/google-photos/items?date=${dateYmd}`, { cache: "no-store" });
-    const json = (await res.json().catch(() => ({}))) as {
-      items?: { id: string; thumbUrl: string; displayUrl: string; filename: string | null; productUrl: string | null }[];
-    };
-    if (!res.ok) return;
-    setPicked(Array.isArray(json.items) ? json.items : []);
-  }
-
-  useEffect(() => {
-    void loadPicked();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entryId, dateYmd]);
-
-  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  async function processFiles(fileList: FileList | null) {
+    if (!fileList?.length) return;
+    const files = [...fileList].filter((f) => f.type.startsWith("image/") || !f.type);
+    if (!files.length) {
+      setError("画像ファイルを選んでください");
+      return;
+    }
     setError(null);
     setBusy(true);
+    const errors: string[] = [];
     try {
-      const avifOk = await supportsAvifEncode();
-      const compressed = await imageCompression(file, {
-        maxWidthOrHeight: 2048,
-        useWebWorker: true,
-        initialQuality: 0.85,
-        fileType: avifOk ? "image/avif" : "image/webp",
-      });
-      const fd = new FormData();
-      fd.append("file", compressed, compressed.name || "photo");
-      const res = await fetch(`/api/entries/${entryId}/images`, { method: "POST", body: fd });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(typeof data.error === "string" ? data.error : "アップロードに失敗しました");
-        return;
+      for (let i = 0; i < files.length; i++) {
+        setUploadLabel(`${i + 1} / ${files.length} 枚を処理中…`);
+        try {
+          const compressed = await compressImageForDailyEntry(files[i]);
+          const up = await uploadEntryImage(entryId, compressed);
+          if (!up.ok) errors.push(up.error);
+        } catch {
+          errors.push(`${files[i].name}: 処理に失敗しました`);
+        }
+      }
+      if (errors.length) {
+        setError(errors.slice(0, 3).join(" ") + (errors.length > 3 ? ` 他${errors.length - 3}件` : ""));
       }
       router.refresh();
     } finally {
       setBusy(false);
-      e.target.value = "";
+      setUploadLabel(null);
     }
   }
 
-  async function connectGooglePhotos() {
-    if (!dateYmd) {
-      setPhotoErr("日付を判定できませんでした。ページを再読み込みしてください。");
-      return;
-    }
-    setPhotoErr(null);
-    setPhotoInfo(null);
-    setPhotoBusy(true);
+  async function onFileInput(e: React.ChangeEvent<HTMLInputElement>) {
+    await processFiles(e.target.files);
+    e.target.value = "";
+  }
+
+  function openGalleryPicker() {
+    setAddSourceOpen(false);
+    queueMicrotask(() => galleryInputRef.current?.click());
+  }
+
+  function openCameraPicker() {
+    setAddSourceOpen(false);
+    queueMicrotask(() => cameraInputRef.current?.click());
+  }
+
+  function openGoogleFromSheet() {
+    setAddSourceOpen(false);
+    setGooglePhotosDialogOpen(true);
+  }
+
+  async function deleteImage(imageId: string) {
+    if (!window.confirm("この画像を削除しますか？ストレージからも消え、元に戻せません。")) return;
+    setError(null);
+    setDeletingId(imageId);
     try {
-      const startRes = await fetch("/api/google-photos/picker/session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entryDateYmd: dateYmd, entryId }),
-      });
-      const startJson = (await startRes.json().catch(() => ({}))) as {
-        sessionId?: string;
-        pickerUri?: string;
-        pollIntervalSeconds?: number;
-        error?: string;
-      };
-      if (!startRes.ok || !startJson.sessionId || !startJson.pickerUri) {
-        setPhotoErr(startJson.error ?? "Google Photos Picker の起動に失敗しました");
+      const res = await fetch(`/api/images/${imageId}`, { method: "DELETE" });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setError(typeof data.error === "string" ? data.error : "削除に失敗しました");
         return;
       }
-
-      window.open(startJson.pickerUri, "_blank", "noopener,noreferrer");
-      const intervalMs = Math.max(2000, (startJson.pollIntervalSeconds ?? 3) * 1000);
-      const started = Date.now();
-      const timeoutMs = 4 * 60 * 1000;
-      let imported = false;
-
-      while (Date.now() - started < timeoutMs) {
-        await new Promise((r) => setTimeout(r, intervalMs));
-        const poll = await fetch(
-          `/api/google-photos/picker/session?sessionId=${encodeURIComponent(startJson.sessionId)}&import=1&entryDateYmd=${encodeURIComponent(dateYmd)}&entryId=${encodeURIComponent(entryId)}`,
-          { cache: "no-store" },
-        );
-        const pollJson = (await poll.json().catch(() => ({}))) as {
-          mediaItemsSet?: boolean;
-          imported?: number;
-          total?: number;
-          error?: string;
-        };
-        if (!poll.ok) {
-          setPhotoErr(pollJson.error ?? "Google Photos の取得に失敗しました");
-          return;
-        }
-        if (pollJson.mediaItemsSet) {
-          imported = true;
-          setPhotoInfo(`Google Photos から ${pollJson.imported ?? 0} 件取り込みました。`);
-          break;
-        }
-      }
-      if (!imported) setPhotoInfo("選択待ちのため取り込みは未完了です。あとで再実行できます。");
-      await loadPicked();
+      router.refresh();
     } finally {
-      setPhotoBusy(false);
+      setDeletingId(null);
     }
   }
 
-  return (
-    <section className="space-y-3">
-      <h2 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">画像</h2>
-      <p className="text-xs text-zinc-500">1日最大10枚・合計50MB。AVIF優先（非対応時はWebP）。最大辺2048px。</p>
-      {error && <p className="text-sm text-red-600">{error}</p>}
-      <div className="flex flex-wrap gap-2">
-        <label className="inline-flex cursor-pointer rounded-xl border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700">
-          {busy ? "処理中…" : "画像を追加"}
-          <input type="file" accept="image/*" className="hidden" onChange={onFile} disabled={busy} />
-        </label>
-        <button
-          type="button"
-          onClick={() => void connectGooglePhotos()}
-          disabled={photoBusy}
-          className="inline-flex rounded-xl border border-zinc-200 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-900"
-        >
-          {photoBusy ? "Google Photos 連携中…" : "Google Photos から選択"}
-        </button>
-      </div>
-      {photoInfo ? <p className="text-xs text-emerald-700 dark:text-emerald-300">{photoInfo}</p> : null}
-      {photoErr ? <p className="text-xs text-red-600">{photoErr}</p> : null}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-        {images.map((img) => (
-          <a
-            key={img.id}
-            href={`/api/images/${img.id}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="relative block aspect-square overflow-hidden rounded-lg border border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900"
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={`/api/images/${img.id}`}
-              alt=""
-              className="h-full w-full max-w-full object-cover"
-              sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 320px"
-              loading="lazy"
-              decoding="async"
-            />
-          </a>
-        ))}
-      </div>
+  const hasAny = images.length > 0;
+  const asideGallery = galleryLayout === "journalPreviewAside";
 
-      {picked.length > 0 ? (
-        <section className="space-y-2">
-          <h3 className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Google Photos（この日で選択済み）</h3>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-            {picked.map((p) => (
-              <a
-                key={p.id}
-                href={p.productUrl || p.displayUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="relative block aspect-square overflow-hidden rounded-lg border border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900"
-                title={p.filename ?? undefined}
+  return (
+    <section className="space-y-4">
+      <h2 className="text-xs font-semibold text-zinc-800 dark:text-zinc-100">写真・画像</h2>
+
+      {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+      {uploadLabel && <p className="text-[11px] leading-snug text-zinc-600 dark:text-zinc-400">{uploadLabel}</p>}
+
+      {hasAny ? (
+        <div className="space-y-2">
+          <div
+            className={
+              asideGallery
+                ? "max-lg:grid max-lg:grid-cols-6 max-lg:gap-1 max-lg:overflow-x-visible lg:flex lg:flex-nowrap lg:gap-1.5 lg:overflow-x-auto lg:overflow-y-visible lg:pb-0.5 lg:[scrollbar-width:thin]"
+                : "grid grid-cols-3 gap-1.5 sm:grid-cols-3 sm:gap-2"
+            }
+          >
+            {images.map((img) => (
+              <div
+                key={img.id}
+                className={`relative overflow-hidden rounded-md border border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900 sm:rounded-lg ${
+                  asideGallery
+                    ? "aspect-square max-lg:min-w-0 lg:aspect-square lg:h-20 lg:w-20 lg:max-w-none lg:shrink-0"
+                    : "aspect-square"
+                }`}
               >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={p.thumbUrl} alt={p.filename ?? "Google Photos"} className="h-full w-full object-cover" />
-              </a>
+                <a
+                  href={`/api/images/${img.id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block h-full w-full"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={`/api/images/${img.id}`}
+                    alt=""
+                    className="h-full w-full max-w-full object-cover"
+                    sizes={
+                      asideGallery
+                        ? "(min-width: 1024px) 80px, (max-width: 1023px) 16vw"
+                        : "(max-width: 639px) 30vw, (max-width: 1024px) 33vw, 320px"
+                    }
+                    loading="lazy"
+                    decoding="async"
+                  />
+                </a>
+                <button
+                  type="button"
+                  disabled={busy || deletingId !== null}
+                  onClick={() => void deleteImage(img.id)}
+                  aria-label="この画像を削除"
+                  className={`absolute flex items-center justify-center rounded-md bg-zinc-950/80 font-light leading-none text-white shadow-sm backdrop-blur-sm hover:bg-red-700/95 disabled:opacity-50 dark:bg-zinc-950/85 dark:hover:bg-red-600/95 ${
+                    asideGallery
+                      ? "right-0.5 top-0.5 max-lg:min-h-7 max-lg:min-w-7 max-lg:text-xs lg:right-0.5 lg:top-0.5 lg:min-h-7 lg:min-w-7 lg:text-sm"
+                      : "right-0.5 top-0.5 min-h-7 min-w-7 text-sm sm:right-1 sm:top-1 sm:min-h-[32px] sm:min-w-[32px] sm:text-base"
+                  }`}
+                >
+                  <span aria-hidden className="translate-y-[-0.5px]">
+                    ×
+                  </span>
+                </button>
+              </div>
             ))}
           </div>
-        </section>
-      ) : null}
+          <p className="text-[11px] text-zinc-500 dark:text-zinc-400">{images.length} 枚</p>
+          <button
+            type="button"
+            disabled={busy || deletingId !== null}
+            onClick={() => setAddSourceOpen(true)}
+            className="text-[11px] font-medium text-emerald-700 underline decoration-emerald-700/40 underline-offset-2 hover:text-emerald-800 disabled:opacity-50 dark:text-emerald-400 dark:hover:text-emerald-300"
+          >
+            写真を追加
+          </button>
+        </div>
+      ) : (
+        <>
+          <p className="rounded-lg border border-dashed border-zinc-200/90 bg-zinc-50/40 px-3 py-2 text-[11px] leading-snug text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900/30 dark:text-zinc-400">
+            まだこの日の写真・画像はありません。下のボタンから、ライブラリ・カメラ・Google フォトのいずれかで追加できます。
+          </p>
+          <button
+            type="button"
+            disabled={busy || deletingId !== null}
+            onClick={() => setAddSourceOpen(true)}
+            className="flex min-h-[44px] w-full items-center justify-center rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-medium text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60 dark:bg-emerald-500 dark:hover:bg-emerald-600"
+          >
+            {busy ? "処理中…" : "写真を追加"}
+          </button>
+        </>
+      )}
+
+      <div className="sr-only" aria-hidden>
+        <input
+          ref={galleryInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          tabIndex={-1}
+          onChange={onFileInput}
+          disabled={busy || deletingId !== null}
+        />
+        <input
+          ref={cameraInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          tabIndex={-1}
+          onChange={onFileInput}
+          disabled={busy || deletingId !== null}
+        />
+      </div>
+
+      <ResponsiveDialog
+        open={addSourceOpen}
+        onClose={() => setAddSourceOpen(false)}
+        labelledBy="entry-images-add-source-title"
+        dialogId="entry-images-add-source-dialog"
+        zClass="z-[60]"
+        presentation="sheet"
+      >
+        <div className="border-b border-zinc-200 px-4 pb-2.5 pt-[max(0.75rem,env(safe-area-inset-top))] dark:border-zinc-800">
+          <h2 id="entry-images-add-source-title" className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+            追加方法を選ぶ
+          </h2>
+          <p className="mt-0.5 text-[11px] leading-snug text-zinc-500">ライブラリ・カメラ・Google フォトのいずれか</p>
+        </div>
+        <div className="flex flex-col gap-1.5 px-4 py-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
+          <button
+            type="button"
+            disabled={busy || deletingId !== null}
+            onClick={() => openGalleryPicker()}
+            className="flex min-h-[46px] w-full items-center justify-center rounded-xl border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-900 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+          >
+            ライブラリ・ファイルから
+          </button>
+          <button
+            type="button"
+            disabled={busy || deletingId !== null}
+            onClick={() => openCameraPicker()}
+            className="flex min-h-[46px] w-full items-center justify-center rounded-xl border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-900 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+          >
+            カメラで撮る
+          </button>
+          <button
+            type="button"
+            disabled={busy || deletingId !== null}
+            onClick={() => openGoogleFromSheet()}
+            className="flex min-h-[46px] w-full items-center justify-center rounded-xl border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-900 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+          >
+            Google フォトから
+          </button>
+          <button
+            type="button"
+            onClick={() => setAddSourceOpen(false)}
+            className="mt-0.5 min-h-[40px] w-full rounded-xl border border-zinc-200 px-3 text-xs text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800"
+          >
+            キャンセル
+          </button>
+        </div>
+      </ResponsiveDialog>
+
+      <GooglePhotosImportDialog
+        open={googlePhotosDialogOpen}
+        onClose={() => setGooglePhotosDialogOpen(false)}
+        entryDateYmd={entryDateYmd}
+        entryId={entryId}
+        title="Google Photos から追加"
+        instanceId="entry-images"
+      />
     </section>
   );
-}
-
-async function supportsAvifEncode(): Promise<boolean> {
-  if (typeof createImageBitmap === "undefined") return false;
-  const canvas = document.createElement("canvas");
-  canvas.width = 1;
-  canvas.height = 1;
-  canvas.getContext("2d")?.fillRect(0, 0, 1, 1);
-  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/avif"));
-  return Boolean(blob && blob.size > 0);
 }

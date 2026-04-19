@@ -66,7 +66,7 @@ export async function GET(req: Request) {
     }
 
     if (!s.mediaItemsSet || !entryDateYmd) {
-      return NextResponse.json({ sessionId, mediaItemsSet: false, imported: 0, total: 0 });
+      return NextResponse.json({ sessionId, mediaItemsSet: false, imported: 0, total: 0, skipped: 0 });
     }
 
     if (entryId) {
@@ -86,6 +86,7 @@ export async function GET(req: Request) {
       mediaItemsSet: true,
       imported: imported.imported,
       total: imported.total,
+      skipped: imported.skipped,
     });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "セッション確認に失敗しました" }, { status: 400 });

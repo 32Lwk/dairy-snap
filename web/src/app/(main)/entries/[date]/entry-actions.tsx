@@ -6,7 +6,7 @@ import { WeatherAmPmDisplay } from "@/components/weather-am-pm-display";
 import { reverseGeocodeClient } from "@/lib/reverse-geocode-client";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 
 const WeatherLocationMapPicker = dynamic(
   () =>
@@ -52,11 +52,14 @@ export function EntryActions({
   latitude,
   longitude,
   weatherJson,
+  /** 天気・位置セクション（`border-t`）の直前に差し込む（例: プルチック主感情） */
+  prependWeather,
 }: {
   entryId: string;
   latitude: number | null;
   longitude: number | null;
   weatherJson: unknown;
+  prependWeather?: ReactNode;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
@@ -143,50 +146,6 @@ export function EntryActions({
       cancelled = true;
     };
   }, [latitude, longitude]);
-
-  async function run(kind: "title" | "tags" | "daily_summary") {
-    setBusy(kind);
-    setMsg(null);
-    try {
-      const res = await fetch("/api/ai/meta", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind, entryId }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setMsg(typeof data.error === "string" ? data.error : "失敗しました");
-        return;
-      }
-      setMsg("完了しました");
-      router.refresh();
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function genImage() {
-    const prompt = window.prompt("画像を生成するためのプロンプト（日本語）", "今日の空気感を写真風で");
-    if (prompt === null) return;
-    setBusy("img");
-    setMsg(null);
-    try {
-      const res = await fetch("/api/ai/image-gen", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entryId, prompt }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setMsg(typeof data.error === "string" ? data.error : "失敗しました");
-        return;
-      }
-      setMsg("画像を生成しました");
-      router.refresh();
-    } finally {
-      setBusy(null);
-    }
-  }
 
   async function saveLocation() {
     const lat = parseFloat(latIn);
@@ -294,103 +253,12 @@ export function EntryActions({
     void fetchWeather({ silent: true });
   }, [entryId, wj, fetchWeather]);
 
-  async function indexMemory() {
-    setBusy("mem");
-    setMsg(null);
-    try {
-      const res = await fetch("/api/memory/embed", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entryId }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setMsg(typeof data.error === "string" ? data.error : "インデックスに失敗しました");
-        return;
-      }
-      setMsg("ベクトル検索用にインデックスしました");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function loadCalendar() {
-    setBusy("cal");
-    setMsg(null);
-    try {
-      const res = await fetch("/api/calendar/events");
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const err =
-          typeof data.error === "string" ? data.error : "失敗しました";
-        const hint = typeof data.hint === "string" ? ` ${data.hint}` : "";
-        setMsg(err + hint);
-        return;
-      }
-      const n = Array.isArray(data.events) ? data.events.length : 0;
-      setMsg(`直近30日の予定（未来）: ${n} 件`);
-    } finally {
-      setBusy(null);
-    }
-  }
-
   return (
     <div className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
-      <h2 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">AI 操作</h2>
-      <p className="mt-1 text-xs text-zinc-500">タイトル・タグ・日次要約は各ボタンで実行（上限あり）。</p>
-      {msg && <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">{msg}</p>}
-      <div className="mt-3 flex flex-wrap gap-2">
-        <button
-          type="button"
-          disabled={busy !== null}
-          onClick={() => void run("title")}
-          className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm dark:border-zinc-700"
-        >
-          {busy === "title" ? "…" : "タイトル生成"}
-        </button>
-        <button
-          type="button"
-          disabled={busy !== null}
-          onClick={() => void run("tags")}
-          className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm dark:border-zinc-700"
-        >
-          {busy === "tags" ? "…" : "タグ提案"}
-        </button>
-        <button
-          type="button"
-          disabled={busy !== null}
-          onClick={() => void run("daily_summary")}
-          className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm dark:border-zinc-700"
-        >
-          {busy === "daily_summary" ? "…" : "日次要約"}
-        </button>
-        <button
-          type="button"
-          disabled={busy !== null}
-          onClick={() => void genImage()}
-          className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm dark:border-zinc-700"
-        >
-          {busy === "img" ? "…" : "画像生成"}
-        </button>
-        <button
-          type="button"
-          disabled={busy !== null}
-          onClick={() => void loadCalendar()}
-          className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm dark:border-zinc-700"
-        >
-          {busy === "cal" ? "…" : "予定を確認（30日）"}
-        </button>
-        <button
-          type="button"
-          disabled={busy !== null}
-          onClick={() => void indexMemory()}
-          className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm dark:border-zinc-700"
-        >
-          {busy === "mem" ? "…" : "記憶インデックス"}
-        </button>
-      </div>
+      {msg ? <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">{msg}</p> : null}
+      {prependWeather ? <div className="mt-4">{prependWeather}</div> : null}
 
-      <div className="mt-6 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+      <div className={!msg && !prependWeather ? "mt-0" : "mt-6"}>
         <h3 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">天気・位置（Open-Meteo）</h3>
         <p className="mt-1 text-xs text-zinc-500">
           位置を保存すると、その日のその地点で午前・午後の天気を自動記録します。手動の「天気を取得」も同様です。エントリに位置がない場合は設定の既定地点、なければ東京代表地点を使います。

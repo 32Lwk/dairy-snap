@@ -2,6 +2,7 @@ import { formatGoogleCalendarDisplayName } from "@/lib/google-calendar-display";
 import { isValidYmdTokyo } from "@/lib/time/tokyo";
 import { parseUserSettings } from "@/lib/user-settings";
 import { getResolvedAuthUser } from "@/lib/server/resolved-auth-user";
+import { fetchAppLocalEventsAsBriefs } from "@/server/app-local-calendar";
 import { prisma } from "@/server/db";
 import { notFound, redirect } from "next/navigation";
 import { CalendarClient } from "../calendar-client";
@@ -46,29 +47,59 @@ export default async function CalendarByDatePage({
     orderBy: { entryDateYmd: "asc" },
   });
 
-  const initialEvents = await prisma.googleCalendarEventCache.findMany({
-    where: {
-      userId: r.user.id,
-      isCancelled: false,
-      startAt: { gte: fromAt, lte: toAt },
-    },
-    orderBy: { startAt: "asc" },
-    take: 5000,
-    select: {
-      id: true,
-      eventId: true,
-      title: true,
-      startIso: true,
-      endIso: true,
-      location: true,
-      description: true,
-      fixedCategory: true,
-      calendarName: true,
-      calendarColorId: true,
-      eventColorId: true,
-      calendarId: true,
-    },
-  });
+  const [initialGcalRows, appLocalBriefs] = await Promise.all([
+    prisma.googleCalendarEventCache.findMany({
+      where: {
+        userId: r.user.id,
+        isCancelled: false,
+        startAt: { gte: fromAt, lte: toAt },
+      },
+      orderBy: { startAt: "asc" },
+      take: 5000,
+      select: {
+        id: true,
+        eventId: true,
+        title: true,
+        startIso: true,
+        endIso: true,
+        location: true,
+        description: true,
+        fixedCategory: true,
+        calendarName: true,
+        calendarColorId: true,
+        eventColorId: true,
+        calendarId: true,
+      },
+    }),
+    fetchAppLocalEventsAsBriefs(r.user.id, fromAt, toAt, { orderAsc: true, take: 2000 }),
+  ]);
+
+  const initialEvents = [
+    ...initialGcalRows.map((e) => ({
+      cacheId: e.id,
+      eventId: e.eventId,
+      title: e.title,
+      start: e.startIso,
+      end: e.endIso,
+      location: e.location,
+      description: e.description,
+      ...(e.fixedCategory ? { fixedCategory: e.fixedCategory } : {}),
+      calendarName: formatGoogleCalendarDisplayName(e.calendarId, e.calendarName),
+      colorId: e.eventColorId ?? e.calendarColorId ?? "",
+      calendarId: e.calendarId,
+    })),
+    ...appLocalBriefs.map((e) => ({
+      eventId: e.eventId,
+      title: e.title,
+      start: e.start,
+      end: e.end,
+      location: e.location,
+      description: e.description,
+      calendarName: e.calendarName,
+      colorId: e.colorId,
+      calendarId: e.calendarId,
+    })),
+  ].sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
 
   const [yy, mm] = ym.split("-").map(Number);
   const monthStartWeekday = new Date(yy, mm - 1, 1).getDay();
@@ -80,7 +111,7 @@ export default async function CalendarByDatePage({
   const nextYm = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
 
   return (
-    <div className="mx-auto max-w-3xl px-4 pb-6 pt-[calc(4.5rem+env(safe-area-inset-top,0px))] md:max-w-2xl md:pt-[calc(4.75rem+env(safe-area-inset-top,0px))] lg:max-w-3xl">
+    <div className="mx-auto max-w-3xl px-4 pb-6 pt-[calc(4.5rem+env(safe-area-inset-top,0px))] md:max-w-2xl md:pt-[calc(4.75rem+env(safe-area-inset-top,0px))] lg:max-w-5xl xl:max-w-6xl">
       <CalendarClient
         ym={ym}
         prevYm={prevYm}
@@ -89,19 +120,7 @@ export default async function CalendarByDatePage({
         daysInMonth={daysInMonth}
         entries={entries}
         selectedDateYmd={date}
-        initialEvents={initialEvents.map((e) => ({
-          cacheId: e.id,
-          eventId: e.eventId,
-          title: e.title,
-          start: e.startIso,
-          end: e.endIso,
-          location: e.location,
-          description: e.description,
-          ...(e.fixedCategory ? { fixedCategory: e.fixedCategory } : {}),
-          calendarName: formatGoogleCalendarDisplayName(e.calendarId, e.calendarName),
-          colorId: e.eventColorId ?? e.calendarColorId ?? "",
-          calendarId: e.calendarId,
-        }))}
+        initialEvents={initialEvents}
       />
     </div>
   );

@@ -126,35 +126,72 @@ export function SettingsForm({ userId }: { userId: string }) {
     })();
   }, [applySettingsJson]);
 
-  useEffect(() => {
-    // 分類編集の候補（DBキャッシュ由来）を取得
-    void (async () => {
-      const res = await fetch("/api/calendar/classifier-options", { cache: "no-store", credentials: "same-origin" });
-      const json = (await res.json().catch(() => ({}))) as unknown;
-      if (!res.ok) return;
-      if (!json || typeof json !== "object" || Array.isArray(json)) return;
-      const o = json as Record<string, unknown>;
-      const calendarsRaw = o.calendars;
-      const colorIdsRaw = o.colorIds;
-      const calendars = Array.isArray(calendarsRaw)
-        ? calendarsRaw
-            .filter((x): x is { calendarId: string; calendarName: string; calendarColorId: string } => {
-              if (!x || typeof x !== "object" || Array.isArray(x)) return false;
-              const r = x as Record<string, unknown>;
-              return (
-                typeof r.calendarId === "string" &&
-                typeof r.calendarName === "string" &&
-                typeof r.calendarColorId === "string"
-              );
-            })
-            .slice(0, 200)
-        : [];
-      const colorIds = Array.isArray(colorIdsRaw)
-        ? colorIdsRaw.filter((x): x is string => typeof x === "string" && x.length > 0).slice(0, 200)
-        : [];
-      setOpeningOpts({ calendars, colorIds });
-    })();
+  const reloadClassifierOptions = useCallback(async () => {
+    const res = await fetch("/api/calendar/classifier-options", { cache: "no-store", credentials: "same-origin" });
+    const json = (await res.json().catch(() => ({}))) as unknown;
+    if (!res.ok) return;
+    if (!json || typeof json !== "object" || Array.isArray(json)) return;
+    const o = json as Record<string, unknown>;
+    const calendarsRaw = o.calendars;
+    const colorIdsRaw = o.colorIds;
+    const calendars = Array.isArray(calendarsRaw)
+      ? calendarsRaw
+          .filter((x): x is { calendarId: string; calendarName: string; calendarColorId: string } => {
+            if (!x || typeof x !== "object" || Array.isArray(x)) return false;
+            const r = x as Record<string, unknown>;
+            return (
+              typeof r.calendarId === "string" &&
+              typeof r.calendarName === "string" &&
+              typeof r.calendarColorId === "string"
+            );
+          })
+          .slice(0, 200)
+      : [];
+    const colorIds = Array.isArray(colorIdsRaw)
+      ? colorIdsRaw.filter((x): x is string => typeof x === "string" && x.length > 0).slice(0, 200)
+      : [];
+    setOpeningOpts({ calendars, colorIds });
   }, []);
+
+  useEffect(() => {
+    void reloadClassifierOptions();
+  }, [reloadClassifierOptions]);
+
+  const [appLocalCalendars, setAppLocalCalendars] = useState<
+    { calendarId: string; name: string; displayName: string }[]
+  >([]);
+  const [appLocalBusy, setAppLocalBusy] = useState(false);
+  const [newAppLocalName, setNewAppLocalName] = useState("");
+
+  const loadAppLocalCalendars = useCallback(async () => {
+    const res = await fetch("/api/calendar/local-calendars", { cache: "no-store", credentials: "same-origin" });
+    const json = (await res.json().catch(() => ({}))) as unknown;
+    if (!res.ok) return;
+    if (!json || typeof json !== "object" || Array.isArray(json)) return;
+    const raw = (json as Record<string, unknown>).calendars;
+    if (!Array.isArray(raw)) return;
+    const rows = raw
+      .filter((x): x is { calendarId: string; name: string; displayName: string } => {
+        if (!x || typeof x !== "object" || Array.isArray(x)) return false;
+        const r = x as Record<string, unknown>;
+        return (
+          typeof r.calendarId === "string" &&
+          typeof r.name === "string" &&
+          typeof r.displayName === "string"
+        );
+      })
+      .slice(0, 100);
+    setAppLocalCalendars(rows);
+  }, []);
+
+  useEffect(() => {
+    void loadAppLocalCalendars();
+  }, [loadAppLocalCalendars]);
+
+  const refreshAppLocalAndClassifier = useCallback(async () => {
+    await loadAppLocalCalendars();
+    await reloadClassifierOptions();
+  }, [loadAppLocalCalendars, reloadClassifierOptions]);
 
   useEffect(() => {
     function onRemote() {
@@ -581,6 +618,68 @@ export function SettingsForm({ userId }: { userId: string }) {
       </section>
 
       <section className="w-full min-w-0 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
+        <h2 className="font-medium text-zinc-900 dark:text-zinc-50">アプリ内カレンダー</h2>
+        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+          Google に同期せず、このアプリのデータベースだけに保存するカレンダーです。一覧では「名前(アプリ)」のように表示されます。削除するとそのカレンダー上の予定もすべて消えます。
+        </p>
+        <div className="mt-3 flex flex-wrap items-end gap-2">
+          <input
+            value={newAppLocalName}
+            onChange={(e) => setNewAppLocalName(e.target.value)}
+            placeholder="新しいカレンダー名"
+            aria-label="新しいアプリ内カレンダー名"
+            className="min-w-[12rem] flex-1 rounded-lg border border-zinc-200 px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+          />
+          <button
+            type="button"
+            disabled={appLocalBusy || !newAppLocalName.trim()}
+            onClick={() => {
+              void (async () => {
+                setAppLocalBusy(true);
+                setError(null);
+                try {
+                  const res = await fetch("/api/calendar/local-calendars", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ name: newAppLocalName }),
+                    credentials: "same-origin",
+                  });
+                  const json = (await res.json().catch(() => ({}))) as { error?: string };
+                  if (!res.ok) {
+                    setError(typeof json.error === "string" ? json.error : "追加に失敗しました");
+                    return;
+                  }
+                  setNewAppLocalName("");
+                  await refreshAppLocalAndClassifier();
+                } finally {
+                  setAppLocalBusy(false);
+                }
+              })();
+            }}
+            className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+          >
+            追加
+          </button>
+        </div>
+        {appLocalCalendars.length === 0 ? (
+          <p className="mt-3 text-sm text-zinc-500">まだありません。上で名前を付けて追加するか、カレンダー画面の表示設定からも追加できます。</p>
+        ) : (
+          <ul className="mt-3 space-y-3">
+            {appLocalCalendars.map((row) => (
+              <AppLocalCalendarSettingsRow
+                key={row.calendarId}
+                row={row}
+                disabled={appLocalBusy}
+                onBusy={setAppLocalBusy}
+                onError={setError}
+                onMutate={() => void refreshAppLocalAndClassifier()}
+              />
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="w-full min-w-0 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
         <h2 className="font-medium text-zinc-900 dark:text-zinc-50">プロンプト版</h2>
         <ul className="mt-2 space-y-1 font-mono text-xs text-zinc-600 dark:text-zinc-400">
           {Object.entries(data.promptVersions).map(([k, v]) => (
@@ -672,6 +771,105 @@ export function SettingsForm({ userId }: { userId: string }) {
         </div>
       ) : null}
     </>
+  );
+}
+
+function AppLocalCalendarSettingsRow({
+  row,
+  disabled,
+  onBusy,
+  onError,
+  onMutate,
+}: {
+  row: { calendarId: string; name: string; displayName: string };
+  disabled: boolean;
+  onBusy: (v: boolean) => void;
+  onError: (msg: string | null) => void;
+  onMutate: () => void;
+}) {
+  const [draftName, setDraftName] = useState(row.name);
+  useEffect(() => {
+    setDraftName(row.name);
+  }, [row.name]);
+
+  return (
+    <li className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700">
+      <p className="text-sm font-medium text-zinc-800 dark:text-zinc-100">{row.displayName}</p>
+      <p className="mt-0.5 font-mono text-[11px] text-zinc-500 dark:text-zinc-400">{row.calendarId}</p>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <input
+          value={draftName}
+          onChange={(e) => setDraftName(e.target.value)}
+          aria-label={`${row.displayName}の名前`}
+          className="min-w-[10rem] flex-1 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+        />
+        <button
+          type="button"
+          disabled={disabled || draftName.normalize("NFKC").trim() === row.name}
+          onClick={() => {
+            void (async () => {
+              onBusy(true);
+              onError(null);
+              try {
+                const res = await fetch("/api/calendar/local-calendars", {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ calendarId: row.calendarId, name: draftName }),
+                  credentials: "same-origin",
+                });
+                const json = (await res.json().catch(() => ({}))) as { error?: string };
+                if (!res.ok) {
+                  onError(typeof json.error === "string" ? json.error : "名前の更新に失敗しました");
+                  return;
+                }
+                onMutate();
+              } finally {
+                onBusy(false);
+              }
+            })();
+          }}
+          className="rounded-lg border border-zinc-200 px-2.5 py-1 text-xs font-medium dark:border-zinc-700"
+        >
+          名前を保存
+        </button>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => {
+            if (
+              !confirm(
+                `「${row.displayName}」を削除しますか？\nこのカレンダー上の予定はすべて消え、元に戻せません。`,
+              )
+            ) {
+              return;
+            }
+            void (async () => {
+              onBusy(true);
+              onError(null);
+              try {
+                const res = await fetch("/api/calendar/local-calendars", {
+                  method: "DELETE",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ calendarId: row.calendarId }),
+                  credentials: "same-origin",
+                });
+                const json = (await res.json().catch(() => ({}))) as { error?: string };
+                if (!res.ok) {
+                  onError(typeof json.error === "string" ? json.error : "削除に失敗しました");
+                  return;
+                }
+                onMutate();
+              } finally {
+                onBusy(false);
+              }
+            })();
+          }}
+          className="rounded-lg px-2.5 py-1 text-xs font-medium text-red-600 underline dark:text-red-400"
+        >
+          削除
+        </button>
+      </div>
+    </li>
   );
 }
 

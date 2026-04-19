@@ -20,6 +20,8 @@ const withPWA = withPWAInit({
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  /** @google-cloud/tasks は実行時に JSON を require するため、Webpack バンドルから外す */
+  serverExternalPackages: ["@google-cloud/tasks"],
 };
 
 export default withPWA(nextConfig);

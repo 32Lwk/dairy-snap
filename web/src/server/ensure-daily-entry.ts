@@ -7,6 +7,7 @@ const dailyEntryLatestThreadInclude = {
     take: 1,
     include: { messages: { orderBy: { createdAt: "asc" as const } } },
   },
+  images: { select: { id: true, mimeType: true, byteSize: true } },
 } as const;
 
 function isPrismaUniqueViolation(e: unknown): boolean {
@@ -23,7 +24,7 @@ export async function upsertDailyEntryForYmd(userId: string, entryDateYmd: strin
   };
 
   try {
-    return await prisma.dailyEntry.upsert({
+    await prisma.dailyEntry.upsert({
       where,
       create: {
         userId,
@@ -31,15 +32,14 @@ export async function upsertDailyEntryForYmd(userId: string, entryDateYmd: strin
         body: "",
       },
       update: {},
-      include: dailyEntryLatestThreadInclude,
     });
   } catch (e) {
-    if (isPrismaUniqueViolation(e)) {
-      return prisma.dailyEntry.findUniqueOrThrow({
-        where,
-        include: dailyEntryLatestThreadInclude,
-      });
-    }
-    throw e;
+    if (!isPrismaUniqueViolation(e)) throw e;
   }
+
+  // upsert の戻りに include が常に反映されないケースがあるため、毎回 find で images / threads を揃える
+  return prisma.dailyEntry.findUniqueOrThrow({
+    where,
+    include: dailyEntryLatestThreadInclude,
+  });
 }

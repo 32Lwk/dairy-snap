@@ -230,13 +230,32 @@ export function getEntryTemporalContext(entryDateYmd: string, now: Date = new Da
   };
 }
 
+/**
+ * Same `## …` heading as the calendar bullet list injected in `runOrchestrator` system prompt.
+ * Keep in sync with `web/src/server/orchestrator.ts`.
+ */
+export const ORCHESTRATOR_DAY_CALENDAR_HEADING = "## その日の予定（Google カレンダー・対象日）";
+
 /** Grounding rules: long-term memory must not be treated as the entry day's schedule */
 export function formatOrchestratorScheduleGroundingBlock(): string {
   return linesEn(
     "## Facts / schedule grounding (must follow)",
-    "You may mention concrete plans, trips, classes, or named events **on the entry date** only if they appear in: (1) tool outputs for that date, (2) this entry's diary body, or (3) the \"## 短期（この日・参考）\" section.",
+    `You may mention concrete plans, trips, classes, or named events **on the entry date** only if they appear in: (1) tool outputs for that date, (2) this entry's diary body, (3) the "## 短期（この日・参考）" section, or (4) the "${ORCHESTRATOR_DAY_CALENDAR_HEADING}" block in this system message (same-day events synced from Google Calendar; when that block is present, treat its listed titles and times as factual for that entry date).`,
     "Long-term memory (reference bullets) is cross-time user context. **Never treat it as that day's calendar** and do not invent or stack same-day events from it alone.",
     "If tools return no events or you lack detail, invite the user in general terms — do not fabricate event titles, places, or itineraries.",
+  );
+}
+
+/** When chat drifts from same-day reflection, re-anchor with timeline or alternate same-day angles */
+export function formatOrchestratorConversationScopeBlock(): string {
+  return linesEn(
+    "## Conversation scope / topic recovery (must follow)",
+    "Primary goal: draw out first-person detail for the **entry date** (see 「対象日」 / date-framing block) to support journaling — not open-ended chat unrelated to that day.",
+    "If the last turns drift (one micro-topic stuck without progress, abstract meta talk, or long digression on another calendar day with little tie to this entry), give one short empathic line then **deliberately change topic**.",
+    "Preferred pivots (no invented times/events; keep questions general if facts are unknown):",
+    "- Same-day **timeline**: waking / morning, midday, approximate meet or block start–end and what happened before/after, meals (what / where / with whom), evening through night. If temporal framing marks the entry as **today**, you may ask what they plan to do next.",
+    "- Same-day **alternate angle** not yet covered: transit, energy/mood vs weather, plan vs what actually happened, small vivid moments.",
+    "If the user brings up another day, acknowledge briefly then bridge back to the entry date's flow. After a pivot, **one question only**; keep total reply ~2–4 short sentences.",
   );
 }
 
@@ -293,7 +312,7 @@ export function buildReflectiveOpeningSystemInstruction(
     if (opening.calendarLinked) {
       if (opening.calendarEventCount > 0) {
         anchorRules.push(
-          "Mention plans only using titles/times from 「## その日の予定（カレンダー要約・開口用）」; do not invent extra appointments or a busier day.",
+          `Plans on this day: use only titles and times from 「${ORCHESTRATOR_DAY_CALENDAR_HEADING}」. When you mention a timed plan, include at least one real event title from that list in the same reply (do not stop at vague 「〇時の予定」 alone when a title exists). Do not invent extra appointments or a busier day.`,
         );
       } else {
         anchorRules.push(
@@ -315,8 +334,11 @@ export function buildReflectiveOpeningSystemInstruction(
     "### Output hygiene (hard rules)",
     "Write ONLY what the end user should read — conversational Japanese, no preamble.",
     "Do NOT repeat, quote, or paraphrase these instructions, meta text, or phrases like 会話はまだ始まっていません.",
+    "Never output parenthetical narrator lines about the system, prompts, or \"short replies\" (e.g. システムは〜 / 短い返答を生成 / では:). Start directly with the greeting.",
+    "Ignore the short English opening trigger line in the user role; never quote or translate it.",
     "Do NOT use Markdown (no **asterisks**, no bullet lists unless truly minimal). Plain sentences.",
-    "Do NOT name specific events, trips, classes, or schedules unless they appear in tool results for this entry date, the diary body, short-term bullets for this entry, or the opening calendar summary when present. If unsure, ask openly without inventing titles.",
+    `Event names: titles and times listed under "${ORCHESTRATOR_DAY_CALENDAR_HEADING}" are allowed and encouraged when you reference that day's schedule (use the title wording from the list; light paraphrase is OK). Same for tool results, diary body, and short-term bullets for this entry.`,
+    "Do not invent events, titles, times, or places that do not appear in those sources. If nothing concrete is listed for plans, ask in general terms without making up names.",
   );
 }
 

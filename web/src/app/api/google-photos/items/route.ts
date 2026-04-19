@@ -35,8 +35,9 @@ export async function GET(req: Request) {
     items: rows.map((r) => ({
       ...r,
       creationTime: r.creationTime?.toISOString() ?? null,
-      thumbUrl: `${r.baseUrl}=w480-h480-c`,
-      displayUrl: `${r.baseUrl}=w1600-h1600`,
+      /** ブラウザの img では Google baseUrl に Authorization を付けられないため、自前プロキシ経由 */
+      thumbUrl: `/api/google-photos/preview?id=${encodeURIComponent(r.id)}&w=480&h=480`,
+      displayUrl: `/api/google-photos/preview?id=${encodeURIComponent(r.id)}&w=1600&h=1600`,
     })),
   });
 }

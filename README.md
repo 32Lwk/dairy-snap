@@ -2,6 +2,10 @@
 
 個人向け日記サービス「daily-snap」のローカル MVP 実装です。要件は `purompt.md` を正とし、まず Web（PWA）を完成させ、将来 React Native（Expo）から同じ API を叩ける設計にします。
 
+## 更新履歴
+
+日付ごとの変更内容・Git 履歴の要約は **[CHANGELOG.md](./CHANGELOG.md)** にまとめています。
+
 ## ローカル開発
 
 ### 1) DB 起動

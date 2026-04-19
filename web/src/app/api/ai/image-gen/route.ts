@@ -14,6 +14,8 @@ export const runtime = "nodejs";
 const schema = z.object({
   entryId: z.string().min(1),
   prompt: z.string().min(1).max(2000),
+  /** 日記草案など。情景に反映する（画像内に文字は出さない旨をプロンプトで指示） */
+  journalContext: z.string().max(12000).optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -40,11 +42,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "本日の画像生成上限に達しました" }, { status: 429 });
   }
 
+  const ctx = parsed.data.journalContext?.trim();
+  const ctxBlock =
+    ctx && ctx.length > 0
+      ? `次の日記・メモの内容に視覚的に沿った一枚の写真にしてください（登場人物は一般化し特定個人の顔は写さない）。画像内に文字・看板・スクリーンの判読可能な文字は入れないでください。\n\n---\n${ctx.slice(0, 6000)}\n---\n\n`
+      : "";
+
   const openai = getOpenAI();
   const started = Date.now();
   const img = await openai.images.generate({
     model: "dall-e-3",
-    prompt: `フォトリアルな写真風。テキストのみから生成。日本の日記向け。${parsed.data.prompt}`,
+    prompt: `フォトリアルな写真風。日本の日常のワンシーン。${ctxBlock}追加の指示: ${parsed.data.prompt}`,
     size: "1024x1024",
     quality: "hd",
     n: 1,

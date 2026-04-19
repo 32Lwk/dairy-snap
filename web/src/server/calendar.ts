@@ -8,10 +8,16 @@ import {
   buildGoogleEventSnapshot,
   descriptionForGcalColumn,
 } from "@/lib/google-event-snapshot";
+import { isAppLocalCalendarId } from "@/lib/app-local-calendar-id";
 import { CALENDAR_OPENING_BUILTIN_CATS } from "@/lib/user-settings";
 import { google, calendar_v3 } from "googleapis";
 import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/server/db";
+import {
+  insertAppLocalCalendarEvent,
+  mergeAppLocalEventsIntoGoogleList,
+  patchAppLocalCalendarEvent,
+} from "@/server/app-local-calendar";
 import { deleteEmbedding, upsertTextEmbedding } from "@/server/embeddings";
 
 export type CalendarEventBrief = {
@@ -44,7 +50,8 @@ export type CalendarFetchResult =
   | { ok: true; events: CalendarEventBrief[] }
   | { ok: false; reason: CalendarFetchFailureReason; detail?: string };
 
-const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
+const CALENDAR_READONLY_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
+const CALENDAR_EVENTS_WRITE_SCOPE = "https://www.googleapis.com/auth/calendar.events";
 
 const GCAL_EVENT_CACHE_SELECT_BASE = {
   id: true,
@@ -463,6 +470,8 @@ export async function getCalendarConnectionSummary(userId: string): Promise<{
   hasGoogleAccount: boolean;
   hasRefreshToken: boolean;
   hasCalendarReadonlyScope: boolean;
+  /** 予定の作成・更新（Google 上）に必要。再ログインで付与されます。 */
+  hasCalendarEventsWriteScope: boolean;
   hasGooglePhotosPickerScope: boolean;
   hasAppleAccount: boolean;
   appleAuthConfigured: boolean;
@@ -482,12 +491,464 @@ export async function getCalendarConnectionSummary(userId: string): Promise<{
   return {
     hasGoogleAccount: Boolean(googleAccount),
     hasRefreshToken: Boolean(googleAccount?.refresh_token),
-    hasCalendarReadonlyScope: scopes.includes(CALENDAR_SCOPE),
+    hasCalendarReadonlyScope: scopes.includes(CALENDAR_READONLY_SCOPE),
+    hasCalendarEventsWriteScope: scopes.includes(CALENDAR_EVENTS_WRITE_SCOPE),
     hasGooglePhotosPickerScope: scopes.includes("https://www.googleapis.com/auth/photospicker.mediaitems.readonly"),
     hasAppleAccount: Boolean(appleAccount),
     appleAuthConfigured: Boolean(process.env.AUTH_APPLE_ID && process.env.AUTH_APPLE_SECRET),
     scopes,
   };
+}
+
+/** PATCH / POST 共通の本文フィールド（calendarId / eventId は別） */
+export type CalendarEventWriteFields = {
+  summary: string;
+  description: string;
+  location: string;
+  allDay: boolean;
+  /** 終日: YYYY-MM-DD（開始）。終了は別フィールド。 */
+  allDayStartYmd: string;
+  /** 終日: YYYY-MM-DD（含む最終日）。Google の end.date は翌日になるようサーバーで変換。 */
+  allDayEndInclusiveYmd: string;
+  /** 時間指定: Asia/Tokyo のローカル表現 YYYY-MM-DDTHH:mm:ss（オフセットなしで送る） */
+  startLocal: string;
+  endLocal: string;
+};
+
+export type CalendarEventPatchInput = CalendarEventWriteFields & {
+  calendarId: string;
+  eventId: string;
+};
+
+export type CalendarEventInsertInput = CalendarEventWriteFields & {
+  calendarId: string;
+};
+
+export type CalendarEventPatchFailureReason =
+  | "no_google_account"
+  | "no_refresh_token"
+  | "oauth_not_configured"
+  | "invalid_grant"
+  | "no_write_scope"
+  | "validation_error"
+  | "calendar_api_error"
+  | "not_found"
+  | "unknown";
+
+function buildGoogleCalendarEventResourceFromWriteFields(input: CalendarEventWriteFields):
+  | { ok: true; requestBody: GoogleCalEvent }
+  | { ok: false; detail: string } {
+  const summary = input.summary.normalize("NFKC").trim();
+  if (!summary) {
+    return { ok: false, detail: "タイトルを入力してください" };
+  }
+  if (summary.length > 4000) {
+    return { ok: false, detail: "タイトルが長すぎます" };
+  }
+  const description = input.description.normalize("NFKC").slice(0, 500_000);
+  const location = input.location.normalize("NFKC").trim().slice(0, 2000);
+
+  if (input.allDay) {
+    const start = input.allDayStartYmd.trim();
+    const endInc = input.allDayEndInclusiveYmd.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(endInc)) {
+      return { ok: false, detail: "終日の日付形式が不正です" };
+    }
+    if (Date.parse(`${start}T00:00:00+09:00`) > Date.parse(`${endInc}T00:00:00+09:00`)) {
+      return { ok: false, detail: "終了日は開始日以降にしてください" };
+    }
+    const endExclusive = addCalendarDaysYmdTokyo(endInc, 1);
+    return {
+      ok: true,
+      requestBody: {
+        summary,
+        description,
+        location,
+        start: { date: start },
+        end: { date: endExclusive },
+      },
+    };
+  }
+
+  const s = input.startLocal.trim();
+  const en = input.endLocal.trim();
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(s) || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(en)) {
+    return { ok: false, detail: "開始・終了の日時形式が不正です" };
+  }
+  const startCore = s.length === 16 ? `${s}:00` : s;
+  const endCore = en.length === 16 ? `${en}:00` : en;
+  const startMs = Date.parse(`${startCore}+09:00`);
+  const endMs = Date.parse(`${endCore}+09:00`);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs >= endMs) {
+    return { ok: false, detail: "終了は開始より後にしてください" };
+  }
+  return {
+    ok: true,
+    requestBody: {
+      summary,
+      description,
+      location,
+      start: { dateTime: startCore, timeZone: "Asia/Tokyo" },
+      end: { dateTime: endCore, timeZone: "Asia/Tokyo" },
+    },
+  };
+}
+
+async function getGoogleOAuthForCalendarWrite(userId: string): Promise<
+  | { ok: true; oauth2: InstanceType<typeof google.auth.OAuth2> }
+  | { ok: false; reason: CalendarEventPatchFailureReason; detail?: string }
+> {
+  const account = await prisma.account.findFirst({
+    where: { userId, provider: "google" },
+    select: { refresh_token: true, scope: true },
+  });
+  if (!account) return { ok: false, reason: "no_google_account" };
+  if (!account.refresh_token) {
+    return {
+      ok: false,
+      reason: "no_refresh_token",
+      detail:
+        "Google がリフレッシュトークンを発行していません。設定の「Google を再連携（カレンダー）」から再ログインしてください。",
+    };
+  }
+
+  const scopes = account.scope?.split(/\s+/).filter(Boolean) ?? [];
+  if (!scopes.includes(CALENDAR_EVENTS_WRITE_SCOPE)) {
+    return {
+      ok: false,
+      reason: "no_write_scope",
+      detail: "予定の追加・編集には Google の再連携で「カレンダー（イベントの編集）」スコープが必要です。",
+    };
+  }
+
+  const clientId = process.env.AUTH_GOOGLE_ID;
+  const clientSecret = process.env.AUTH_GOOGLE_SECRET;
+  if (!clientId || !clientSecret) {
+    return { ok: false, reason: "oauth_not_configured" };
+  }
+
+  const oauth2 = new google.auth.OAuth2(clientId, clientSecret);
+  oauth2.setCredentials({ refresh_token: account.refresh_token });
+
+  try {
+    await oauth2.getAccessToken();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/invalid_grant|Invalid grant/i.test(msg)) {
+      return {
+        ok: false,
+        reason: "invalid_grant",
+        detail: "トークンが無効です。設定から Google を再連携してください。",
+      };
+    }
+    return { ok: false, reason: "unknown", detail: msg };
+  }
+
+  return { ok: true, oauth2 };
+}
+
+async function resolveCalendarMetaFromCache(
+  userId: string,
+  calendarId: string,
+): Promise<{ calendarName: string; calendarColorId: string }> {
+  const row = await prisma.googleCalendarEventCache.findFirst({
+    where: { userId, calendarId },
+    select: { calendarName: true, calendarColorId: true },
+    orderBy: { updatedAt: "desc" },
+  });
+  return {
+    calendarName: formatGoogleCalendarDisplayName(calendarId, row?.calendarName ?? null),
+    calendarColorId: (row?.calendarColorId ?? "").trim(),
+  };
+}
+
+async function persistGcalEventToCacheAfterFetch(
+  userId: string,
+  calendarId: string,
+  eventId: string,
+  refreshed: GoogleCalEvent,
+  meta: { calendarName: string; calendarColorId: string },
+): Promise<CalendarEventBrief> {
+  const brief = toBrief(refreshed, { calendarId, ...meta });
+  const startIso = brief.start;
+  const endIso = brief.end || brief.start;
+  if (!startIso) {
+    throw new Error("更新後の開始時刻が空でした");
+  }
+
+  const eventColorId = refreshed.colorId ?? "";
+  const eventPayload = buildGoogleEventSnapshot(refreshed);
+  const eventSearchBlob = buildGoogleEventSearchBlob(refreshed, brief.description);
+  const updatedAtGcal = refreshed.updated ? new Date(refreshed.updated) : null;
+  const isCancelled = refreshed.status === "cancelled";
+
+  const cached = await prisma.googleCalendarEventCache.upsert({
+    where: { userId_calendarId_eventId: { userId, calendarId, eventId } },
+    create: {
+      userId,
+      calendarId,
+      eventId,
+      calendarName: meta.calendarName || undefined,
+      calendarColorId: meta.calendarColorId || undefined,
+      eventColorId: eventColorId || undefined,
+      title: brief.title,
+      location: brief.location,
+      description: brief.description,
+      eventPayload,
+      eventSearchBlob,
+      startIso,
+      endIso,
+      startAt: dateFromIsoLikeTokyo(startIso, false),
+      endAt: dateFromIsoLikeTokyo(endIso, true),
+      isCancelled,
+      updatedAtGcal: updatedAtGcal ?? undefined,
+    },
+    update: {
+      calendarName: meta.calendarName || undefined,
+      calendarColorId: meta.calendarColorId || undefined,
+      eventColorId: eventColorId || undefined,
+      title: brief.title,
+      location: brief.location,
+      description: brief.description,
+      eventPayload,
+      eventSearchBlob,
+      startIso,
+      endIso,
+      startAt: dateFromIsoLikeTokyo(startIso, false),
+      endAt: dateFromIsoLikeTokyo(endIso, true),
+      isCancelled,
+      updatedAtGcal: updatedAtGcal ?? undefined,
+    },
+  });
+
+  if (process.env.OPENAI_API_KEY) {
+    if (cached.isCancelled) {
+      void deleteEmbedding(userId, "GCAL_EVENT", cached.id).catch(() => {});
+    } else {
+      const fc = cached.fixedCategory?.trim();
+      const catLine = fc ? CALENDAR_OPENING_BUILTIN_CATS.find((x) => x.id === fc)?.label ?? fc : "";
+      const blob = [cached.title, cached.location, cached.description, cached.eventSearchBlob, catLine]
+        .filter(Boolean)
+        .join("\n");
+      void upsertTextEmbedding(userId, "GCAL_EVENT", cached.id, blob).catch(() => {});
+    }
+  }
+
+  return {
+    eventId,
+    calendarId,
+    calendarName: meta.calendarName,
+    colorId: eventColorId || meta.calendarColorId || "",
+    title: brief.title,
+    start: startIso,
+    end: endIso,
+    location: brief.location,
+    description: brief.description,
+    cacheId: cached.id,
+    ...(cached.fixedCategory ? { fixedCategory: cached.fixedCategory } : {}),
+  };
+}
+
+/**
+ * Google Calendar に予定を追加し、ローカル DB キャッシュに反映します。
+ */
+export async function insertGoogleCalendarEventForUser(
+  userId: string,
+  input: CalendarEventInsertInput,
+): Promise<
+  { ok: true; event: CalendarEventBrief } | { ok: false; reason: CalendarEventPatchFailureReason; detail?: string }
+> {
+  const calendarId = input.calendarId.trim();
+  if (!calendarId) {
+    return { ok: false, reason: "validation_error", detail: "calendarId が必要です" };
+  }
+
+  if (isAppLocalCalendarId(calendarId)) {
+    const wf: CalendarEventWriteFields = {
+      summary: input.summary,
+      description: input.description,
+      location: input.location,
+      allDay: input.allDay,
+      allDayStartYmd: input.allDayStartYmd,
+      allDayEndInclusiveYmd: input.allDayEndInclusiveYmd,
+      startLocal: input.startLocal,
+      endLocal: input.endLocal,
+    };
+    const r = await insertAppLocalCalendarEvent(userId, calendarId, wf);
+    if (!r.ok) {
+      return { ok: false, reason: "validation_error", detail: r.error };
+    }
+    return { ok: true, event: r.event };
+  }
+
+  const auth = await getGoogleOAuthForCalendarWrite(userId);
+  if (!auth.ok) return auth;
+
+  const built = buildGoogleCalendarEventResourceFromWriteFields(input);
+  if (!built.ok) {
+    return { ok: false, reason: "validation_error", detail: built.detail };
+  }
+
+  const meta = await resolveCalendarMetaFromCache(userId, calendarId);
+  const cal = google.calendar({ version: "v3", auth: auth.oauth2 });
+
+  let createdId: string;
+  try {
+    const ins = await cal.events.insert({
+      calendarId,
+      requestBody: built.requestBody,
+    });
+    const id = ins.data.id?.trim() ?? "";
+    if (!id) {
+      return { ok: false, reason: "calendar_api_error", detail: "作成レスポンスに event id がありませんでした" };
+    }
+    createdId = id;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const code =
+      typeof e === "object" && e !== null && "code" in e ? Number((e as { code?: number }).code) : undefined;
+    if (code === 403) {
+      return {
+        ok: false,
+        reason: "calendar_api_error",
+        detail: "Google 側で作成が拒否されました（権限・共有設定・スコープを確認してください）。",
+      };
+    }
+    return { ok: false, reason: "calendar_api_error", detail: msg };
+  }
+
+  let refreshed: GoogleCalEvent;
+  try {
+    const got = await cal.events.get({ calendarId, eventId: createdId });
+    refreshed = got.data;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, reason: "calendar_api_error", detail: `作成後の取得に失敗しました: ${msg}` };
+  }
+
+  try {
+    const event = await persistGcalEventToCacheAfterFetch(userId, calendarId, createdId, refreshed, meta);
+    return { ok: true, event };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, reason: "calendar_api_error", detail: msg };
+  }
+}
+
+/**
+ * Google Calendar 上の予定を更新し、ローカル DB キャッシュを揃えます。
+ * トークンに `https://www.googleapis.com/auth/calendar.events` が必要です。
+ */
+export async function patchGoogleCalendarEventForUser(
+  userId: string,
+  input: CalendarEventPatchInput,
+): Promise<
+  { ok: true; event: CalendarEventBrief } | { ok: false; reason: CalendarEventPatchFailureReason; detail?: string }
+> {
+  const calendarId = input.calendarId.trim();
+  const eventId = input.eventId.trim();
+  if (!calendarId || !eventId) {
+    return { ok: false, reason: "validation_error", detail: "calendarId と eventId が必要です" };
+  }
+
+  if (isAppLocalCalendarId(calendarId)) {
+    const wf: CalendarEventWriteFields = {
+      summary: input.summary,
+      description: input.description,
+      location: input.location,
+      allDay: input.allDay,
+      allDayStartYmd: input.allDayStartYmd,
+      allDayEndInclusiveYmd: input.allDayEndInclusiveYmd,
+      startLocal: input.startLocal,
+      endLocal: input.endLocal,
+    };
+    const r = await patchAppLocalCalendarEvent(userId, calendarId, eventId, wf);
+    if (!r.ok) {
+      return { ok: false, reason: r.error.includes("見つかりません") ? "not_found" : "validation_error", detail: r.error };
+    }
+    return { ok: true, event: r.event };
+  }
+
+  const auth = await getGoogleOAuthForCalendarWrite(userId);
+  if (!auth.ok) return auth;
+
+  const built = buildGoogleCalendarEventResourceFromWriteFields(input);
+  if (!built.ok) {
+    return { ok: false, reason: "validation_error", detail: built.detail };
+  }
+  const requestBody = built.requestBody;
+
+  const existing = await prisma.googleCalendarEventCache.findUnique({
+    where: { userId_calendarId_eventId: { userId, calendarId, eventId } },
+    select: {
+      id: true,
+      calendarName: true,
+      calendarColorId: true,
+      fixedCategory: true,
+    },
+  });
+  if (!existing) {
+    return { ok: false, reason: "not_found", detail: "ローカルに該当予定がありません。同期後にもう一度お試しください。" };
+  }
+
+  const cal = google.calendar({ version: "v3", auth: auth.oauth2 });
+
+  try {
+    await cal.events.patch({
+      calendarId,
+      eventId,
+      requestBody,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const code =
+      typeof e === "object" && e !== null && "code" in e ? Number((e as { code?: number }).code) : undefined;
+    if (code === 404) {
+      return { ok: false, reason: "not_found", detail: "Google 上に該当予定が見つかりませんでした。" };
+    }
+    if (code === 403) {
+      return {
+        ok: false,
+        reason: "calendar_api_error",
+        detail: "Google 側で更新が拒否されました（権限・共有設定・スコープを確認してください）。",
+      };
+    }
+    return { ok: false, reason: "calendar_api_error", detail: msg };
+  }
+
+  let refreshed: GoogleCalEvent;
+  try {
+    const got = await cal.events.get({ calendarId, eventId });
+    refreshed = got.data;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, reason: "calendar_api_error", detail: `更新後の取得に失敗しました: ${msg}` };
+  }
+
+  const meta = {
+    calendarName: formatGoogleCalendarDisplayName(calendarId, existing.calendarName),
+    calendarColorId: existing.calendarColorId ?? "",
+  };
+
+  try {
+    const out = await persistGcalEventToCacheAfterFetch(userId, calendarId, eventId, refreshed, meta);
+    return { ok: true, event: out };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, reason: "calendar_api_error", detail: msg };
+  }
+}
+
+function addCalendarDaysYmdTokyo(ymd: string, deltaDays: number): string {
+  const ms = Date.parse(`${ymd}T12:00:00+09:00`) + deltaDays * 86400000;
+  return new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  })
+    .format(new Date(ms))
+    .replaceAll("/", "-");
 }
 
 /** 未来30日の予定（タイトル・開始/終了・場所・説明） */
@@ -609,7 +1070,12 @@ export async function fetchCalendarEventsForUser(
           : sortKeyIso(a.start) - sortKeyIso(b.start),
       );
 
-    return { ok: true, events };
+    const merged = await mergeAppLocalEventsIntoGoogleList(userId, timeMin, timeMax, events, {
+      scopedCalendarId: scopedCalId,
+      scopeOneCalendar,
+      limit,
+    });
+    return { ok: true, events: merged };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     const code =
@@ -731,7 +1197,11 @@ export async function fetchCalendarEventsForDay(
       .filter((e) => e.start)
       .sort((a, b) => sortKeyIso(a.start) - sortKeyIso(b.start));
 
-    return { ok: true, events };
+    const merged = await mergeAppLocalEventsIntoGoogleList(userId, dayStart, dayEnd, events, {
+      scopeOneCalendar: false,
+      limit: 50,
+    });
+    return { ok: true, events: merged };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     const code =

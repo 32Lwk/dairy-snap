@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { guardInternalAgentApi } from "@/lib/api/internal-agent-guard";
 import { requireSession } from "@/lib/api/require-session";
 import { runSupervisorAgent } from "@/server/agents/supervisor-agent";
 
@@ -15,6 +16,8 @@ const bodySchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
+  const deny = guardInternalAgentApi(req);
+  if (deny) return deny;
   const session = await requireSession();
   if ("response" in session) return session.response;
 

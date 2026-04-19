@@ -1,8 +1,9 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { z } from "zod";
 import { requireSession } from "@/lib/api/require-session";
 import { applyAmPmWeatherForEntry } from "@/server/entry-weather";
 import { prisma } from "@/server/db";
+import { runMasMemoryDiaryConsolidation, shouldRunMemoryDiaryConsolidationOnBodyChange } from "@/server/mas-memory";
 
 const patchSchema = z.object({
   title: z.string().nullable().optional(),
@@ -82,5 +83,22 @@ export async function PATCH(
   }
 
   const refreshed = await prisma.dailyEntry.findUnique({ where: { id: entryId } });
-  return NextResponse.json({ entry: refreshed ?? entry });
+  const finalEntry = refreshed ?? entry;
+
+  if (
+    parsed.data.body !== undefined &&
+    shouldRunMemoryDiaryConsolidationOnBodyChange(existing.body, finalEntry.body)
+  ) {
+    after(() =>
+      runMasMemoryDiaryConsolidation({
+        userId: session.user.id,
+        entryId: finalEntry.id,
+        entryDateYmd: finalEntry.entryDateYmd,
+        encryptionMode: finalEntry.encryptionMode,
+        diaryBody: finalEntry.body,
+      }).catch(() => {}),
+    );
+  }
+
+  return NextResponse.json({ entry: finalEntry });
 }

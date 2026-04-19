@@ -30,7 +30,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         params: {
           access_type: "offline",
           scope:
-            "openid email profile https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/photospicker.mediaitems.readonly",
+            "openid email profile https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/photospicker.mediaitems.readonly",
         },
       },
     }),

@@ -95,6 +95,32 @@ export async function GET(req: NextRequest) {
         return a.key.localeCompare(b.key);
       });
 
+    /** 自動記憶のバックフィルが「まだ追いついていない」エントリ数（未実行 or メッセージが増えた） */
+    const threadsForPending = await prisma.chatThread.findMany({
+      where: { entry: { userId: session.user.id } },
+      select: {
+        entryId: true,
+        memoryChatBackfillAt: true,
+        memoryChatBackfillMsgCount: true,
+        _count: {
+          select: {
+            messages: { where: { role: { in: ["user", "assistant"] } } },
+          },
+        },
+      },
+    });
+    const pendingEntryIds = new Set<string>();
+    for (const t of threadsForPending) {
+      const ua = t._count.messages;
+      if (ua < 2) continue;
+      const snapshotCurrent =
+        t.memoryChatBackfillAt != null &&
+        t.memoryChatBackfillMsgCount != null &&
+        t.memoryChatBackfillMsgCount === ua;
+      if (!snapshotCurrent) pendingEntryIds.add(t.entryId);
+    }
+    const pendingChatMemoryBackfillCount = pendingEntryIds.size;
+
     return NextResponse.json(
       {
         entryDates,
@@ -102,6 +128,7 @@ export async function GET(req: NextRequest) {
         shortTermGroups,
         longTermGroups,
         agentMemory,
+        pendingChatMemoryBackfillCount,
       },
       JSON_NO_CACHE,
     );
