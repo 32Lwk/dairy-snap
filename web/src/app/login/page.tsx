@@ -36,11 +36,10 @@ export default async function LoginPage({
         <AuthSessionProvider>
           <div className="mt-6 space-y-3">
             <GoogleSignInButton callbackUrl={next} />
-            {isAppleAuthConfigured ? <AppleSignInButton callbackUrl={next} /> : null}
+            <AppleSignInButton callbackUrl={next} disabled={!isAppleAuthConfigured} />
           </div>
         </AuthSessionProvider>
       </div>
     </div>
   );
 }
-
