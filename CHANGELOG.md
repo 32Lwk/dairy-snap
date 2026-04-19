@@ -508,6 +508,8 @@ git log -1 --oneline origin/main
 | `58fdecb` | docs: CHANGELOG のコミット記述を先端非依存に整理 |
 | `aa2bb50` | docs: CHANGELOG を全日程で詳細化（日別・DB・API・運用） |
 
+（このファイルの追記のみのコミットは、都度 `git log CHANGELOG.md` で確認してください。）
+
 機能の本体は **`c73490b`**。`22ba67d`〜`58fdecb` は **本 CHANGELOG のメタ情報整備**、`aa2bb50` は **CHANGELOG 本文の全面拡張**（本リリースノート相当）。
 
 ### `c73490b` — 全体像（規模感）
