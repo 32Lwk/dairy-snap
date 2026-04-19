@@ -1,4 +1,10 @@
 import { getOpenAI } from "@/lib/ai/openai";
+import {
+  chatCompletionOutputTokenLimit,
+  getAgentQualityChatFallbackModel,
+  getAgentQualityChatModel,
+} from "@/lib/ai/openai-chat-models";
+import { withChatModelFallback } from "@/lib/ai/openai-model-fallback";
 import { fetchCalendarEventsForDay } from "@/server/calendar";
 import { prisma } from "@/server/db";
 import type { AgentRequest, AgentResponse } from "./types";
@@ -76,14 +82,19 @@ export async function runCalendarDailyAgent(req: AgentRequest): Promise<AgentRes
     .join("\n\n");
 
   const openai = getOpenAI();
-  const completion = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    max_tokens: 400,
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: contextBlock },
-    ],
-  });
+  const completion = await withChatModelFallback(
+    getAgentQualityChatModel(),
+    getAgentQualityChatFallbackModel(),
+    (model) =>
+      openai.chat.completions.create({
+        model,
+        ...chatCompletionOutputTokenLimit(model, 400),
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: contextBlock },
+        ],
+      }),
+  );
 
   const answer = completion.choices[0]?.message?.content?.trim() ?? "";
   const hasRelevantInfo = answer.length > 0 && eventsBlock !== "（カレンダー未連携または予定なし）" && eventsBlock !== "（該当予定なし）";

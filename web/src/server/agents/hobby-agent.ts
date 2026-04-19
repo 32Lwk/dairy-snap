@@ -1,4 +1,10 @@
 import { getOpenAI } from "@/lib/ai/openai";
+import {
+  chatCompletionOutputTokenLimit,
+  getAgentQualityChatFallbackModel,
+  getAgentQualityChatModel,
+} from "@/lib/ai/openai-chat-models";
+import { withChatModelFallback } from "@/lib/ai/openai-model-fallback";
 import { parseUserSettings } from "@/lib/user-settings";
 import { formatInterestPicksForPrompt } from "@/lib/interest-taxonomy";
 import { prisma } from "@/server/db";
@@ -41,14 +47,19 @@ export async function runHobbyAgent(req: AgentRequest): Promise<AgentResponse> {
   }
 
   const openai = getOpenAI();
-  const completion = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    max_tokens: 400,
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: contextBlock },
-    ],
-  });
+  const completion = await withChatModelFallback(
+    getAgentQualityChatModel(),
+    getAgentQualityChatFallbackModel(),
+    (model) =>
+      openai.chat.completions.create({
+        model,
+        ...chatCompletionOutputTokenLimit(model, 400),
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: contextBlock },
+        ],
+      }),
+  );
 
   const answer = completion.choices[0]?.message?.content?.trim() ?? "";
   return { answer, hasRelevantInfo: answer.length > 0 && hasAnyHobbyInfo };

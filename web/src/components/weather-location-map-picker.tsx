@@ -53,10 +53,13 @@ export function WeatherLocationMapPicker({
   const centerLat = hasPin ? latitude! : TOKYO[0];
   const centerLng = hasPin ? longitude! : TOKYO[1];
   const fallbackZoom = hasPin ? 13 : 11;
+  /** Avoid remounting on every drag; remount when toggling between「保存地点あり」and探索（東京）. */
+  const mapKey = hasPin ? "pinned" : "explore-tokyo";
 
   return (
     <div className="relative z-0 h-56 w-full overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-700 md:h-64">
       <MapContainer
+        key={mapKey}
         center={[centerLat, centerLng]}
         zoom={fallbackZoom}
         className="h-full w-full [&_.leaflet-container]:h-full [&_.leaflet-container]:w-full [&_.leaflet-container]:bg-zinc-100 dark:[&_.leaflet-container]:bg-zinc-900"

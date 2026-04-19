@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import { resolveGcalEventColor } from "@/lib/gcal-event-color";
 type EntryBrief = { entryDateYmd: string; title: string | null };
 type Ev = {
@@ -70,6 +70,20 @@ async function fetchMonthEventsList(ym: string): Promise<Ev[]> {
   return p;
 }
 
+export function peekMonthListEventsCache(ym: string): Ev[] | undefined {
+  return listMonthCache.get(ym);
+}
+
+export function invalidateMonthListEventsCache(ym?: string) {
+  if (ym) {
+    listMonthCache.delete(ym);
+    listMonthInflight.delete(ym);
+    return;
+  }
+  listMonthCache.clear();
+  listMonthInflight.clear();
+}
+
 export function MonthList({
   ym,
   prevYm,
@@ -80,6 +94,7 @@ export function MonthList({
   calendarHexById,
   selectedDateYmd,
   filter,
+  onDayActivate,
 }: {
   ym: string;
   prevYm: string;
@@ -90,6 +105,7 @@ export function MonthList({
   calendarHexById: Record<string, string>;
   selectedDateYmd?: string;
   filter?: { apply: (ev: Ev) => boolean; infer: (ev: Ev) => string };
+  onDayActivate?: (ymd: string, e: MouseEvent<HTMLAnchorElement>) => void;
 }) {
   const [events, setEvents] = useState<Ev[] | null>(() => initialEvents ?? null);
 
@@ -193,6 +209,7 @@ export function MonthList({
             <li key={ymd}>
               <Link
                 href={`/calendar/${ymd}`}
+                onClick={onDayActivate ? (e) => onDayActivate(ymd, e) : undefined}
                 className={[
                   "flex min-h-12 flex-col gap-1 rounded-xl border px-3 py-2 text-left transition-colors",
                   has

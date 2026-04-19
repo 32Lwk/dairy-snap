@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AgentPersonaPreferences } from "@/components/agent-persona-preferences";
 import { InterestPicksControl } from "@/components/interest-picks-control";
 import { ageYearsFromYmd, localYmdToday, sanitizeHtmlDateYmd } from "@/lib/age-from-ymd";
@@ -181,6 +181,22 @@ type Props = {
   headerActions?: ReactNode;
 };
 
+const AUTO_SAVE_DEBOUNCE_MS = 800;
+
+function patchBodyForProfile(profile: UserProfilePayload, finalizeOnboarding: boolean) {
+  const birthYmd = sanitizeHtmlDateYmd(profile.birthDate ?? "");
+  const zodiacOut = birthYmd ? westernZodiacJaFromYmd(birthYmd) ?? "" : "";
+  const apiProfile = serializeProfileForApi(profile);
+  return {
+    profile: { ...apiProfile, zodiac: zodiacOut },
+    ...(finalizeOnboarding ? { finalizeOnboarding: true } : {}),
+  };
+}
+
+function fingerprintForProfile(profile: UserProfilePayload, finalizeOnboarding: boolean) {
+  return JSON.stringify(patchBodyForProfile(profile, finalizeOnboarding));
+}
+
 export function UserProfileForm({
   initial,
   value,
@@ -199,9 +215,101 @@ export function UserProfileForm({
   const [birthEditMode, setBirthEditMode] = useState(false);
   const birthDateInputRef = useRef<HTMLInputElement | null>(null);
 
+  const formRef = useRef(form);
+  useLayoutEffect(() => {
+    formRef.current = form;
+  }, [form]);
+
+  const lastSavedJsonRef = useRef<string | null>(null);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const finalizeRef = useRef(finalizeOnboarding);
+  const onSavedRef = useRef(onSaved);
+  useLayoutEffect(() => {
+    finalizeRef.current = finalizeOnboarding;
+    onSavedRef.current = onSaved;
+  }, [finalizeOnboarding, onSaved]);
+
+  useLayoutEffect(() => {
+    if (!controlled) {
+      setInternal(initial);
+      lastSavedJsonRef.current = fingerprintForProfile(initial, finalizeOnboarding);
+    }
+  }, [initial, controlled, finalizeOnboarding]);
+
+  useLayoutEffect(() => {
+    if (controlled && lastSavedJsonRef.current === null) {
+      lastSavedJsonRef.current = fingerprintForProfile(form, finalizeOnboarding);
+    }
+  }, [controlled, form, finalizeOnboarding]);
+
+  const persistIfDirty = useCallback(async () => {
+    while (true) {
+      const body = patchBodyForProfile(formRef.current, finalizeRef.current);
+      const fp = JSON.stringify(body);
+      if (fp === lastSavedJsonRef.current) return;
+
+      setSaving(true);
+      setError(null);
+      try {
+        const res = await fetch("/api/settings", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: fp,
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setError(typeof json.error === "string" ? json.error : "保存に失敗しました");
+          return;
+        }
+        lastSavedJsonRef.current = fp;
+        emitLocalSettingsSavedFromJson(json);
+        onSavedRef.current?.();
+      } catch {
+        setError("保存に失敗しました（ネットワークエラー）");
+        return;
+      } finally {
+        setSaving(false);
+      }
+    }
+  }, []);
+
   useEffect(() => {
-    if (!controlled) setInternal(initial);
-  }, [initial, controlled]);
+    const fp = fingerprintForProfile(form, finalizeOnboarding);
+    if (fp === lastSavedJsonRef.current) return;
+
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    debounceTimerRef.current = setTimeout(() => {
+      debounceTimerRef.current = null;
+      void persistIfDirty();
+    }, AUTO_SAVE_DEBOUNCE_MS);
+
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+    };
+  }, [form, finalizeOnboarding, persistIfDirty]);
+
+  useEffect(() => {
+    const flush = () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+      void persistIfDirty();
+    };
+    const onVis = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", onVis);
+      flush();
+    };
+  }, [persistIfDirty]);
 
   const workLife = form.onboardingWorkLifeAnswers ?? {};
 
@@ -337,29 +445,11 @@ export function UserProfileForm({
   }
 
   async function save() {
-    setSaving(true);
-    setError(null);
-    try {
-      const zodiacOut = birthYmdForUi ? (zodiacAuto ?? "") : "";
-      const profile = serializeProfileForApi(form);
-      const res = await fetch("/api/settings", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          profile: { ...profile, zodiac: zodiacOut },
-          ...(finalizeOnboarding ? { finalizeOnboarding: true } : {}),
-        }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(typeof json.error === "string" ? json.error : "保存に失敗しました");
-        return;
-      }
-      emitLocalSettingsSavedFromJson(json);
-      onSaved?.();
-    } finally {
-      setSaving(false);
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
     }
+    await persistIfDirty();
   }
 
   const inputCls =
@@ -380,7 +470,7 @@ export function UserProfileForm({
   );
 
   return (
-    <div className="space-y-4">
+    <div className="w-full min-w-0 max-w-full space-y-4">
       {showTitle && (
         <div>
           <div className="flex flex-wrap items-start justify-between gap-2">
@@ -404,7 +494,7 @@ export function UserProfileForm({
         />
       </label>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div className="grid w-full min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
         <label className="block text-xs text-zinc-600 dark:text-zinc-400">
           生年月日
           <div className="relative">
@@ -1118,14 +1208,20 @@ export function UserProfileForm({
         />
       </label>
 
-      <button
-        type="button"
-        disabled={saving}
-        onClick={() => void save()}
-        className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
-      >
-        {saving ? "保存中…" : "保存"}
-      </button>
+      <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
+        <button
+          type="button"
+          disabled={saving}
+          onClick={() => void save()}
+          className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
+        >
+          {saving ? "保存中…" : "今すぐ保存"}
+        </button>
+        <p className="text-[10px] leading-snug text-zinc-500 dark:text-zinc-400">
+          変更は入力が止まってから約 {AUTO_SAVE_DEBOUNCE_MS / 1000}{" "}
+          秒後に自動保存します。別タブ表示へ切り替えるとき・ページを離れる直前にも未送信の変更を送ります。
+        </p>
+      </div>
     </div>
   );
 }

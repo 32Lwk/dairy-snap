@@ -1,4 +1,10 @@
 import { getOpenAI } from "@/lib/ai/openai";
+import {
+  chatCompletionOutputTokenLimit,
+  getAgentQualityChatFallbackModel,
+  getAgentQualityChatModel,
+} from "@/lib/ai/openai-chat-models";
+import { withChatModelFallback } from "@/lib/ai/openai-model-fallback";
 import { parseTimetableStored, formatTimetableForPromptDaySlice } from "@/lib/timetable";
 import { parseUserSettings } from "@/lib/user-settings";
 import { prisma } from "@/server/db";
@@ -36,14 +42,19 @@ export async function runSchoolAgent(req: AgentRequest): Promise<AgentResponse> 
     .join("\n\n");
 
   const openai = getOpenAI();
-  const completion = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    max_tokens: 400,
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: contextBlock },
-    ],
-  });
+  const completion = await withChatModelFallback(
+    getAgentQualityChatModel(),
+    getAgentQualityChatFallbackModel(),
+    (model) =>
+      openai.chat.completions.create({
+        model,
+        ...chatCompletionOutputTokenLimit(model, 400),
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: contextBlock },
+        ],
+      }),
+  );
 
   const answer = completion.choices[0]?.message?.content?.trim() ?? "";
   const hasRelevantInfo = answer.length > 0 && !answer.includes("情報なし") && !answer.includes("未登録");

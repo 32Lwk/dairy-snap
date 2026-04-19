@@ -1,4 +1,10 @@
 import { getOpenAI } from "@/lib/ai/openai";
+import {
+  chatCompletionOutputTokenLimit,
+  getSupervisorChatFallbackModel,
+  getSupervisorChatModel,
+} from "@/lib/ai/openai-chat-models";
+import { withChatModelFallback } from "@/lib/ai/openai-model-fallback";
 import { prisma } from "@/server/db";
 import type { SupervisorRequest } from "./types";
 import { loadAgentPrompt } from "./utils";
@@ -35,15 +41,20 @@ export async function runSupervisorAgent(req: SupervisorRequest): Promise<void> 
 
   try {
     const openai = getOpenAI();
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      max_tokens: 600,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: contextBlock },
-      ],
-    });
+    const completion = await withChatModelFallback(
+      getSupervisorChatModel(),
+      getSupervisorChatFallbackModel(),
+      (model) =>
+        openai.chat.completions.create({
+          model,
+          ...chatCompletionOutputTokenLimit(model, 600),
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: contextBlock },
+          ],
+        }),
+    );
 
     const raw = completion.choices[0]?.message?.content ?? "{}";
     let parsed: Partial<EvalScores> = {};

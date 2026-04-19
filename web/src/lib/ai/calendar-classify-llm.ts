@@ -1,4 +1,9 @@
 import { getOpenAI } from "@/lib/ai/openai";
+import {
+  chatCompletionOutputTokenLimit,
+  getCalendarClassifyOpenAiFallbackModel,
+  getCalendarClassifyOpenAiModel,
+} from "@/lib/ai/openai-chat-models";
 
 /** Calendar default auto-classify: Gemini first, then OpenAI chain. No profile context. */
 const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
@@ -70,8 +75,8 @@ export async function refineCalendarCategoryWithCheapLlm(args: {
   const openaiKey = process.env.OPENAI_API_KEY?.trim();
   if (!openaiKey) return null;
 
-  const primary = process.env.OPENAI_AUTO_CLASSIFY_MODEL?.trim() || "gpt-4o-mini";
-  const fallback = process.env.OPENAI_AUTO_CLASSIFY_FALLBACK_MODEL?.trim() || "gpt-3.5-turbo";
+  const primary = getCalendarClassifyOpenAiModel();
+  const fallback = getCalendarClassifyOpenAiFallbackModel();
 
   const runOpenAI = async (mod: string, tag: "openai" | "openai_fallback") => {
     try {
@@ -79,7 +84,7 @@ export async function refineCalendarCategoryWithCheapLlm(args: {
       const completion = await client.chat.completions.create({
         model: mod,
         temperature: 0.1,
-        max_tokens: 80,
+        ...chatCompletionOutputTokenLimit(mod, 80),
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: args.system },

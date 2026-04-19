@@ -1,7 +1,9 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { requireSession } from "@/lib/api/require-session";
+import { OPENING_PENDING_MODEL } from "@/lib/opening-pending";
 import { prisma } from "@/server/db";
+import { claimThreadForOpening } from "@/server/opening-thread-claim";
 import { LIMITS, getTodayCounter, incrementChat, incrementOrchestratorCalls } from "@/server/usage";
 import { runOrchestrator, triggerSupervisorAsync } from "@/server/orchestrator";
 import { runMasMemoryExtraction } from "@/server/mas-memory";
@@ -41,28 +43,35 @@ export async function POST(req: NextRequest) {
     return new Response(JSON.stringify({ error: "本日のチャット上限に達しました" }), { status: 429 });
   }
 
-  let thread = await prisma.chatThread.findFirst({
-    where: { entryId: entry.id },
-    orderBy: { updatedAt: "desc" },
-    include: { messages: { orderBy: { createdAt: "asc" }, take: 40 } },
-  });
-  if (!thread) {
-    thread = await prisma.chatThread.create({
-      data: { entryId: entry.id },
-      include: { messages: true },
-    });
-  }
+  const claim = await claimThreadForOpening(entry.id);
 
-  if (thread.messages.length > 0) {
-    return new Response(JSON.stringify({ skipped: true, threadId: thread.id }), {
+  if (claim.kind === "skip") {
+    return new Response(JSON.stringify({ skipped: true, threadId: claim.threadId }), {
       status: 200,
       headers: { "Content-Type": "application/json; charset=utf-8" },
     });
   }
 
+  if (claim.kind === "in_progress") {
+    return new Response(
+      JSON.stringify({
+        skipped: true,
+        threadId: claim.threadId,
+        openingInProgress: true,
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+      },
+    );
+  }
+
+  const threadId = claim.threadId;
+  const assistantMessageId = claim.assistantMessageId;
+
   const started = Date.now();
 
-  const { stream, agentsUsed, personaInstructions, mbtiHint } = await runOrchestrator({
+  const { stream, agentsUsed, personaInstructions, mbtiHint, orchestratorModel } = await runOrchestrator({
     userId: session.user.id,
     entryId: entry.id,
     entryDateYmd: entry.entryDateYmd,
@@ -88,12 +97,11 @@ export async function POST(req: NextRequest) {
         }
 
         const latencyMs = Date.now() - started;
-        const assistant = await prisma.chatMessage.create({
+        const assistant = await prisma.chatMessage.update({
+          where: { id: assistantMessageId },
           data: {
-            threadId: thread!.id,
-            role: "assistant",
             content: assistantText,
-            model: "gpt-4o",
+            model: orchestratorModel,
             latencyMs,
             tokenEstimate: Math.ceil(assistantText.length / 4),
             agentName: "orchestrator",
@@ -112,8 +120,8 @@ export async function POST(req: NextRequest) {
             entryId: entry.id,
             action: "ai_orchestrator_opening_complete",
             metadata: {
-              threadId: thread!.id,
-              model: "gpt-4o",
+              threadId,
+              model: orchestratorModel,
               latencyMs,
               agentsUsed,
               promptVersion: PROMPT_VERSIONS.reflective_chat,
@@ -127,11 +135,11 @@ export async function POST(req: NextRequest) {
             entryId: entry.id,
             kind: "CHAT_MESSAGE",
             promptVersion: PROMPT_VERSIONS.reflective_chat,
-            model: "gpt-4o",
+            model: orchestratorModel,
             latencyMs,
             tokenEstimate: assistant.tokenEstimate,
             metadata: {
-              threadId: thread!.id,
+              threadId,
               assistantMessageId: assistant.id,
               agentsUsed,
               mas: true,
@@ -142,7 +150,7 @@ export async function POST(req: NextRequest) {
 
         triggerSupervisorAsync({
           userId: session.user.id,
-          threadId: thread!.id,
+          threadId,
           agentsUsed,
           recentMessages: [{ role: "assistant", content: assistantText }],
           personaInstructions,
@@ -161,10 +169,15 @@ export async function POST(req: NextRequest) {
         }).catch(() => {});
 
         controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify({ done: true, threadId: thread!.id, agentsUsed })}\n\n`),
+          encoder.encode(`data: ${JSON.stringify({ done: true, threadId, agentsUsed })}\n\n`),
         );
         controller.close();
       } catch (e) {
+        await prisma.chatMessage
+          .deleteMany({
+            where: { id: assistantMessageId, model: OPENING_PENDING_MODEL },
+          })
+          .catch(() => {});
         controller.error(e);
       }
     },

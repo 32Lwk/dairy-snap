@@ -1,17 +1,35 @@
 /**
- * MAS オーケストレーター
- * gpt-4o が Tool Calling でサブエージェントを呼び分け、最終回答をストリーミング生成する
+ * MAS orchestrator — tool-calling agents, streaming reply.
  */
 import type { Stream } from "openai/streaming";
 import type { ChatCompletionChunk } from "openai/resources";
 import { getOpenAI } from "@/lib/ai/openai";
+import {
+  chatCompletionOutputTokenLimit,
+  getOrchestratorChatFallbackModel,
+  getOrchestratorChatModel,
+  getOrchestratorOpeningChatFallbackModel,
+  getOrchestratorOpeningChatModel,
+} from "@/lib/ai/openai-chat-models";
+import { withChatModelFallbackAndModel } from "@/lib/ai/openai-model-fallback";
 import { parseUserSettings } from "@/lib/user-settings";
 import { formatAgentPersonaForPrompt } from "@/lib/agent-persona-preferences";
 import { isMbtiType, mbtiDisplayJa } from "@/lib/mbti";
 import { isLoveMbtiType, loveMbtiDisplayJa } from "@/lib/love-mbti";
 import { prisma } from "@/server/db";
-import { fetchCalendarEventsForDay } from "@/server/calendar";
+import {
+  fetchCalendarEventsForDay,
+  type CalendarEventBrief,
+  type CalendarFetchResult,
+} from "@/server/calendar";
 import { formatYmdWithTokyoWeekday } from "@/lib/timetable";
+import { formatYmdTokyo } from "@/lib/time/tokyo";
+import {
+  buildReflectiveOpeningSystemInstruction,
+  diffCalendarDaysTokyo,
+  formatOrchestratorScheduleGroundingBlock,
+  formatOrchestratorTemporalBlock,
+} from "@/lib/time/entry-temporal-context";
 import { loadAgentPrompt } from "@/server/agents/utils";
 import { getWeatherContext, formatWeatherForPrompt } from "@/server/agents/weather-tool";
 import { runSchoolAgent } from "@/server/agents/school-agent";
@@ -25,7 +43,18 @@ import type { AgentRequest, PersonaContext, WeatherContext } from "@/server/agen
 import { ORCHESTRATOR_TOOLS } from "@/server/agents/types";
 import { loadShortTermContextForEntry } from "@/server/mas-memory";
 
-// ─── MBTI ルーティングヒント生成 ─────────────────────────────────────────
+const OPENING_OMIT_TOOLS = new Set([
+  "query_weather",
+  "query_calendar_daily",
+  "query_calendar_work",
+  "query_calendar_social",
+]);
+
+const ORCHESTRATOR_TOOL_ROUND_MAX_TOKENS = 2048;
+const ORCHESTRATOR_STREAM_MAX_TOKENS = 2048;
+const DIARY_BODY_MAX_CHARS_ORCHESTRATOR = 12000;
+
+// --- MBTI routing hints ---
 
 function buildMbtiHint(mbti?: string, loveMbti?: string): string {
   const hints: string[] = [];
@@ -75,7 +104,7 @@ async function saveAgentMemory(
   }
 }
 
-// ─── 長期記憶取得 ────────────────────────────────────────────────────────
+// --- long-term memory ---
 
 async function loadLongTermContext(userId: string): Promise<string> {
   const memories = await prisma.memoryLongTerm.findMany({
@@ -91,15 +120,44 @@ async function loadLongTermContext(userId: string): Promise<string> {
   return lines.map((l) => `- ${l}`).join("\n");
 }
 
-// ─── カレンダー連携確認 ──────────────────────────────────────────────────
+// ─── 開口用カレンダー要約 ─────────────────────────────────────────────────
 
-async function hasCalendarIntegration(userId: string, entryDateYmd: string): Promise<boolean> {
-  try {
-    const result = await fetchCalendarEventsForDay(userId, entryDateYmd);
-    return result.ok;
-  } catch {
-    return false;
+function hhmmTokyoBrief(isoLike: string): string {
+  if (!isoLike || /^\d{4}-\d{2}-\d{2}$/.test(isoLike)) return "";
+  const ms = Date.parse(isoLike);
+  if (!Number.isFinite(ms)) return "";
+  return new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(ms));
+}
+
+function formatOpeningDayCalendarBrief(events: CalendarEventBrief[]): string {
+  if (events.length === 0) {
+    return "（この日の予定は登録されていないか、取得結果が空です）";
   }
+  return events
+    .slice(0, 28)
+    .map((ev) => {
+      const t = hhmmTokyoBrief(ev.start);
+      const when = t || "終日";
+      const loc = ev.location?.trim() ? ` @${ev.location.trim()}` : "";
+      return `- ${when} ${ev.title}${loc}`;
+    })
+    .join("\n");
+}
+
+/** カレンダー連携が有効か（未連携・設定不備・invalid_grant ではツールを登録しない） */
+function isCalendarToolEligible(res: CalendarFetchResult): boolean {
+  if (res.ok) return true;
+  return !(
+    res.reason === "no_google_account" ||
+    res.reason === "no_refresh_token" ||
+    res.reason === "oauth_not_configured" ||
+    res.reason === "invalid_grant"
+  );
 }
 
 // ─── scoreOpeningTopic プリフィルター ────────────────────────────────────
@@ -169,7 +227,7 @@ async function callAgent({ req, domain, userId, runFn }: AgentCallArgs): Promise
   }
 }
 
-// ─── メイン: オーケストレーター実行 ─────────────────────────────────────
+// --- runOrchestrator ---
 
 export type OrchestratorParams = {
   userId: string;
@@ -187,7 +245,17 @@ export type OrchestratorResult = {
   agentsUsed: string[];
   personaInstructions: string;
   mbtiHint: string;
+  /** Chat Completions に渡した実モデル ID（フォールバック時はここに反映） */
+  orchestratorModel: string;
   threadId?: string;
+};
+
+type ChatMsg = {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string;
+  tool_call_id?: string;
+  name?: string;
+  tool_calls?: unknown;
 };
 
 export async function runOrchestrator(params: OrchestratorParams): Promise<OrchestratorResult> {
@@ -198,16 +266,36 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     userMessage,
     historyMessages,
     isOpening,
+    currentBody,
   } = params;
 
-  // ── ユーザー設定読み込み ──
-  const userRow = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { settings: true },
-  });
-  const profile = parseUserSettings(userRow?.settings ?? {}).profile;
+  const todayYmd = formatYmdTokyo(new Date());
+  const primaryModel = isOpening ? getOrchestratorOpeningChatModel() : getOrchestratorChatModel();
+  const fallbackModel = isOpening ? getOrchestratorOpeningChatFallbackModel() : getOrchestratorChatFallbackModel();
 
-  // ── ペルソナ構築 ──
+  const [userRow, longTermContext, shortTermContext, weather, calendarRes] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: userId },
+      select: { settings: true },
+    }),
+    loadLongTermContext(userId),
+    loadShortTermContextForEntry(userId, entryId),
+    getWeatherContext({ userId, entryId, entryDateYmd }).catch(
+      (): WeatherContext => ({
+        dateYmd: entryDateYmd,
+        amLabel: "不明",
+        amTempC: null,
+        pmLabel: "不明",
+        pmTempC: null,
+        source: "none",
+      }),
+    ),
+    fetchCalendarEventsForDay(userId, entryDateYmd),
+  ]);
+
+  const profile = parseUserSettings(userRow?.settings ?? {}).profile;
+  const calendarAvailable = isCalendarToolEligible(calendarRes);
+
   const personaLines = formatAgentPersonaForPrompt({
     aiAddressStyle: profile?.aiAddressStyle,
     aiChatTone: profile?.aiChatTone,
@@ -238,29 +326,8 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     corrections: corrections.length > 0 ? corrections : undefined,
   };
 
-  // ── 長期記憶 ──
-  const [longTermContext, shortTermContext] = await Promise.all([
-    loadLongTermContext(userId),
-    loadShortTermContextForEntry(userId, entryId),
-  ]);
-
-  // ── 天気情報 ──
-  const weather = await getWeatherContext({ userId, entryId, entryDateYmd }).catch(
-    (): WeatherContext => ({
-      dateYmd: entryDateYmd,
-      amLabel: "不明",
-      amTempC: null,
-      pmLabel: "不明",
-      pmTempC: null,
-      source: "none",
-    }),
-  );
   const weatherText = formatWeatherForPrompt(weather);
 
-  // ── カレンダー連携確認 ──
-  const calendarAvailable = await hasCalendarIntegration(userId, entryDateYmd);
-
-  // ── 開口ヒント（scoreOpeningTopic 代替） ──
   const openingHint = buildOpeningHint(
     profile?.occupationRole,
     calendarAvailable,
@@ -268,7 +335,19 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     persona,
   );
 
-  // ── オーケストレーターシステムプロンプト ──
+  const openingRecommendedForPrompt = openingHint.recommendedAgents.filter((n) => !OPENING_OMIT_TOOLS.has(n));
+
+  const rawBody = (currentBody ?? "").trim();
+  const bodyForPrompt =
+    rawBody.length > DIARY_BODY_MAX_CHARS_ORCHESTRATOR
+      ? `${rawBody.slice(0, DIARY_BODY_MAX_CHARS_ORCHESTRATOR)}…`
+      : rawBody;
+
+  const weatherSectionTitle =
+    diffCalendarDaysTokyo(entryDateYmd, todayYmd) === 0
+      ? "## 今日の天気"
+      : `## エントリ日（${formatYmdWithTokyoWeekday(entryDateYmd)}）の天気`;
+
   const baseSystem = loadAgentPrompt("orchestrator");
   const systemBlocks = [
     baseSystem,
@@ -281,22 +360,33 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
       ? `## ユーザーの訂正メモ（断定を避けること）\n${corrections.map((c) => `- ${c}`).join("\n")}`
       : "",
     "",
-    "## 今日の天気",
+    formatOrchestratorTemporalBlock(entryDateYmd),
+    "",
+    formatOrchestratorScheduleGroundingBlock(),
+    "",
+    weatherSectionTitle,
     weatherText,
     "",
     `## 対象日\n${formatYmdWithTokyoWeekday(entryDateYmd)}`,
     "",
-    isOpening && openingHint.openingNote
-      ? `## 開口のヒント\n${openingHint.openingNote}`
+    bodyForPrompt ? `## 本文（このエントリ）\n${bodyForPrompt}` : "",
+    isOpening
+      ? buildReflectiveOpeningSystemInstruction(entryDateYmd, new Date(), {
+          hasDiaryBody: rawBody.length > 0,
+          calendarLinked: calendarRes.ok,
+          calendarEventCount: calendarRes.ok ? calendarRes.events.length : 0,
+        })
       : "",
-    isOpening && openingHint.recommendedAgents.length > 0
-      ? `## 推奨エージェント（開口時優先）\n${openingHint.recommendedAgents.join(", ")}`
+    isOpening && openingHint.openingNote ? `## 開口のヒント\n${openingHint.openingNote}` : "",
+    isOpening && openingRecommendedForPrompt.length > 0
+      ? `## 推奨エージェント（開口時・参考）\n${openingRecommendedForPrompt.join(", ")}`
       : "",
+    calendarRes.ok ? `## その日の予定（カレンダー要約・開口用）\n${formatOpeningDayCalendarBrief(calendarRes.events)}` : "",
     "",
-    !calendarAvailable ? "※ Google カレンダー未連携。カレンダー系ツールは呼ばない。" : "",
-    profile?.occupationRole !== "student"
-      ? "※ 学生ではないため query_school は呼ばない。"
+    !calendarAvailable
+      ? "※ Google カレンダー未連携、またはトークン無効のためカレンダー系ツールは呼ばない。"
       : "",
+    profile?.occupationRole !== "student" ? "※ 学生ではないため query_school は呼ばない。" : "",
     avoidTopics.includes("romance")
       ? "※ ユーザーが恋愛の話題を避けたいため query_romance は絶対に呼ばない。"
       : "",
@@ -306,8 +396,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     .filter(Boolean)
     .join("\n");
 
-  // ── OpenAI ツール絞り込み ──
-  const allowedTools = ORCHESTRATOR_TOOLS.filter((t) => {
+  let allowedTools = ORCHESTRATOR_TOOLS.filter((t) => {
     const name = t.function.name;
     if (name === "query_romance" && avoidTopics.includes("romance")) return false;
     if (name === "query_school" && profile?.occupationRole !== "student") return false;
@@ -321,156 +410,171 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     return true;
   });
 
+  if (isOpening) {
+    allowedTools = allowedTools.filter((t) => !OPENING_OMIT_TOOLS.has(t.function.name));
+  }
+
   const openai = getOpenAI();
   const agentsUsed: string[] = [];
 
-  // ── Tool Calling ループ ──
-  const messages: { role: "system" | "user" | "assistant" | "tool"; content: string; tool_call_id?: string; name?: string }[] = [
-    { role: "system", content: systemBlocks },
-    ...historyMessages,
-  ];
+  const messages: ChatMsg[] = [{ role: "system", content: systemBlocks }, ...historyMessages];
 
-  if (userMessage) {
+  if (isOpening) {
+    messages.push({ role: "user", content: "." });
+  } else if (userMessage) {
     messages.push({ role: "user", content: userMessage });
-  } else if (isOpening) {
-    messages.push({
-      role: "user",
-      content: "（会話はまだ始まっていません。あなたから今日の振り返りの最初の一言を日本語で短く送ってください。）",
-    });
   }
 
-  // ── 非ストリーミングで Tool Calling ループを回す ──
-  let loopCount = 0;
-  while (loopCount < 3) {
-    loopCount++;
+  const toolUserFallback = isOpening ? "." : userMessage;
 
-    const nonStreamRes = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: messages as Parameters<typeof openai.chat.completions.create>[0]["messages"],
-      tools: allowedTools as Parameters<typeof openai.chat.completions.create>[0]["tools"],
-      tool_choice: loopCount === 1 ? "auto" : "none",
-      max_tokens: 800,
-    });
+  if (allowedTools.length > 0) {
+    let loopCount = 0;
+    while (loopCount < 3) {
+      loopCount++;
 
-    const choice = nonStreamRes.choices[0];
-    if (!choice) break;
+      const { result: nonStreamRes } = await withChatModelFallbackAndModel(
+        primaryModel,
+        fallbackModel,
+        (model) =>
+          openai.chat.completions.create({
+            model,
+            messages: messages as Parameters<typeof openai.chat.completions.create>[0]["messages"],
+            tools: allowedTools as Parameters<typeof openai.chat.completions.create>[0]["tools"],
+            tool_choice: loopCount === 1 ? "auto" : "none",
+            ...chatCompletionOutputTokenLimit(model, ORCHESTRATOR_TOOL_ROUND_MAX_TOKENS),
+          }),
+      );
 
-    const assistantMsg = choice.message;
-    messages.push({
-      role: "assistant",
-      content: assistantMsg.content ?? "",
-      ...(assistantMsg.tool_calls ? { tool_calls: assistantMsg.tool_calls } as unknown as object : {}),
-    });
+      const choice = nonStreamRes.choices[0];
+      if (!choice) break;
 
-    if (!assistantMsg.tool_calls || assistantMsg.tool_calls.length === 0) break;
+      const assistantMsg = choice.message;
+      messages.push({
+        role: "assistant",
+        content: assistantMsg.content ?? "",
+        ...(assistantMsg.tool_calls ? { tool_calls: assistantMsg.tool_calls } : {}),
+      });
 
-    // 並列でツールを実行
-    const toolCallPromises = assistantMsg.tool_calls.map(async (tc) => {
-      // ChatCompletionMessageFunctionToolCall のみ扱う（CustomToolCall は無視）
-      if (!("function" in tc)) {
-        return { tool_call_id: tc.id, content: "（未対応のツール形式）" };
-      }
-      const toolName = (tc as { id: string; function: { name: string; arguments: string } }).function.name;
-      agentsUsed.push(toolName);
+      if (!assistantMsg.tool_calls || assistantMsg.tool_calls.length === 0) break;
 
-      let args: { focus?: string } = {};
-      try {
-        args = JSON.parse((tc as { id: string; function: { name: string; arguments: string } }).function.arguments || "{}") as { focus?: string };
-      } catch {
-        args = {};
-      }
+      const toolCallPromises = assistantMsg.tool_calls.map(async (tc) => {
+        if (!("function" in tc)) {
+          return { tool_call_id: tc.id, content: "（未対応のツール形式）" };
+        }
+        const toolName = (tc as { id: string; function: { name: string; arguments: string } }).function.name;
+        agentsUsed.push(toolName);
 
-      const baseReq: AgentRequest = {
-        userId,
-        entryId,
-        entryDateYmd,
-        userMessage: args.focus ?? userMessage,
-        persona,
-        longTermContext: longTermContext || undefined,
-        agentMemory: {},
-      };
+        let args: { focus?: string } = {};
+        try {
+          args = JSON.parse(
+            (tc as { id: string; function: { name: string; arguments: string } }).function.arguments || "{}",
+          ) as { focus?: string };
+        } catch {
+          args = {};
+        }
 
-      let toolResult = "";
-
-      if (toolName === "query_weather") {
-        toolResult = weatherText;
-      } else if (toolName === "query_school") {
-        const mem = await loadAgentMemory(userId, "school");
-        toolResult = await callAgent({
-          req: { ...baseReq, agentMemory: mem },
-          domain: "school",
+        const baseReq: AgentRequest = {
           userId,
-          runFn: runSchoolAgent,
-        });
-      } else if (toolName === "query_calendar_daily") {
-        const mem = await loadAgentMemory(userId, "calendar_daily");
-        toolResult = await callAgent({
-          req: { ...baseReq, agentMemory: mem },
-          domain: "calendar_daily",
-          userId,
-          runFn: runCalendarDailyAgent,
-        });
-      } else if (toolName === "query_calendar_work") {
-        const mem = await loadAgentMemory(userId, "calendar_work");
-        toolResult = await callAgent({
-          req: { ...baseReq, agentMemory: mem },
-          domain: "calendar_work",
-          userId,
-          runFn: runCalendarWorkAgent,
-        });
-      } else if (toolName === "query_calendar_social") {
-        const mem = await loadAgentMemory(userId, "calendar_social");
-        toolResult = await callAgent({
-          req: { ...baseReq, agentMemory: mem },
-          domain: "calendar_social",
-          userId,
-          runFn: runCalendarSocialAgent,
-        });
-      } else if (toolName === "query_hobby") {
-        const mem = await loadAgentMemory(userId, "hobby");
-        toolResult = await callAgent({
-          req: { ...baseReq, agentMemory: mem },
-          domain: "hobby",
-          userId,
-          runFn: runHobbyAgent,
-        });
-      } else if (toolName === "query_romance") {
-        if (!avoidTopics.includes("romance")) {
-          const mem = await loadAgentMemory(userId, "romance");
+          entryId,
+          entryDateYmd,
+          userMessage: args.focus ?? toolUserFallback,
+          persona,
+          longTermContext: longTermContext || undefined,
+          agentMemory: {},
+        };
+
+        let toolResult = "";
+
+        if (toolName === "query_weather") {
+          toolResult = weatherText;
+        } else if (toolName === "query_school") {
+          const mem = await loadAgentMemory(userId, "school");
           toolResult = await callAgent({
             req: { ...baseReq, agentMemory: mem },
-            domain: "romance",
+            domain: "school",
             userId,
-            runFn: runRomanceAgent,
+            runFn: runSchoolAgent,
           });
+        } else if (toolName === "query_calendar_daily") {
+          const mem = await loadAgentMemory(userId, "calendar_daily");
+          toolResult = await callAgent({
+            req: { ...baseReq, agentMemory: mem },
+            domain: "calendar_daily",
+            userId,
+            runFn: runCalendarDailyAgent,
+          });
+        } else if (toolName === "query_calendar_work") {
+          const mem = await loadAgentMemory(userId, "calendar_work");
+          toolResult = await callAgent({
+            req: { ...baseReq, agentMemory: mem },
+            domain: "calendar_work",
+            userId,
+            runFn: runCalendarWorkAgent,
+          });
+        } else if (toolName === "query_calendar_social") {
+          const mem = await loadAgentMemory(userId, "calendar_social");
+          toolResult = await callAgent({
+            req: { ...baseReq, agentMemory: mem },
+            domain: "calendar_social",
+            userId,
+            runFn: runCalendarSocialAgent,
+          });
+        } else if (toolName === "query_hobby") {
+          const mem = await loadAgentMemory(userId, "hobby");
+          toolResult = await callAgent({
+            req: { ...baseReq, agentMemory: mem },
+            domain: "hobby",
+            userId,
+            runFn: runHobbyAgent,
+          });
+        } else if (toolName === "query_romance") {
+          if (!avoidTopics.includes("romance")) {
+            const mem = await loadAgentMemory(userId, "romance");
+            toolResult = await callAgent({
+              req: { ...baseReq, agentMemory: mem },
+              domain: "romance",
+              userId,
+              runFn: runRomanceAgent,
+            });
+          } else {
+            toolResult = "（恋愛トピックは除外設定済み）";
+          }
         } else {
-          toolResult = "（恋愛トピックは除外設定済み）";
+          toolResult = "（未対応のツール）";
         }
-      } else {
-        toolResult = "（未対応のツール）";
+
+        return { tool_call_id: tc.id, content: toolResult };
+      });
+
+      const toolResults = await Promise.all(toolCallPromises);
+      for (const tr of toolResults) {
+        messages.push({ role: "tool", content: tr.content, tool_call_id: tr.tool_call_id });
       }
-
-      return { tool_call_id: tc.id, content: toolResult };
-    });
-
-    const toolResults = await Promise.all(toolCallPromises);
-    for (const tr of toolResults) {
-      messages.push({ role: "tool", content: tr.content, tool_call_id: tr.tool_call_id });
     }
   }
 
-  // ── 最終ストリーミング応答 ──
-  const stream = await openai.chat.completions.create({
-    model: "gpt-4o",
-    stream: true,
-    messages: messages as Parameters<typeof openai.chat.completions.create>[0]["messages"],
-    max_tokens: 600,
-  });
+  const { result: stream, model: orchestratorModel } = await withChatModelFallbackAndModel(
+    primaryModel,
+    fallbackModel,
+    (model) =>
+      openai.chat.completions.create({
+        model,
+        stream: true,
+        messages: messages as Parameters<typeof openai.chat.completions.create>[0]["messages"],
+        ...chatCompletionOutputTokenLimit(model, ORCHESTRATOR_STREAM_MAX_TOKENS),
+      }),
+  );
 
-  return { stream, agentsUsed: [...new Set(agentsUsed)], personaInstructions, mbtiHint };
+  return {
+    stream,
+    agentsUsed: [...new Set(agentsUsed)],
+    personaInstructions,
+    mbtiHint,
+    orchestratorModel,
+  };
 }
 
-// ─── スーパーバイザー非同期起動 ─────────────────────────────────────────
+// --- triggerSupervisorAsync ---
 
 export function triggerSupervisorAsync(params: {
   userId: string;

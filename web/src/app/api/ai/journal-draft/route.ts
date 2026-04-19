@@ -40,7 +40,10 @@ export async function PUT(req: NextRequest) {
       entryId: parsed.data.entryId,
       entry: { userId: session.user.id },
     },
-    include: { messages: { orderBy: { createdAt: "asc" } } },
+    include: {
+      entry: { select: { entryDateYmd: true } },
+      messages: { orderBy: { createdAt: "asc" } },
+    },
   });
   if (!thread) return NextResponse.json({ error: "見つかりません" }, { status: 404 });
 
@@ -53,7 +56,7 @@ export async function PUT(req: NextRequest) {
   const orchestrator = createDefaultOrchestrator();
   const result = await orchestrator.runAgent<JournalComposerInput, JournalComposerOutput>(
     "journal-composer",
-    { transcript },
+    { transcript, entryDateYmd: thread.entry.entryDateYmd },
     {
       userId: session.user.id,
       entryId: parsed.data.entryId,
@@ -75,7 +78,7 @@ export async function PUT(req: NextRequest) {
       entryId: parsed.data.entryId,
       kind: "JOURNAL_DRAFT",
       promptVersion: PROMPT_VERSIONS.journal_composer,
-      model: "gpt-4o-mini",
+      model: result.data.model,
       latencyMs,
       metadata: { threadId: thread.id },
     },

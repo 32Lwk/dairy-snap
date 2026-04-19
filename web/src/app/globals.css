@@ -79,3 +79,54 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/*
+ iOS Safari (iPhone / iPad): focuses on inputs with computed font-size under 16px and zooms the viewport.
+ Keep text fields at least 1rem. Placed unlayered (after @import tailwindcss) so this wins over utilities like text-sm.
+ Select はネイティブ UI のためここでは対象外（text-* が効くようにする）。ズームが気になる端末では16px 未満を避ける。
+ */
+textarea,
+input:is(
+  [type="text"],
+  [type="search"],
+  [type="email"],
+  [type="password"],
+  [type="tel"],
+  [type="url"],
+  [type="number"],
+  [type="date"],
+  [type="time"],
+  [type="datetime-local"],
+  [type="month"],
+  [type="week"]
+),
+input:not([type]) {
+  font-size: 1rem;
+}
+
+/*
+ TimetableEditor: 上の 1rem 指定より後に置き、小型フォントを確実に適用する（Tailwind の text-* だけでは効かない）。
+ */
+input.timetable-editor-input[type="date"],
+input.timetable-editor-input[type="text"],
+input.timetable-editor-input:not([type]) {
+  font-size: calc(0.75rem - 2pt);
+  line-height: 1.25rem;
+}
+
+input.timetable-editor-input.timetable-editor-input-sm[type="text"],
+input.timetable-editor-input.timetable-editor-input-sm:not([type]) {
+  font-size: calc(11px - 2pt);
+  line-height: 1.125rem;
+}
+
+/* #calendar-display-settings-dialog: compact text overrides global `1rem` on inputs (may zoom on iOS when focused). */
+#calendar-display-settings-dialog input[type="text"].calendar-dialog-compact-text {
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
+#calendar-display-settings-dialog input[type="text"].calendar-dialog-compact-chip-text {
+  font-size: 0.75rem;
+  line-height: 1.125rem;
+}

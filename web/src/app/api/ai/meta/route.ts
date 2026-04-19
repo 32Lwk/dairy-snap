@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getOpenAI } from "@/lib/ai/openai";
+import { getMetaChatFallbackModel, getMetaChatModel } from "@/lib/ai/openai-chat-models";
+import { withChatModelFallbackAndModel } from "@/lib/ai/openai-model-fallback";
 import { requireSession } from "@/lib/api/require-session";
 import { prisma } from "@/server/db";
 import { PROMPT_VERSIONS } from "@/server/prompts";
@@ -61,10 +63,11 @@ export async function POST(req: NextRequest) {
     prompt = `次の日記を、日本語で箇条書き中心に要約してください（200〜400字）。\n\n${entry.body.slice(0, 12000)}`;
   }
 
-  const completion = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    messages: [{ role: "user", content: prompt }],
-  });
+  const { result: completion, model: metaModel } = await withChatModelFallbackAndModel(
+    getMetaChatModel(),
+    getMetaChatFallbackModel(),
+    (model) => openai.chat.completions.create({ model, messages: [{ role: "user", content: prompt }] }),
+  );
   const text = completion.choices[0]?.message?.content?.trim() ?? "";
   const latencyMs = Date.now() - started;
 
@@ -78,7 +81,7 @@ export async function POST(req: NextRequest) {
       entryId: entry.id,
       kind,
       promptVersion,
-      model: "gpt-4o-mini",
+      model: metaModel,
       latencyMs,
       metadata: { action: parsed.data.kind },
     },
@@ -89,7 +92,7 @@ export async function POST(req: NextRequest) {
       userId: session.user.id,
       entryId: entry.id,
       action: `ai_meta_${parsed.data.kind}`,
-      metadata: { model: "gpt-4o-mini", latencyMs },
+      metadata: { model: metaModel, latencyMs },
     },
   });
 

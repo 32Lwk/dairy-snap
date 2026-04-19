@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { type CSSProperties, useEffect, useRef, useState } from "react";
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
+import { isOpeningPendingModel } from "@/lib/opening-pending";
 import { JournalDraftPanel } from "./journal-draft-panel";
 
 /** When the on-screen keyboard shrinks visual viewport, cap chat height so the composer stays usable. */
@@ -34,7 +35,21 @@ function useVisualViewportKeyboardMaxHeight(): CSSProperties | undefined {
   return style;
 }
 
-type Msg = { id: string; role: string; content: string };
+type Msg = { id: string; role: string; content: string; model?: string | null };
+
+/** チャットはプレーンなテキスト表示のため、** や単独の * を読みやすくする */
+/** React Strict Mode 再マウントでも同一 entry の開口 fetch が二重に走らないようにする */
+const entryOpeningInFlight = new Set<string>();
+
+function stripLightMarkdownForChatDisplay(text: string): string {
+  let s = text;
+  for (let i = 0; i < 12; i++) {
+    const next = s.replace(/\*\*([\s\S]+?)\*\*/g, "$1");
+    if (next === s) break;
+    s = next;
+  }
+  return s.replace(/\*([^*\n]+?)\*/g, "$1");
+}
 
 function UserMessageBubble({
   m,
@@ -125,7 +140,7 @@ function UserMessageBubble({
           </div>
         ) : (
           <>
-            <p className="whitespace-pre-wrap leading-relaxed">{m.content}</p>
+            <p className="whitespace-pre-wrap leading-relaxed">{stripLightMarkdownForChatDisplay(m.content)}</p>
             <div className="mt-1.5 flex justify-end gap-3 text-[11px] text-white/70 dark:text-zinc-600">
               <button type="button" disabled={busy} onClick={() => setEditing(true)} className="underline">
                 編集
@@ -142,11 +157,12 @@ function UserMessageBubble({
 }
 
 function AssistantBubble({ content, streaming }: { content: string; streaming?: boolean }) {
+  const shown = stripLightMarkdownForChatDisplay(content);
   return (
     <div className="flex flex-col items-start gap-1">
       <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">AI</span>
       <div className="max-w-[min(100%,28rem)] rounded-2xl rounded-bl-md border border-zinc-200/80 bg-white px-4 py-2.5 text-sm leading-relaxed text-zinc-900 shadow-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100">
-        <p className="whitespace-pre-wrap">{content}</p>
+        <p className="whitespace-pre-wrap">{shown}</p>
         {streaming && <span className="ml-0.5 inline-block h-3 w-0.5 animate-pulse bg-emerald-500 align-middle" />}
       </div>
     </div>
@@ -175,23 +191,50 @@ export function EntryChat({
   const [streaming, setStreaming] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const messagesScrollRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const openingStartedRef = useRef(false);
   const vvShellStyle = useVisualViewportKeyboardMaxHeight();
+
+  useEffect(() => {
+    if (busy || streaming) return;
+    setMessages(initialMessages);
+  }, [initialMessages, busy, streaming]);
 
   useEffect(() => {
     onThreadIdChange?.(tid);
   }, [tid, onThreadIdChange]);
 
+  // Keep autoscroll inside the message pane only (`scrollIntoView` can scroll the window).
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = messagesScrollRef.current;
+    if (!el) return;
+    const id = requestAnimationFrame(() => {
+      el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
+    });
+    return () => cancelAnimationFrame(id);
   }, [messages, streaming]);
+
+  const serverHasOpeningPending = useMemo(
+    () => initialMessages.some((m) => isOpeningPendingModel(m.model)),
+    [initialMessages],
+  );
+
+  /** 別タブ／再マウントで開口が走っているとき、プレースホルダが埋まるまで再取得する */
+  useEffect(() => {
+    if (!serverHasOpeningPending || busy || streaming) return;
+    const id = window.setInterval(() => {
+      router.refresh();
+    }, 2000);
+    return () => window.clearInterval(id);
+  }, [serverHasOpeningPending, router, busy, streaming]);
 
   /** 空スレッド時は AI から先に開口（振り返りを始める） */
   useEffect(() => {
-    if (initialMessages.length > 0 || openingStartedRef.current) return;
-    openingStartedRef.current = true;
+    const hasRealExchange = initialMessages.some(
+      (m) => m.role === "user" || (m.role === "assistant" && m.content.trim().length > 0),
+    );
+    if (hasRealExchange || serverHasOpeningPending || entryOpeningInFlight.has(entryId)) return;
+    entryOpeningInFlight.add(entryId);
 
     void (async () => {
       setError(null);
@@ -210,7 +253,11 @@ export function EntryChat({
           return;
         }
         if (ct.includes("application/json")) {
-          const data = (await res.json()) as { skipped?: boolean; threadId?: string };
+          const data = (await res.json()) as {
+            skipped?: boolean;
+            threadId?: string;
+            openingInProgress?: boolean;
+          };
           if (data.skipped && data.threadId) {
             setTid(data.threadId);
             router.refresh();
@@ -251,17 +298,16 @@ export function EntryChat({
           }
         }
 
-        setMessages((m) => [
-          ...m,
-          { id: crypto.randomUUID(), role: "assistant", content: assistant },
-        ]);
         setStreaming("");
         router.refresh();
+      } catch {
+        setError("通信に失敗しました。接続やログイン状態を確認してください。");
       } finally {
+        entryOpeningInFlight.delete(entryId);
         setBusy(false);
       }
     })();
-  }, [entryId, initialMessages.length, router]);
+  }, [entryId, initialMessages, router, serverHasOpeningPending]);
 
   const panelHeight =
     variant === "compact"
@@ -384,7 +430,10 @@ export function EntryChat({
       )}
 
       <div ref={scrollRef} className={`flex flex-col ${panelHeight}`} style={panelShellStyle}>
-        <div className="flex-1 space-y-4 overflow-y-auto overscroll-contain px-3 py-4 sm:px-4">
+        <div
+          ref={messagesScrollRef}
+          className="flex-1 space-y-4 overflow-y-auto overscroll-contain px-3 py-4 sm:px-4"
+        >
           {messages.length === 0 && !streaming && !busy && (
             <p className="rounded-xl bg-zinc-100/80 px-3 py-2 text-center text-xs text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
               何もない日でも大丈夫。AI がすぐに話しかけます。気分や小さな出来事から返してみてください。
@@ -410,11 +459,18 @@ export function EntryChat({
                 }}
               />
             ) : (
-              <AssistantBubble key={m.id} content={m.content} />
+              <AssistantBubble
+                key={m.id}
+                content={
+                  isOpeningPendingModel(m.model) && !m.content.trim()
+                    ? "振り返りを準備しています…"
+                    : m.content
+                }
+                streaming={isOpeningPendingModel(m.model) && !m.content.trim()}
+              />
             ),
           )}
           {streaming && <AssistantBubble content={streaming} streaming />}
-          <div ref={bottomRef} />
         </div>
 
         <div className="border-t border-zinc-100 bg-zinc-50/95 p-3 dark:border-zinc-800 dark:bg-zinc-900/90">

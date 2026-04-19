@@ -6,7 +6,7 @@ import { WeatherAmPmDisplay } from "@/components/weather-am-pm-display";
 import { reverseGeocodeClient } from "@/lib/reverse-geocode-client";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 const WeatherLocationMapPicker = dynamic(
   () =>
@@ -68,16 +68,29 @@ export function EntryActions({
   const [draftLat, setDraftLat] = useState<number | null>(null);
   const [draftLon, setDraftLon] = useState<number | null>(null);
   const [draftGeoBusy, setDraftGeoBusy] = useState(false);
+  const autoWeatherDoneForEntryRef = useRef<string | null>(null);
 
   const wj = weatherJson as WeatherJson | null;
 
   const openLocationMap = useCallback(() => {
-    const la = parseFloat(latIn);
-    const lo = parseFloat(lonIn);
-    setDraftLat(Number.isFinite(la) ? la : null);
-    setDraftLon(Number.isFinite(lo) ? lo : null);
+    let la: number | null = null;
+    let lo: number | null = null;
+    if (latitude != null && Number.isFinite(latitude)) {
+      la = latitude;
+    } else {
+      const p = parseFloat(latIn);
+      if (Number.isFinite(p)) la = p;
+    }
+    if (longitude != null && Number.isFinite(longitude)) {
+      lo = longitude;
+    } else {
+      const p = parseFloat(lonIn);
+      if (Number.isFinite(p)) lo = p;
+    }
+    setDraftLat(la);
+    setDraftLon(lo);
     setLocationMapOpen(true);
-  }, [latIn, lonIn]);
+  }, [latIn, lonIn, latitude, longitude]);
 
   const applyDraftLocation = useCallback(() => {
     if (draftLat == null || draftLon == null || !Number.isFinite(draftLat) || !Number.isFinite(draftLon)) {
@@ -227,40 +240,59 @@ export function EntryActions({
     );
   }
 
-  async function fetchWeather() {
-    setBusy("wx");
-    setMsg(null);
-    try {
-      const lat = parseFloat(latIn);
-      const lon = parseFloat(lonIn);
-      const payload =
-        !Number.isNaN(lat) && !Number.isNaN(lon) ? { latitude: lat, longitude: lon } : {};
-      const res = await fetch(`/api/entries/${entryId}/weather`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = (await res.json().catch(() => ({}))) as {
-        error?: string;
-        entry?: { weatherJson?: WeatherJson };
-      };
-      if (!res.ok) {
-        setMsg(typeof data.error === "string" ? data.error : "天気の取得に失敗しました");
-        return;
+  const fetchWeather = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      const silent = opts?.silent === true;
+      setBusy("wx");
+      if (!silent) setMsg(null);
+      try {
+        const lat = parseFloat(latIn);
+        const lon = parseFloat(lonIn);
+        const payload =
+          !Number.isNaN(lat) && !Number.isNaN(lon) ? { latitude: lat, longitude: lon } : {};
+        const res = await fetch(`/api/entries/${entryId}/weather`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const data = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          entry?: { weatherJson?: WeatherJson };
+        };
+        if (!res.ok) {
+          if (!silent) {
+            setMsg(typeof data.error === "string" ? data.error : "天気の取得に失敗しました");
+          }
+          return;
+        }
+        if (!silent) {
+          const src = data.entry?.weatherJson?.locationSource;
+          if (src === "tokyo_fallback") {
+            setMsg("天気を保存しました（エントリ位置なし・既定地点なしのため東京代表で取得）");
+          } else if (src === "user_default") {
+            setMsg("天気を保存しました（設定の既定地点で取得）");
+          } else {
+            setMsg("天気を保存しました（その日の午前・午後）");
+          }
+        }
+        router.refresh();
+      } finally {
+        setBusy(null);
       }
-      const src = data.entry?.weatherJson?.locationSource;
-      if (src === "tokyo_fallback") {
-        setMsg("天気を保存しました（エントリ位置なし・既定地点なしのため東京代表で取得）");
-      } else if (src === "user_default") {
-        setMsg("天気を保存しました（設定の既定地点で取得）");
-      } else {
-        setMsg("天気を保存しました（その日の午前・午後）");
-      }
-      router.refresh();
-    } finally {
-      setBusy(null);
+    },
+    [entryId, latIn, lonIn, router],
+  );
+
+  useEffect(() => {
+    if (autoWeatherDoneForEntryRef.current === entryId) return;
+    const hasAmPm = wj?.kind === "am_pm" && wj.am && wj.pm;
+    if (hasAmPm) {
+      autoWeatherDoneForEntryRef.current = entryId;
+      return;
     }
-  }
+    autoWeatherDoneForEntryRef.current = entryId;
+    void fetchWeather({ silent: true });
+  }, [entryId, wj, fetchWeather]);
 
   async function indexMemory() {
     setBusy("mem");
@@ -420,7 +452,7 @@ export function EntryActions({
           <button
             type="button"
             disabled={busy !== null}
-            onClick={() => void fetchWeather()}
+            onClick={() => void fetchWeather({ silent: false })}
             className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm dark:border-zinc-700"
           >
             {busy === "wx" ? "…" : "天気を取得"}
@@ -434,6 +466,7 @@ export function EntryActions({
         labelledBy="entry-location-map-title"
         dialogId="entry-location-map-dialog"
         zClass="z-[60]"
+        presentation="island"
       >
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-200 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] dark:border-zinc-800 md:pt-4">
           <h2 id="entry-location-map-title" className="text-base font-semibold text-zinc-900 dark:text-zinc-50">

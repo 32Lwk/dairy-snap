@@ -337,7 +337,7 @@ export function SettingsForm({ userId }: { userId: string }) {
 
   return (
     <>
-      <div className="mt-6 space-y-6">
+      <div className="mt-6 w-full min-w-0 space-y-6">
       {data.email && (
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
           ログイン中: <span className="font-medium">{data.email}</span>
@@ -358,7 +358,7 @@ export function SettingsForm({ userId }: { userId: string }) {
         </div>
       )}
 
-      <section className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
+      <section className="w-full min-w-0 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
         <h2 className="font-medium text-zinc-900 dark:text-zinc-50">暗号化</h2>
         <p className="mt-1 text-xs text-zinc-500">
           実験的 E2EE は本文のみ。パスフレーズ紛失時は復旧できません（後続で鍵束・32 文字要件を実装）。
@@ -391,7 +391,7 @@ export function SettingsForm({ userId }: { userId: string }) {
         </div>
       </section>
 
-      <section className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
+      <section className="w-full min-w-0 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
         <UserProfileForm
           key={data.serverSyncToken ?? "profile"}
           initial={hydrateProfilePayloadForForms(data.profile ?? {})}
@@ -412,7 +412,7 @@ export function SettingsForm({ userId }: { userId: string }) {
         />
       </section>
 
-      <section className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
+      <section className="w-full min-w-0 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
         <h2 className="font-medium text-zinc-900 dark:text-zinc-50">日記チャットの開口トピック（カレンダー分類）</h2>
         <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
           日記でチャットを開いたとき、当日の Google カレンダー予定からどの話題として声をかけるかを決めるルールです（優先順位・キーワードルール等）。カレンダー画面の表示設定ダイアログには出さず、ここでのみ編集します。曖昧な予定は「どんな予定？」と確認します。
@@ -509,7 +509,7 @@ export function SettingsForm({ userId }: { userId: string }) {
         </div>
       </section>
 
-      <section className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
+      <section className="w-full min-w-0 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
         <h2 className="font-medium text-zinc-900 dark:text-zinc-50">天気の既定の地点</h2>
         <p className="mt-1 text-xs text-zinc-500">
           エントリに位置がないときの天気取得（午前・午後）に使います。エントリに位置を保存した場合はそちらが優先されます。
@@ -565,7 +565,7 @@ export function SettingsForm({ userId }: { userId: string }) {
         </div>
       </section>
 
-      <section className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
+      <section className="w-full min-w-0 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
         <h2 className="font-medium text-zinc-900 dark:text-zinc-50">本日の利用状況</h2>
         <ul className="mt-2 space-y-1 text-sm text-zinc-600 dark:text-zinc-400">
           <li>
@@ -580,7 +580,7 @@ export function SettingsForm({ userId }: { userId: string }) {
         </ul>
       </section>
 
-      <section className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
+      <section className="w-full min-w-0 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
         <h2 className="font-medium text-zinc-900 dark:text-zinc-50">プロンプト版</h2>
         <ul className="mt-2 space-y-1 font-mono text-xs text-zinc-600 dark:text-zinc-400">
           {Object.entries(data.promptVersions).map(([k, v]) => (

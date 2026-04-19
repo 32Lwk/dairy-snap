@@ -165,6 +165,8 @@ function labelMap<T extends readonly { value: string; label: string }[]>(opts: T
 }
 
 export function formatAgentPersonaForPrompt(profile: {
+  /** `aiAddressStyle === "nickname"` のときの表示名（未設定時は「ニックネーム」を名前置きにしないよう指示を出す） */
+  nickname?: string;
   aiAddressStyle?: string;
   aiChatTone?: string;
   aiDepthLevel?: string;
@@ -181,8 +183,21 @@ export function formatAgentPersonaForPrompt(profile: {
   const lines: string[] = [];
   const addr = profile.aiAddressStyle;
   if (addr) {
-    const lb = labelMap(AI_ADDRESS_STYLE_OPTIONS as unknown as { value: string; label: string }[], addr);
-    if (lb) lines.push(`- 呼び方・距離感: ${lb}`);
+    if (addr === "nickname") {
+      const nick = profile.nickname?.trim();
+      if (nick) {
+        lines.push(
+          `- 呼び方・距離感: ニックネーム「${nick}」で呼ぶ（例:「${nick}、」で文頭）。語「ニックネーム」を相手の名前として使わない`,
+        );
+      } else {
+        lines.push(
+          `- 呼び方・距離感: ニックネームで呼びたいが未登録。相手を「ニックネーム」とは呼ばない。「あなた」や無呼びかけで自然に`,
+        );
+      }
+    } else {
+      const lb = labelMap(AI_ADDRESS_STYLE_OPTIONS as unknown as { value: string; label: string }[], addr);
+      if (lb) lines.push(`- 呼び方・距離感: ${lb}`);
+    }
   }
   const tone = profile.aiChatTone;
   if (tone) {

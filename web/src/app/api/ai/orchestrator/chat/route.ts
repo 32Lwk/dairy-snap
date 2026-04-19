@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
 
   const started = Date.now();
 
-  const { stream, agentsUsed, personaInstructions, mbtiHint } = await runOrchestrator({
+  const { stream, agentsUsed, personaInstructions, mbtiHint, orchestratorModel } = await runOrchestrator({
     userId: session.user.id,
     entryId: entry.id,
     entryDateYmd: entry.entryDateYmd,
@@ -103,7 +103,7 @@ export async function POST(req: NextRequest) {
             threadId: thread!.id,
             role: "assistant",
             content: assistantText,
-            model: "gpt-4o",
+            model: orchestratorModel,
             latencyMs,
             tokenEstimate: Math.ceil((parsed.data.message.length + assistantText.length) / 4),
             agentName: "orchestrator",
@@ -123,7 +123,7 @@ export async function POST(req: NextRequest) {
             action: "ai_orchestrator_chat_complete",
             metadata: {
               threadId: thread!.id,
-              model: "gpt-4o",
+              model: orchestratorModel,
               latencyMs,
               agentsUsed,
               promptVersion: PROMPT_VERSIONS.reflective_chat,
@@ -137,7 +137,7 @@ export async function POST(req: NextRequest) {
             entryId: entry.id,
             kind: "CHAT_MESSAGE",
             promptVersion: PROMPT_VERSIONS.reflective_chat,
-            model: "gpt-4o",
+            model: orchestratorModel,
             latencyMs,
             tokenEstimate: assistant.tokenEstimate,
             metadata: {

@@ -2,7 +2,7 @@ import { formatYmdTokyo } from "@/lib/time/tokyo";
 import { parseUserSettings } from "@/lib/user-settings";
 import { getResolvedAuthUser } from "@/lib/server/resolved-auth-user";
 import { prisma } from "@/server/db";
-import { upsertDailyEntryForTodayPage } from "@/server/ensure-daily-entry";
+import { upsertDailyEntryForYmd } from "@/server/ensure-daily-entry";
 import { redirect } from "next/navigation";
 import { TodayEntryDetailPromo } from "./today-entry-detail-promo";
 import { TodayMainGrid } from "./today-main-grid";
@@ -18,7 +18,7 @@ export default async function TodayPage() {
       where: { id: r.user.id },
       select: { settings: true },
     }),
-    upsertDailyEntryForTodayPage(r.user.id, ymd),
+    upsertDailyEntryForYmd(r.user.id, ymd),
   ]);
 
   const prof = parseUserSettings(userSettingsRow?.settings ?? {}).profile;

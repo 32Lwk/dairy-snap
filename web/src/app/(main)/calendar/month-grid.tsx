@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import { resolveGcalEventColor } from "@/lib/gcal-event-color";
 import type { CalendarWeekStartDay } from "@/lib/user-settings";
 
@@ -79,6 +79,22 @@ async function fetchMonthEvents(ym: string): Promise<Ev[]> {
   return p;
 }
 
+/** Month events after client fetch (e.g. day modal). */
+export function peekMonthEventsCache(ym: string): Ev[] | undefined {
+  return monthEventsCache.get(ym);
+}
+
+/** Drop client month cache so the next fetch refetches (e.g. after force sync). */
+export function invalidateMonthGridEventsCache(ym?: string) {
+  if (ym) {
+    monthEventsCache.delete(ym);
+    monthEventsInflight.delete(ym);
+    return;
+  }
+  monthEventsCache.clear();
+  monthEventsInflight.clear();
+}
+
 export function MonthGrid({
   ym,
   prevYm,
@@ -92,6 +108,7 @@ export function MonthGrid({
   initialEvents,
   selectedDateYmd,
   filter,
+  onDayActivate,
 }: {
   ym: string;
   prevYm: string;
@@ -106,6 +123,8 @@ export function MonthGrid({
   initialEvents: Ev[];
   selectedDateYmd?: string;
   filter?: { apply: (ev: Ev) => boolean; infer: (ev: Ev) => string };
+  /** Primary click opens day modal; modified / middle-click keeps normal navigation. */
+  onDayActivate?: (ymd: string, e: MouseEvent<HTMLAnchorElement>) => void;
 }) {
   const [events, setEvents] = useState<Ev[] | null>(() => initialEvents ?? null);
 
@@ -236,6 +255,7 @@ export function MonthGrid({
             <Link
               key={ymd}
               href={`/calendar/${ymd}`}
+              onClick={onDayActivate ? (e) => onDayActivate(ymd, e) : undefined}
               title={titleLines}
               className={[
                 "group block rounded-lg border px-2 py-2 text-left",
@@ -293,7 +313,7 @@ export function MonthGrid({
       </div>
 
       <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
-               各日をクリックするとその日付の URL（/calendar/日付）に切り替わります（ツールチップに予定の概要も表示）。日記本文・画像はエントリページから開けます。
+        各日をクリックするとその日の概要がモーダルで開きます（Ctrl を押しながらクリック・マウス中クリックで新しいタブに開けます）。日記本文・画像はエントリページから開けます。
       </p>
     </>
   );

@@ -3,6 +3,12 @@ import path from "node:path";
 import { z } from "zod";
 import { formatMemoryHandlingForMasPrompt } from "@/lib/agent-persona-preferences";
 import { getOpenAI } from "@/lib/ai/openai";
+import {
+  chatCompletionOutputTokenLimit,
+  getMemoryExtractionChatFallbackModel,
+  getMemoryExtractionChatModel,
+} from "@/lib/ai/openai-chat-models";
+import { withChatModelFallback } from "@/lib/ai/openai-model-fallback";
 import { parseUserSettings } from "@/lib/user-settings";
 import { prisma } from "@/server/db";
 
@@ -157,19 +163,23 @@ export async function runMasMemoryExtraction(args: {
     "All lists may be empty arrays.",
   ].join("\n\n");
 
-  const model = process.env.MEMORY_EXTRACTION_MODEL?.trim() || "gpt-4o-mini";
   let raw = "{}";
   try {
     const openai = getOpenAI();
-    const completion = await openai.chat.completions.create({
-      model,
-      max_tokens: 1800,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: userBlock },
-      ],
-    });
+    const completion = await withChatModelFallback(
+      getMemoryExtractionChatModel(),
+      getMemoryExtractionChatFallbackModel(),
+      (model) =>
+        openai.chat.completions.create({
+          model,
+          ...chatCompletionOutputTokenLimit(model, 1800),
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: userBlock },
+          ],
+        }),
+    );
     raw = completion.choices[0]?.message?.content ?? "{}";
   } catch {
     return;

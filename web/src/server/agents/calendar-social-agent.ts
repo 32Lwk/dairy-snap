@@ -1,4 +1,10 @@
 import { getOpenAI } from "@/lib/ai/openai";
+import {
+  chatCompletionOutputTokenLimit,
+  getAgentSocialMiniChatFallbackModel,
+  getAgentSocialMiniChatModel,
+} from "@/lib/ai/openai-chat-models";
+import { withChatModelFallback } from "@/lib/ai/openai-model-fallback";
 import { fetchCalendarEventsForDay } from "@/server/calendar";
 import type { AgentRequest, AgentResponse } from "./types";
 import { loadAgentPrompt } from "./utils";
@@ -65,14 +71,19 @@ export async function runCalendarSocialAgent(req: AgentRequest): Promise<AgentRe
     .join("\n\n");
 
   const openai = getOpenAI();
-  const completion = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    max_tokens: 400,
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: contextBlock },
-    ],
-  });
+  const completion = await withChatModelFallback(
+    getAgentSocialMiniChatModel(),
+    getAgentSocialMiniChatFallbackModel(),
+    (model) =>
+      openai.chat.completions.create({
+        model,
+        ...chatCompletionOutputTokenLimit(model, 400),
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: contextBlock },
+        ],
+      }),
+  );
 
   const answer = completion.choices[0]?.message?.content?.trim() ?? "";
   const hasRelevantInfo = answer.length > 0 && eventsBlock !== "（社交・個人予定なし）";

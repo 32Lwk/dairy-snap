@@ -21,6 +21,112 @@ import {
 const MAX_PERIODS = 10;
 const DEFAULT_PERIOD_COUNT = 5;
 
+/** `globals.css` の input 1rem 上書きを避けつつ小型フォントを当てる（Tailwind text-* だけでは効かない） */
+const TT_INPUT = "timetable-editor-input";
+const TT_INPUT_SM = "timetable-editor-input timetable-editor-input-sm";
+
+/** readOnly 時は input にせずテキスト表示（a11y・見た目） */
+const TT_RO_TEXT =
+  "text-[calc(0.75rem-2pt)] leading-5 text-zinc-900 dark:text-zinc-100";
+const TT_RO_BOX = `rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 dark:border-zinc-700 dark:bg-zinc-900/80 ${TT_RO_TEXT}`;
+const TT_RO_BOX_DATE = `rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-1 dark:border-zinc-700 dark:bg-zinc-900/80 ${TT_RO_TEXT}`;
+const TT_RO_EMPTY = "text-zinc-400 dark:text-zinc-500";
+
+function formatTimetableDateLabel(iso: string | null | undefined): string {
+  const s = iso?.trim() ?? "";
+  if (!s) return "―";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const d = new Date(`${s}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return s;
+  return new Intl.DateTimeFormat("ja-JP", {
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+  }).format(d);
+}
+
+/** 年は4桁・最大8桁まで（YYYYMMDD）に制限。ネイティブ type=date の年6桁問題を避ける */
+function isValidCalendarYmd(y: number, m: number, d: number): boolean {
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return false;
+  if (y < 1000 || y > 9999 || m < 1 || m > 12 || d < 1 || d > 31) return false;
+  const dt = new Date(`${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}T12:00:00`);
+  return dt.getFullYear() === y && dt.getMonth() + 1 === m && dt.getDate() === d;
+}
+
+function digitsToYmdMasked(raw: string): string {
+  const t = raw.trim();
+  let digits: string;
+  if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(t)) {
+    const [y, m, d] = t.split("-");
+    digits = `${y}${m.padStart(2, "0")}${d.padStart(2, "0")}`.slice(0, 8);
+  } else {
+    digits = t.replace(/\D/g, "").slice(0, 8);
+  }
+  if (digits.length <= 4) return digits;
+  if (digits.length <= 6) return `${digits.slice(0, 4)}-${digits.slice(4)}`;
+  return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6)}`;
+}
+
+function parseCompleteIsoFromMasked(display: string): string | undefined {
+  const t = display.trim();
+  if (!t) return undefined;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return undefined;
+  const [ys, ms, ds] = t.split("-");
+  const y = Number(ys);
+  const m = Number(ms);
+  const d = Number(ds);
+  if (!isValidCalendarYmd(y, m, d)) return undefined;
+  return t;
+}
+
+function TimetableIsoDateField({
+  value,
+  onCommit,
+  className,
+}: {
+  value: string | undefined;
+  /** 確定した YYYY-MM-DD または未入力でクリア（setValidityRange は空文字でクリア） */
+  onCommit: (next: string | undefined) => void;
+  className?: string;
+}) {
+  const [text, setText] = useState(() => value?.trim() ?? "");
+
+  useEffect(() => {
+    setText(value?.trim() ?? "");
+  }, [value]);
+
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      autoComplete="off"
+      placeholder="YYYY-MM-DD"
+      title="数字のみ（最大8桁）。年は4桁で自動で区切ります。"
+      value={text}
+      onChange={(e) => {
+        const masked = digitsToYmdMasked(e.target.value);
+        setText(masked);
+        if (masked === "") {
+          onCommit(undefined);
+          return;
+        }
+        const iso = parseCompleteIsoFromMasked(masked);
+        if (iso) onCommit(iso);
+      }}
+      onBlur={() => {
+        if (!text.trim()) {
+          onCommit(undefined);
+          return;
+        }
+        const iso = parseCompleteIsoFromMasked(text);
+        if (iso) onCommit(iso);
+        else setText(value?.trim() ?? "");
+      }}
+      className={className}
+    />
+  );
+}
+
 function applyBulkPeriodMeta(
   pattern: TimetablePattern,
   rows: { start: string; duration: string }[],
@@ -581,66 +687,82 @@ export function TimetableEditor({
   return (
     <div className="space-y-2">
       <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
-        <label
+        <div
           className="flex min-w-0 flex-1 basis-0 items-center gap-2 text-[10px] text-zinc-600 dark:text-zinc-400"
           title="パターンの科目マスは消えません"
         >
           <span className="shrink-0 whitespace-nowrap">学期・年度（任意）</span>
-          <input
-            value={bundle.scenarioLabel ?? ""}
-            readOnly={readOnly}
-            onChange={(e) => commit({ ...bundle, scenarioLabel: e.target.value })}
-            placeholder="2025年度 前期"
-            className={`min-w-0 flex-1 rounded-md border border-zinc-200 px-2 py-1 text-xs dark:border-zinc-700 ${
-              readOnly ? "cursor-default bg-zinc-50 dark:bg-zinc-900/80" : "bg-white dark:bg-zinc-950"
-            }`}
-          />
-        </label>
-        <label className="flex min-w-0 flex-1 basis-0 items-center gap-2 text-[10px] text-zinc-600 dark:text-zinc-400">
+          {readOnly ? (
+            <div className={`min-w-0 flex-1 ${TT_RO_BOX}`}>
+              {bundle.scenarioLabel?.trim() ? (
+                bundle.scenarioLabel
+              ) : (
+                <span className={TT_RO_EMPTY}>―</span>
+              )}
+            </div>
+          ) : (
+            <input
+              type="text"
+              value={bundle.scenarioLabel ?? ""}
+              onChange={(e) => commit({ ...bundle, scenarioLabel: e.target.value })}
+              placeholder="2025年度 前期"
+              className={`${TT_INPUT} min-w-0 flex-1 rounded-md border border-zinc-200 bg-white px-2 py-1 dark:border-zinc-700 dark:bg-zinc-950`}
+            />
+          )}
+        </div>
+        <div className="flex min-w-0 flex-1 basis-0 items-center gap-2 text-[10px] text-zinc-600 dark:text-zinc-400">
           <span className="shrink-0 whitespace-nowrap">パターン名</span>
-          <input
-            value={data.label}
-            readOnly={readOnly}
-            onChange={(e) =>
-              commit(updateActivePattern(bundle, (pat) => ({ ...pat, label: e.target.value })))
-            }
-            placeholder="A週・メイン"
-            className={`min-w-0 flex-1 rounded-md border border-zinc-200 px-2 py-1 text-xs dark:border-zinc-700 ${
-              readOnly ? "cursor-default bg-zinc-50 dark:bg-zinc-900/80" : "bg-white dark:bg-zinc-950"
-            }`}
-          />
-        </label>
+          {readOnly ? (
+            <div className={`min-w-0 flex-1 ${TT_RO_BOX}`}>
+              {data.label.trim() ? data.label : <span className={TT_RO_EMPTY}>―</span>}
+            </div>
+          ) : (
+            <input
+              type="text"
+              value={data.label}
+              onChange={(e) =>
+                commit(updateActivePattern(bundle, (pat) => ({ ...pat, label: e.target.value })))
+              }
+              placeholder="A週・メイン"
+              className={`${TT_INPUT} min-w-0 flex-1 rounded-md border border-zinc-200 bg-white px-2 py-1 dark:border-zinc-700 dark:bg-zinc-950`}
+            />
+          )}
+        </div>
       </div>
 
       <div className="flex min-w-0 flex-nowrap items-center gap-x-2 overflow-x-auto overscroll-x-contain">
         <span className="shrink-0 whitespace-nowrap text-[10px] text-zinc-500 dark:text-zinc-400">
-          有効期間（任意・両端の日付を含みます）
+          有効期間
         </span>
-        <label className="flex min-w-0 flex-1 basis-[8.5rem] items-center gap-1.5 text-[10px] text-zinc-600 dark:text-zinc-400">
+        <div className="flex min-w-[9rem] shrink-0 items-center gap-1.5 text-[10px] text-zinc-600 dark:text-zinc-400">
           <span className="shrink-0 whitespace-nowrap">開始</span>
-          <input
-            type="date"
-            value={bundle.validFrom ?? ""}
-            readOnly={readOnly}
-            onChange={(e) => setValidityRange({ validFrom: e.target.value })}
-            className={`min-w-0 flex-1 rounded-md border border-zinc-200 px-1.5 py-1 text-xs dark:border-zinc-700 ${
-              readOnly ? "cursor-default bg-zinc-50 dark:bg-zinc-900/80" : "bg-white dark:bg-zinc-950"
-            }`}
-          />
-        </label>
+          {readOnly ? (
+            <div className={`min-w-[7.75rem] flex-1 tabular-nums ${TT_RO_BOX_DATE}`}>
+              {formatTimetableDateLabel(bundle.validFrom)}
+            </div>
+          ) : (
+            <TimetableIsoDateField
+              value={bundle.validFrom}
+              onCommit={(next) => setValidityRange({ validFrom: next ?? "" })}
+              className={`${TT_INPUT} min-w-[9rem] max-w-[10.5rem] flex-1 rounded-md border border-zinc-200 bg-white px-1.5 py-1 dark:border-zinc-700 dark:bg-zinc-950`}
+            />
+          )}
+        </div>
         <span className="shrink-0 text-[10px] text-zinc-400">〜</span>
-        <label className="flex min-w-0 flex-1 basis-[8.5rem] items-center gap-1.5 text-[10px] text-zinc-600 dark:text-zinc-400">
+        <div className="flex min-w-[9rem] shrink-0 items-center gap-1.5 text-[10px] text-zinc-600 dark:text-zinc-400">
           <span className="shrink-0 whitespace-nowrap">終了</span>
-          <input
-            type="date"
-            value={bundle.validTo ?? ""}
-            readOnly={readOnly}
-            onChange={(e) => setValidityRange({ validTo: e.target.value })}
-            className={`min-w-0 flex-1 rounded-md border border-zinc-200 px-1.5 py-1 text-xs dark:border-zinc-700 ${
-              readOnly ? "cursor-default bg-zinc-50 dark:bg-zinc-900/80" : "bg-white dark:bg-zinc-950"
-            }`}
-          />
-        </label>
+          {readOnly ? (
+            <div className={`min-w-[7.75rem] flex-1 tabular-nums ${TT_RO_BOX_DATE}`}>
+              {formatTimetableDateLabel(bundle.validTo)}
+            </div>
+          ) : (
+            <TimetableIsoDateField
+              value={bundle.validTo}
+              onCommit={(next) => setValidityRange({ validTo: next ?? "" })}
+              className={`${TT_INPUT} min-w-[9rem] max-w-[10.5rem] flex-1 rounded-md border border-zinc-200 bg-white px-1.5 py-1 dark:border-zinc-700 dark:bg-zinc-950`}
+            />
+          )}
+        </div>
       </div>
 
       {bundle.patterns.length > 1 ? (
@@ -653,7 +775,7 @@ export function TimetableEditor({
               if (readOnly) setBrowsePatternIdx(i);
               else commit({ ...bundle, activePatternIndex: i });
             }}
-            className="max-w-[12rem] rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+            className="max-w-[12rem] rounded-md border border-zinc-200 bg-white px-2 py-1 text-[calc(11px-2pt)] dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
           >
             {bundle.patterns.map((p, i) => (
               <option key={p.id} value={i}>
@@ -682,10 +804,11 @@ export function TimetableEditor({
             </button>
             <div className="flex min-w-0 flex-1 flex-wrap items-end gap-1 [flex-basis:14rem]">
               <input
+                type="text"
                 value={newPatternName}
                 onChange={(e) => setNewPatternName(e.target.value)}
                 placeholder="新パターン名（例: B週・後期）"
-                className="min-w-0 flex-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] dark:border-zinc-700 dark:bg-zinc-950"
+                className={`${TT_INPUT_SM} min-w-0 flex-1 rounded-md border border-zinc-200 bg-white px-2 py-1 dark:border-zinc-700 dark:bg-zinc-950`}
               />
               <button type="button" className={btnSm} onClick={addPattern}>
                 パターンを追加
@@ -732,7 +855,7 @@ export function TimetableEditor({
       ) : null}
 
       <div className={compact ? "overflow-x-auto" : ""}>
-        <table className="w-full min-w-[280px] table-fixed border-collapse text-xs">
+        <table className="w-full min-w-[280px] table-fixed border-collapse text-[calc(0.75rem-2pt)]">
           <colgroup>
             <col className="w-[3.7rem] min-w-[3.7rem]" />
             {data.columns.map((col) => (
@@ -770,7 +893,7 @@ export function TimetableEditor({
               <tr key={period}>
                 <td className="border border-zinc-200 bg-zinc-50 p-1 align-top dark:border-zinc-700 dark:bg-zinc-900/50">
                   {readOnly ? (
-                    <div className="w-full min-w-0 text-left text-[11px] font-medium leading-snug text-zinc-700 dark:text-zinc-200">
+                    <div className="w-full min-w-0 text-left text-[calc(11px-2pt)] font-medium leading-snug text-zinc-700 dark:text-zinc-200">
                       {period}限
                       <span className="mt-0.5 block break-words text-[10px] font-normal text-zinc-500 dark:text-zinc-400">
                         {(() => {
@@ -787,7 +910,7 @@ export function TimetableEditor({
                   ) : (
                     <button
                       type="button"
-                      className="w-full min-w-0 text-left text-[11px] font-medium leading-snug text-zinc-700 dark:text-zinc-200"
+                      className="w-full min-w-0 text-left text-[calc(11px-2pt)] font-medium leading-snug text-zinc-700 dark:text-zinc-200"
                       onClick={() => setPeriodModal(period - 1)}
                     >
                       {period}限
@@ -810,18 +933,23 @@ export function TimetableEditor({
                   const v = data.cells[k] ?? "";
                   return (
                     <td key={k} className="border border-zinc-200 p-0 dark:border-zinc-700">
-                      <input
-                        value={v}
-                        readOnly={readOnly}
-                        onChange={(e) => setCell(col.id, period, e.target.value)}
-                        onFocus={() => setLastCell({ colId: col.id, period })}
-                        className={`h-10 w-full min-w-[4.5rem] border-0 px-1.5 py-1 text-xs outline-none dark:text-zinc-100 ${
-                          readOnly
-                            ? "cursor-default bg-transparent"
-                            : "bg-transparent focus:ring-1 focus:ring-emerald-500/40"
-                        }`}
-                        placeholder="科目"
-                      />
+                      {readOnly ? (
+                        <div
+                          className={`flex min-h-10 min-w-[4.5rem] items-center px-1.5 py-1 ${TT_RO_TEXT} ${
+                            v.trim() ? "" : TT_RO_EMPTY
+                          }`}
+                        >
+                          {v.trim() ? v : "―"}
+                        </div>
+                      ) : (
+                        <input
+                          value={v}
+                          onChange={(e) => setCell(col.id, period, e.target.value)}
+                          onFocus={() => setLastCell({ colId: col.id, period })}
+                          className={`${TT_INPUT} h-10 w-full min-w-[4.5rem] border-0 bg-transparent px-1.5 py-1 outline-none focus:ring-1 focus:ring-emerald-500/40 dark:text-zinc-100`}
+                          placeholder="科目"
+                        />
+                      )}
                     </td>
                   );
                 })}
