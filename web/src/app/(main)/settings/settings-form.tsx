@@ -437,7 +437,7 @@ export function SettingsForm({ userId }: { userId: string }) {
             <button
               type="button"
               onClick={() => {
-                setProfileChatDraft(hydrateProfilePayloadForForms(data.profile ?? {}));
+                setProfileChatDraft((prev) => prev ?? hydrateProfilePayloadForForms(data.profile ?? {}));
                 setProfileChatMode("chat");
                 setProfileChatOpen(true);
               }}
@@ -716,7 +716,6 @@ export function SettingsForm({ userId }: { userId: string }) {
               type="button"
               onClick={() => {
                 setProfileChatOpen(false);
-                setProfileChatDraft(null);
               }}
               className="shrink-0 rounded-lg px-2 py-1 text-sm text-zinc-600 hover:bg-zinc-200/80 dark:text-zinc-300 dark:hover:bg-zinc-800"
             >

@@ -211,6 +211,12 @@ export function OnboardingClient({
   }, [userId, router, isAllowed]);
 
   async function skip() {
+    if (typeof window !== "undefined") {
+      const ok = window.confirm(
+        "プロフィール入力をスキップしてもよいですか？\nあとから設定画面で登録できます。",
+      );
+      if (!ok) return;
+    }
     setSkipping(true);
     setError(null);
     try {
