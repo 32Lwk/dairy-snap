@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { AgentPersonaPreferences } from "@/components/agent-persona-preferences";
 import { InterestPicksControl } from "@/components/interest-picks-control";
 import { ageYearsFromYmd, localYmdToday, sanitizeHtmlDateYmd } from "@/lib/age-from-ymd";
@@ -756,45 +757,51 @@ export function UserProfileForm({
               >
                 時間割を入力・編集
               </button>
-              {studentTimetableSheetOpen ? (
-                <div
-                  className="fixed inset-0 z-[100] flex flex-col items-center justify-end"
-                  role="dialog"
-                  aria-modal="true"
-                  aria-labelledby="profile-timetable-sheet-title"
-                >
-                  <button
-                    type="button"
-                    className="absolute inset-0 bg-black/45 backdrop-blur-[1px]"
-                    aria-label="閉じる"
-                    onClick={() => setStudentTimetableSheetOpen(false)}
-                  />
-                  <div className="relative z-10 w-full min-w-0 max-w-lg px-4">
-                    <div className="flex max-h-[90dvh] min-h-0 flex-col overflow-hidden rounded-t-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-700 dark:bg-zinc-950">
-                      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-zinc-200 px-3 py-2.5 dark:border-zinc-800">
-                        <p id="profile-timetable-sheet-title" className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
-                          時間割
-                        </p>
-                        <button
-                          type="button"
-                          className="rounded-lg px-2 py-1 text-sm font-medium text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/50"
-                          onClick={() => setStudentTimetableSheetOpen(false)}
-                        >
-                          閉じる
-                        </button>
+              {studentTimetableSheetOpen && typeof document !== "undefined"
+                ? createPortal(
+                    <div
+                      className="fixed inset-0 z-[210] flex flex-col items-center justify-end"
+                      role="dialog"
+                      aria-modal="true"
+                      aria-labelledby="profile-timetable-sheet-title"
+                    >
+                      <button
+                        type="button"
+                        className="absolute inset-0 bg-black/45 backdrop-blur-[1px]"
+                        aria-label="閉じる"
+                        onClick={() => setStudentTimetableSheetOpen(false)}
+                      />
+                      <div className="relative z-10 w-full min-w-0 max-w-lg px-4">
+                        <div className="flex max-h-[90dvh] min-h-0 flex-col overflow-hidden rounded-t-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-700 dark:bg-zinc-950">
+                          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-zinc-200 px-3 py-2.5 dark:border-zinc-800">
+                            <p
+                              id="profile-timetable-sheet-title"
+                              className="text-sm font-semibold text-zinc-900 dark:text-zinc-50"
+                            >
+                              時間割
+                            </p>
+                            <button
+                              type="button"
+                              className="rounded-lg px-2 py-1 text-sm font-medium text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/50"
+                              onClick={() => setStudentTimetableSheetOpen(false)}
+                            >
+                              閉じる
+                            </button>
+                          </div>
+                          <div className="min-h-0 flex-1 overflow-auto overscroll-contain px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2">
+                            <TimetableEditor
+                              compact
+                              value={studentTimetableEditorValue}
+                              onChange={(v) => patchOnboardingWorkLife({ st_timetable_note: v })}
+                              stLevel={workLife.st_level ?? ""}
+                            />
+                          </div>
+                        </div>
                       </div>
-                      <div className="min-h-0 flex-1 overflow-auto overscroll-contain px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2">
-                        <TimetableEditor
-                          compact
-                          value={studentTimetableEditorValue}
-                          onChange={(v) => patchOnboardingWorkLife({ st_timetable_note: v })}
-                          stLevel={workLife.st_level ?? ""}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
+                    </div>,
+                    document.body,
+                  )
+                : null}
             </div>
             <div className="rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
               <p className="mb-2 text-xs font-medium text-zinc-700 dark:text-zinc-200">
