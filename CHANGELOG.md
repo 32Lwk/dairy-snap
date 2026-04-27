@@ -752,6 +752,17 @@ git log -1 --oneline origin/main
 2. **OAuth ブランディング**: 同意画面用ロゴは `daily-snap-oauth-logo.png` を想定。
 3. **未コミット資産**: `public/brand` と `(marketing)` 一式は **コミット前**のため、デプロイ手順に含める場合はリポジトリへ取り込む必要がある。
 
+### 振り返りチャット・オーケストレーター（追記・作業ツリー）
+
+- **クライアント時刻**: `entry-chat` から `clientNow`（ISO）を開口・送信 API に付与。サーバー時刻から **±12 時間**を超える値は無視（`resolveOrchestratorClockNow`）。`runOrchestrator` は `clockNow` で壁時計・天気・太陽位相を統一。
+- **Open-Meteo 現況**: `fetchOpenMeteoDayAmPm` と並列で `fetchOpenMeteoCurrent` を取り、`formatWeatherForPrompt` に **現況行**を追加（forecast 取得経路のみ）。
+- **`query_weather`**: `formatWeatherToolReply` で、エントリが今日かつ **before_sunrise** または太陽位相 **unknown** のときツール応答末尾に断定抑制メモを付与。
+- **極圏等 `unknown`**: `formatOrchestratorWallClockDaylightBlock` の英語指示を強化（明るさ・夜明けの断定禁止、壁時計のみ確実な根拠として扱う）。
+- **開口の temperature**: `orchestratorOpeningSamplingParams` — 既定 **0.72**。環境変数 `OPENAI_ORCHESTRATOR_OPENING_TEMPERATURE` で変更、空/`omit` で未指定。**gpt-5 / o 系**は temperature を送らない（API 制約想定）。
+- **静的プロフィール**: （前段の作業ツリー）`formatOrchestratorStaticProfileBlock` で時間割曜日抜粋などを system に注入、`orchestrator.md` に根拠範囲の節を追加 — 本 CHANGELOG では上記と合わせて参照。
+- **開口の予定優先**: `scoreOpeningTopic` に **壁時計 `wallNow`** を渡し、スコアに **近接係数**（`opening-proximity.ts`）を掛け合わせ。戻り値 **`orderedEvIdx`** でカレンダー行の表示順を並べ替え。開口用に **`### 開口優先（カテゴリ系インパクト × 壁時計からの近さ）`** を system へ注入。
+- **講義（時間割）**: 学生かつ今日のエントリで `formatTimetableNextFocusForOpeningJa` により **`## 時間割ベースのこの後の講義`** を追加（直近コマ列挙）。`buildReflectiveOpeningSystemInstruction` に **`hasTimetableLecturesToday`** を渡し、カレンダーだけに偏らない指示を追加。
+
 ---
 
 ## サマリー表（期間全体）

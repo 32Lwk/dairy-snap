@@ -53,6 +53,33 @@ export function getOrchestratorOpeningChatFallbackModel(): string | null {
   return getOrchestratorChatFallbackModel();
 }
 
+/**
+ * 開口ターンのみ Chat Completions の sampling をやや下げる（指示追従の安定化）。
+ * - 未設定: `0.72`
+ * - `OPENAI_ORCHESTRATOR_OPENING_TEMPERATURE=` 空または `omit`: API 既定（指定しない）
+ * - gpt-5 / o 系は多くの場合 temperature 固定のため {@link orchestratorOpeningSamplingParams} で除外
+ */
+export function getOrchestratorOpeningTemperature(): number | undefined {
+  const raw = process.env.OPENAI_ORCHESTRATOR_OPENING_TEMPERATURE;
+  if (raw === undefined) return 0.72;
+  const t = raw.trim();
+  if (t === "" || /^omit$/i.test(t)) return undefined;
+  const n = Number(t);
+  if (!Number.isFinite(n)) return 0.72;
+  return Math.min(2, Math.max(0, n));
+}
+
+/** 開口時のみ `temperature` を付与できるモデルに限定（未対応モデルは空オブジェクト）。 */
+export function orchestratorOpeningSamplingParams(model: string): { temperature?: number } {
+  const temp = getOrchestratorOpeningTemperature();
+  if (temp === undefined) return {};
+  const m = model.trim().toLowerCase();
+  if (m.startsWith("gpt-5") || /^o[0-9]/.test(m) || m.startsWith("o1") || m.startsWith("o3")) {
+    return {};
+  }
+  return { temperature: temp };
+}
+
 export function getAgentQualityChatModel(): string {
   return (
     process.env.OPENAI_AGENT_QUALITY_MODEL?.trim() || OPENAI_CHAT_MODEL_SNAPSHOT.orchestratorAgentsMetaMemoryJournal

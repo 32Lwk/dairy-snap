@@ -4,6 +4,7 @@ import {
   type OpeningProfileSignalsInput,
 } from "@/lib/calendar-opening-profile-signals";
 import type { CalendarOpeningCategory, CalendarOpeningSettings } from "@/lib/user-settings";
+import { openingProximityImpactMultiplier } from "@/lib/opening-proximity";
 import {
   addCalendarOpeningBuiltinTextHints,
   BIRTHDAY_CALENDAR_NAME_SCORE_BOOST,
@@ -85,7 +86,7 @@ function eventTimingStatus(ev: { start: string; end: string }): "all_day" | "upc
   return "ongoing";
 }
 
-function scoreOpeningTopic(args: {
+export function scoreOpeningTopic(args: {
   dayEvents: {
     calendarId: string;
     calendarName: string;
@@ -100,6 +101,8 @@ function scoreOpeningTopic(args: {
   calendarOpening: CalendarOpeningSettings | undefined;
   /** After calendar-based scores: interest / avoid / focus (layer A). */
   profileSignals?: OpeningProfileSignalsInput | null;
+  /** 指定時刻（通常クライアント寄せの壁時計）。あるとき Impact に近接係数を掛ける */
+  wallNow?: Date;
 }): {
   primary: {
     evIdx: number;
@@ -118,6 +121,8 @@ function scoreOpeningTopic(args: {
     reasons: string[];
   } | null;
   confidence: "high" | "medium" | "low";
+  /** picks ソート後のイベントインデックス（開口用カレンダー行の並べ替え） */
+  orderedEvIdx: number[];
 } {
   const rules = args.calendarOpening?.rules ?? [];
   const priority = normalizePriorityOrder(args.calendarOpening);
@@ -212,10 +217,14 @@ function scoreOpeningTopic(args: {
     const time = hhmmTokyoFromIsoLike(ev.start);
     // pastの予定は開口に選びにくくする（ただし当日が過去予定だけの場合は許可）
     const timingPenalty = hasNonPast && timing === "past" ? -100 : 0;
+    let effScore = best.score + timingPenalty;
+    if (args.wallNow) {
+      effScore *= openingProximityImpactMultiplier(args.wallNow, ev.start, ev.end, timing);
+    }
     picks.push({
       evIdx: i,
       category: winning,
-      score: best.score + timingPenalty,
+      score: effScore,
       title: ev.title,
       time,
       timing,
@@ -224,7 +233,7 @@ function scoreOpeningTopic(args: {
   }
 
   if (picks.length === 0) {
-    return { primary: null, secondary: null, confidence: "low" };
+    return { primary: null, secondary: null, confidence: "low", orderedEvIdx: [] };
   }
 
   picks.sort((a, b) => {
@@ -235,9 +244,16 @@ function scoreOpeningTopic(args: {
     if (rt !== 0) return rt;
     const ap = priority.indexOf(a.category);
     const bp = priority.indexOf(b.category);
-    return ap - bp;
+    if (ap !== bp) return ap - bp;
+    const evA = args.dayEvents[a.evIdx];
+    const evB = args.dayEvents[b.evIdx];
+    const ta = evA ? Date.parse(evA.start) : 0;
+    const tb = evB ? Date.parse(evB.start) : 0;
+    if (Number.isFinite(ta) && Number.isFinite(tb) && ta !== tb) return ta - tb;
+    return a.evIdx - b.evIdx;
   });
 
+  const orderedEvIdx = picks.map((p) => p.evIdx);
   const primary = picks[0]!;
   const secondary = picks.find((p) => p.evIdx !== primary.evIdx) ?? null;
 
@@ -262,12 +278,16 @@ function scoreOpeningTopic(args: {
         }
       : null,
     confidence,
+    orderedEvIdx,
   };
 }
 
 /**
  * 振り返りチャット用の追加コンテキスト（システムプロンプトに連結）
  * 本文・会話の全文はサーバログに出さない運用を維持（ここはモデル入力のみ）
+ *
+ * 注: 現状この関数の呼び出し元はなく、本番の振り返りは `runOrchestrator` が
+ * `formatOrchestratorStaticProfileBlock` 等でプロンプトを組み立てている。
  */
 export async function buildReflectiveChatContext(params: {
   userId: string;
@@ -360,6 +380,7 @@ export async function buildReflectiveChatContext(params: {
                 aiCurrentFocus: profile.aiCurrentFocus,
               }
             : null,
+          wallNow: new Date(),
         })
       : null;
   const timing = openingReco?.primary?.timing ?? null;

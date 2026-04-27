@@ -11,12 +11,15 @@ import { PROMPT_VERSIONS } from "@/server/prompts";
 import { upsertTextEmbedding } from "@/server/embeddings";
 import { computeAssistantStreamDelta, stripAssistantMetaEchoPrefix } from "@/lib/chat-assistant-sanitize";
 import { buildSecurityReviewPayload, scheduleSecurityReview } from "@/server/security-review-queue";
+import { resolveOrchestratorClockNow } from "@/lib/time/client-clock";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
 const bodySchema = z.object({
   entryId: z.string().min(1),
+  /** クライアントの `new Date().toISOString()`。サーバー時刻から ±12h を超える場合は無視 */
+  clientNow: z.string().max(40).optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -72,6 +75,8 @@ export async function POST(req: NextRequest) {
   const assistantMessageId = claim.assistantMessageId;
 
   const started = Date.now();
+  const serverNow = new Date();
+  const orchestratorNow = resolveOrchestratorClockNow(serverNow, parsed.data.clientNow);
 
   const { stream, agentsUsed, personaInstructions, mbtiHint, orchestratorModel } = await runOrchestrator({
     userId: session.user.id,
@@ -82,6 +87,7 @@ export async function POST(req: NextRequest) {
     isOpening: true,
     encryptionMode: entry.encryptionMode,
     currentBody: entry.body,
+    clockNow: orchestratorNow,
   });
 
   const encoder = new TextEncoder();

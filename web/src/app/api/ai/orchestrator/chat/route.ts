@@ -17,6 +17,7 @@ import {
   shouldUseMiniOrchestratorForReflectiveChat,
 } from "@/lib/reflective-chat-diary-nudge-rules";
 import { parseUserSettings } from "@/lib/user-settings";
+import { resolveOrchestratorClockNow } from "@/lib/time/client-clock";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -24,6 +25,7 @@ export const maxDuration = 120;
 const bodySchema = z.object({
   entryId: z.string().min(1),
   message: z.string().min(1).max(16000),
+  clientNow: z.string().max(40).optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -110,6 +112,8 @@ export async function POST(req: NextRequest) {
   );
 
   const started = Date.now();
+  const serverNow = new Date();
+  const orchestratorNow = resolveOrchestratorClockNow(serverNow, parsed.data.clientNow);
 
   const { stream, agentsUsed, personaInstructions, mbtiHint, orchestratorModel } = await runOrchestrator({
     userId: session.user.id,
@@ -122,6 +126,7 @@ export async function POST(req: NextRequest) {
     currentBody: entry.body,
     reflectiveUserTurnIncludingCurrent,
     preferMiniOrchestrator,
+    clockNow: orchestratorNow,
   });
 
   const encoder = new TextEncoder();

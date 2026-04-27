@@ -86,6 +86,7 @@ export async function regenerateReflectiveChatTail(args: {
     encryptionMode: entry.encryptionMode,
     currentBody: entry.body,
     reflectiveUserTurnIncludingCurrent,
+    clockNow: new Date(),
   });
 
   let assistantText = "";

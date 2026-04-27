@@ -552,4 +552,91 @@ export function useHighSchoolSubjectPalette(stLevel: string): boolean {
   return lv === "jh" || lv === "hs";
 }
 
+function normalizeHmToHhMm(s: string): string | null {
+  const t = s.trim();
+  const m = t.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (!Number.isFinite(h) || !Number.isFinite(min) || h < 0 || h > 23 || min < 0 || min > 59) return null;
+  return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+}
+
+function periodStartMsTokyo(entryDateYmd: string, hmRaw: string | undefined): number | null {
+  if (!hmRaw?.trim()) return null;
+  const norm = normalizeHmToHhMm(hmRaw);
+  if (!norm) return null;
+  const ms = new Date(`${entryDateYmd}T${norm}:00+09:00`).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * 開口用: 対象日・壁時計より「この後」の講義コマを列挙（カレンダー外の固定予定として明示）。
+ */
+export function formatTimetableNextFocusForOpeningJa(
+  raw: string | undefined,
+  entryDateYmd: string,
+  wallNow: Date,
+): string {
+  if (!raw?.trim()) return "";
+  const b = parseTimetableStored(raw);
+  if (!b) return "";
+  const ymd = entryDateYmd.trim();
+  if (!ISO_DATE_RE.test(ymd)) return "";
+  const weekdayJa = weekdayJaFromYmdTokyo(ymd);
+  if (!weekdayJa) return "";
+  if (!isYmdInTimetableValidity(ymd, b)) return "";
+
+  type Slot = { startMs: number; endMs: number; period: number; title: string; patternLabel: string };
+  const slots: Slot[] = [];
+  const wallMs = wallNow.getTime();
+
+  for (const pat of b.patterns) {
+    const col = pat.columns.find((c) => columnMatchesWeekdayLabel(c.label, weekdayJa));
+    if (!col) continue;
+    for (let p = 1; p <= pat.periodCount; p++) {
+      const title = (pat.cells[`${col.id}-${p}`] ?? "").trim();
+      if (!title) continue;
+      const startMs = periodStartMsTokyo(ymd, pat.periodMeta[p - 1]?.start?.trim());
+      if (startMs == null) continue;
+      const dur = effectiveDurationMin(pat, p - 1) ?? 90;
+      const endMs = startMs + dur * 60_000;
+      slots.push({
+        startMs,
+        endMs,
+        period: p,
+        title,
+        patternLabel: pat.label.trim() || "パターン",
+      });
+    }
+  }
+
+  slots.sort((a, b) => a.startMs - b.startMs || a.period - b.period);
+
+  const GRACE_MS = 25 * 60_000;
+  const relevant = slots.filter((s) => s.endMs > wallMs - GRACE_MS);
+  if (relevant.length === 0) return "";
+
+  const lines: string[] = [
+    "※ 講義は Google カレンダーに無いことが多い。**開口では直近の講義コマを、遠い時刻のカレンダー予定だけに差し置かないこと。**",
+  ];
+  const head = relevant.slice(0, 5);
+  const hmFmt = new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  for (let i = 0; i < head.length; i++) {
+    const s = head[i]!;
+    const hm = hmFmt.format(new Date(s.startMs));
+    const tag = i === 0 ? "【直近の講義の目安】" : "・";
+    lines.push(`${tag} ${s.period}限 ${hm} 「${s.title}」（${s.patternLabel}）`);
+  }
+  if (relevant.length > head.length) {
+    lines.push(`（他 ${relevant.length - head.length} コマ省略）`);
+  }
+  return lines.join("\n");
+}
+
 export const HS_SUBJECT_CHIPS = ["国語", "数学", "英語", "理科", "社会"] as const;

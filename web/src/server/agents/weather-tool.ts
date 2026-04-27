@@ -1,5 +1,5 @@
 import { prisma } from "@/server/db";
-import { fetchOpenMeteoDayAmPm } from "@/server/weather";
+import { fetchOpenMeteoCurrent, fetchOpenMeteoDayAmPm } from "@/server/weather";
 import { resolveWeatherCoordinates } from "@/server/weather-resolve";
 import { weatherLabelForCode } from "@/server/weather";
 import {
@@ -54,7 +54,7 @@ function buildWeatherNarrativeHintJa(
   if (isRainy(amLabel) || isRainy(pmLabel)) {
     if (isToday && solarPhase === "before_sunrise") {
       hints.push(
-        "予報では雨の傾向。いまは夜明け前の時間帯かもしれない。体調・起床・これからの予定に触れ、外出を強く勧めない。",
+        "予報では雨の傾向。夜明け前なら、この日の予定・講義・次の予定までの過ごし方に触れよい。眠さを主役にしない。外出を強く勧めない。",
       );
     } else if (isToday && solarPhase === "daytime") {
       hints.push("雨の予報。傘・移動・気分の話につなげてもよい。");
@@ -68,7 +68,7 @@ function buildWeatherNarrativeHintJa(
   } else if (isSnowy(amLabel) || isSnowy(pmLabel)) {
     if (isToday && solarPhase === "before_sunrise") {
       hints.push(
-        "予報では雪の傾向。夜明け前の時間帯でもある。寒さ・防寒・これからの予定に触れ、無理な外出は勧めない。",
+        "予報では雪の傾向。夜明け前なら寒さ・防寒に加え、予定・講義・それまでの過ごし方に触れよい。眠さを主役にしない。無理な外出は勧めない。",
       );
     } else if (isToday && solarPhase === "daytime") {
       hints.push("雪の予報。寒さ・移動・気分の話につなげてもよい。");
@@ -82,7 +82,7 @@ function buildWeatherNarrativeHintJa(
   } else if (isCloudy(amLabel) && isCloudy(pmLabel)) {
     if (isToday && solarPhase === "before_sunrise") {
       hints.push(
-        "予報では終日曇り寄り。夜明け前の時間帯でもある。睡眠・起床・気分の変化に触れ、日中の天気を断定しない。",
+        "予報では終日曇り寄り。夜明け前なら予定・講義・次の予定までの過ごし方に触れよい。眠さを主役にしない。日中の天気は断定しない。",
       );
     } else if (isToday && solarPhase === "after_sunset") {
       hints.push("この日の予報では曇りがち。夕方以降の過ごし方や気分の振り返りに触れてもよい。");
@@ -94,7 +94,7 @@ function buildWeatherNarrativeHintJa(
   } else if (amLabel.includes("晴") || pmLabel.includes("晴")) {
     if (isToday && solarPhase === "before_sunrise") {
       hints.push(
-        "午前・午後の予報は晴れ寄りだが、いまはまだ夜明け前の可能性が高い。外出や日差しの話より、起床・睡眠・これからの流れに触れてよい。",
+        "午前・午後の予報は晴れ寄りだが、いまは夜明け前の可能性が高い。外出や日差しより、カレンダーの予定・講義（何限から等）・次の予定までの過ごし方・必要なら軽く夢に触れよい。眠さを主役にしない。",
       );
     } else if (isToday && solarPhase === "daytime") {
       hints.push("晴れの予報。外の様子や気分の話にもつなげてよい。");
@@ -117,7 +117,7 @@ function buildWeatherNarrativeHintJa(
 
   if (amTempC != null && amTempC <= 5) {
     if (isToday && solarPhase === "before_sunrise") {
-      hints.push("早朝は冷え込みがち。防寒や体調に触れてもよい。");
+      hints.push("早朝は冷え込みがち。防寒に一言触れる程度にし、主な問いは予定やそれまでの過ごし方に寄せてよい。");
     } else {
       hints.push(
         isToday
@@ -136,20 +136,21 @@ function buildWeatherNarrativeHintJa(
   return hints.join(" ") || "天気情報から特別なヒントなし。";
 }
 
-function attachPromptLayers(
-  base: Omit<WeatherContext, "narrativeHint" | "wallClockDaylightBlockEn">,
-  req: WeatherToolRequest,
-  lat: number,
-  lon: number,
-): WeatherContext {
+type WeatherLayerBase = Omit<
+  WeatherContext,
+  "narrativeHint" | "wallClockDaylightBlockEn" | "entryTodaySolarPhase"
+>;
+
+function attachPromptLayers(base: WeatherLayerBase, req: WeatherToolRequest, lat: number, lon: number): WeatherContext {
   const now = req.now ?? new Date();
   const todayYmd = formatYmdTokyo(now);
   const daysDiff = diffCalendarDaysTokyo(req.entryDateYmd, todayYmd);
-  const solarPhase =
-    daysDiff === 0 ? getLocalSolarPhaseForEntryDay(req.entryDateYmd, now, lat, lon).phase : "unknown";
+  const solar = daysDiff === 0 ? getLocalSolarPhaseForEntryDay(req.entryDateYmd, now, lat, lon) : null;
+  const solarPhase = solar?.phase ?? "unknown";
 
   return {
     ...base,
+    entryTodaySolarPhase: solar?.phase,
     narrativeHint: buildWeatherNarrativeHintJa(base, { daysDiff, solarPhase }),
     wallClockDaylightBlockEn: formatOrchestratorWallClockDaylightBlock({
       entryDateYmd: req.entryDateYmd,
@@ -174,7 +175,7 @@ export async function getWeatherContext(req: WeatherToolRequest): Promise<Weathe
   if (entry?.weatherJson) {
     const wj = entry.weatherJson as StoredWeatherJson;
     if (wj.kind === "am_pm" && wj.am && wj.pm) {
-      const base: Omit<WeatherContext, "narrativeHint" | "wallClockDaylightBlockEn"> = {
+      const base: WeatherLayerBase = {
         dateYmd: req.entryDateYmd,
         amLabel: wj.am.weatherLabel ?? weatherLabelForCode(wj.am.weatherCode ?? null),
         amTempC: wj.am.temperatureC ?? null,
@@ -187,19 +188,35 @@ export async function getWeatherContext(req: WeatherToolRequest): Promise<Weathe
   }
 
   try {
-    const snap = await fetchOpenMeteoDayAmPm(resolved.lat, resolved.lon, req.entryDateYmd);
-    const base: Omit<WeatherContext, "narrativeHint" | "wallClockDaylightBlockEn"> = {
+    const [snap, cur] = await Promise.all([
+      fetchOpenMeteoDayAmPm(resolved.lat, resolved.lon, req.entryDateYmd),
+      fetchOpenMeteoCurrent(resolved.lat, resolved.lon).catch(() => null),
+    ]);
+    const timeIso =
+      cur && typeof cur.raw?.time === "string" && cur.raw.time.trim()
+        ? cur.raw.time.trim()
+        : cur
+          ? cur.fetchedAt
+          : "";
+    const base: WeatherLayerBase = {
       dateYmd: req.entryDateYmd,
       amLabel: snap.am.weatherLabel,
       amTempC: snap.am.temperatureC,
       pmLabel: snap.pm.weatherLabel,
       pmTempC: snap.pm.temperatureC,
       source: "open_meteo",
+      openMeteoCurrent: cur
+        ? {
+            weatherLabel: cur.weatherLabel,
+            temperatureC: cur.temperatureC,
+            timeIso,
+          }
+        : undefined,
     };
     return attachPromptLayers(base, req, resolved.lat, resolved.lon);
   } catch {
     const now = req.now ?? new Date();
-    const base: Omit<WeatherContext, "narrativeHint" | "wallClockDaylightBlockEn"> = {
+    const base: WeatherLayerBase = {
       dateYmd: req.entryDateYmd,
       amLabel: "不明",
       amTempC: null,
@@ -227,5 +244,24 @@ export function formatWeatherForPrompt(ctx: WeatherContext): string {
   if (ctx.source === "none") return "（天気情報なし）";
   const am = `${ctx.amLabel}${ctx.amTempC != null ? ` ${ctx.amTempC}℃` : ""}`;
   const pm = `${ctx.pmLabel}${ctx.pmTempC != null ? ` ${ctx.pmTempC}℃` : ""}`;
-  return `午前: ${am} / 午後: ${pm}\n会話ヒント: ${ctx.narrativeHint ?? ""}`;
+  const lines = [`午前: ${am} / 午後: ${pm}`];
+  if (ctx.openMeteoCurrent) {
+    const c = ctx.openMeteoCurrent;
+    const t = c.temperatureC != null ? ` ${c.temperatureC}℃` : "";
+    lines.push(`現況（Open-Meteo・観測時刻 ${c.timeIso}）: ${c.weatherLabel}${t}`);
+  }
+  lines.push(`会話ヒント: ${ctx.narrativeHint ?? ""}`);
+  return lines.join("\n");
+}
+
+/** `query_weather` のツール応答用: system と同じ本文に、夜明け前・極域等のメモを足す */
+export function formatWeatherToolReply(weatherText: string, ctx: WeatherContext): string {
+  const ph = ctx.entryTodaySolarPhase;
+  if (ph === "before_sunrise") {
+    return `${weatherText}\n\n（応答メモ: 夜明け前の時間帯の可能性が高い。いま外の明るさや天気を断定せず、現況・午前午後予報は参考に留める。）`;
+  }
+  if (ph === "unknown") {
+    return `${weatherText}\n\n（応答メモ: 日の出・日の入りが計算できない地域の可能性。外の様子の断定を避け、予報・現況ラベルのみを根拠にする。）`;
+  }
+  return weatherText;
 }

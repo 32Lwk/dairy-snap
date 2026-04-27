@@ -3,6 +3,8 @@
  * オーケストレーターとサブエージェント間の通信インターフェース
  */
 
+import type { LocalSolarPhase } from "@/lib/time/local-solar-phase";
+
 // ─── ペルソナ・コンテキスト ────────────────────────────────────────────────
 
 export type PersonaContext = {
@@ -38,6 +40,14 @@ export type WeatherContext = {
   narrativeHint?: string;
   /** オーケストレーター system 用（英語）：東京の壁時計・同一日なら太陽位相 */
   wallClockDaylightBlockEn?: string;
+  /** エントリ日が東京「今日」のときの太陽位相（`query_weather` 応答メモ用） */
+  entryTodaySolarPhase?: LocalSolarPhase;
+  /** Open-Meteo forecast 取得時に併せて取った現況（任意） */
+  openMeteoCurrent?: {
+    weatherLabel: string;
+    temperatureC: number | null;
+    timeIso: string;
+  };
 };
 
 // ─── エージェント共通リクエスト ──────────────────────────────────────────

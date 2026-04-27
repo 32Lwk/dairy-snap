@@ -297,7 +297,7 @@ export function formatOrchestratorWallClockDaylightBlock(params: {
     const sol = getLocalSolarPhaseForEntryDay(entryDateYmd, now, lat, lon);
     if (sol.phase === "unknown") {
       lines.push(
-        `- Local solar phase at user coordinates: **unknown** (polar edge or calculation limits). Do not insist on bright daylight or pre-dawn; stay neutral.`,
+        `- Local solar phase at user coordinates: **unknown** (polar night/day edge, invalid geometry, or library limits). **Do not** claim exact sunrise/sunset times, whether it is still dark outside, or 「まだ夜明け前」 / 「もう昼」 as fact. Use only the **Asia/Tokyo wall clock** above for "now"; keep weather/outdoor wording **tentative** (e.g. 予報では / かもしれない). If unsure, ask a neutral question instead of asserting light conditions.`,
       );
     } else {
       const sr = sol.sunrise ? formatHmTokyo(sol.sunrise) : "?";
@@ -307,7 +307,7 @@ export function formatOrchestratorWallClockDaylightBlock(params: {
       );
       if (sol.phase === "before_sunrise") {
         lines.push(
-          `- **before_sunrise** on an entry-today thread: do **not** write as if it is already broad daylight; do **not** push going outside for sunshine or 「よく晴れた一日」-style past-day sunshine. Forecast may still mention clear skies later — use soft wording (e.g. 予報では) and focus on sleep, waking, or plans ahead.`,
+          `- **before_sunrise** on an entry-today thread: do **not** write as if it is already broad daylight; do **not** push going outside for sunshine or 「よく晴れた一日」-style past-day sunshine. Forecast may still mention clear skies later — use soft wording (e.g. 予報では). **Prioritize** the **day ahead**: calendar blocks, **classes / lectures** (e.g. 何限から), **how they will spend time until** the next fixed plan; optionally a **light** mention of **夢** if tone fits. **Do not** make **眠さ / 寝足りなさ** the main hook unless the user already said they are tired.`,
         );
       } else if (sol.phase === "after_sunset") {
         lines.push(
@@ -345,6 +345,8 @@ export type ReflectiveOpeningContext = {
   hasDiaryBody: boolean;
   calendarLinked: boolean;
   calendarEventCount: number;
+  /** 今日のエントリで、登録時間割から「この後の講義」行が付いた */
+  hasTimetableLecturesToday?: boolean;
 };
 
 /**
@@ -374,14 +376,27 @@ export function buildReflectiveOpeningSystemInstruction(
     }
     if (opening.calendarLinked) {
       if (opening.calendarEventCount > 0) {
+        const calOnly = `Plans on this day: use only titles and times from 「${ORCHESTRATOR_DAY_CALENDAR_HEADING}」. When you mention a timed plan, include at least one real event title from that list in the same reply (do not stop at vague 「〇時の予定」 alone when a title exists). Do not invent extra appointments or a busier day.`;
+        if (opening.hasTimetableLecturesToday) {
+          anchorRules.push(
+            `${calOnly} **Also** use 「時間割ベースのこの後の講義」: weave **at least one** concrete **科目名 or 何限** from that block in the same opening. **Balance** calendar vs lectures — follow 「### 開口優先」 ordering (Impact×proximity): do **not** mention only a **distant** calendar event when a **sooner lecture** appears in the timetable block or higher in the priority list.`,
+          );
+        } else {
+          anchorRules.push(calOnly);
+        }
+      } else if (opening.hasTimetableLecturesToday) {
         anchorRules.push(
-          `Plans on this day: use only titles and times from 「${ORCHESTRATOR_DAY_CALENDAR_HEADING}」. When you mention a timed plan, include at least one real event title from that list in the same reply (do not stop at vague 「〇時の予定」 alone when a title exists). Do not invent extra appointments or a busier day.`,
+          "The calendar summary may list no (or almost no) events — anchor the opening on 「時間割ベースのこの後の講義」 with **科目名・何限** from that block. Do not invent Google Calendar titles.",
         );
       } else {
         anchorRules.push(
           "The calendar summary for this day lists no events — do not imply multiple plans, a packed schedule, or vague 「予定がいくつか」-style wording unless the diary body states it.",
         );
       }
+    } else if (opening.hasTimetableLecturesToday) {
+      anchorRules.push(
+        "No Google Calendar block in context — anchor the opening on 「時間割ベースのこの後の講義」 with **科目名・何限** from that block.",
+      );
     } else if (!opening.hasDiaryBody) {
       anchorRules.push(
         "No calendar summary block — do not claim the user had several plans that day; stay with weather, memories, and open questions.",
@@ -400,6 +415,8 @@ export function buildReflectiveOpeningSystemInstruction(
     "Never output parenthetical narrator lines about the system, prompts, or \"short replies\" (e.g. システムは〜 / 短い返答を生成 / では:). Start directly with the greeting.",
     "Ignore the short English opening trigger line in the user role; never quote or translate it.",
     "Do NOT use Markdown (no **asterisks**, no bullet lists unless truly minimal). Plain sentences.",
+    "**Single question (opening):** The reply must contain **at most one** sentence that asks the user something with 「…？」 (or a single combined question). Do **not** stack two separate question sentences (e.g. one about 「その前はゆっくり…？」 and another 「…聞かせて？」). Merge into one ask or drop the weaker one.",
+    "If **before_sunrise** appears in 「Wall clock & daylight」 for this entry-today thread: prefer hooks about **today's schedule** (calendar, **講義・何限から** when student life fits), **time until the next plan**, or a brief optional **夢** mention — **not** leading with **眠さ** as the main topic.",
     `Event names: titles and times listed under "${ORCHESTRATOR_DAY_CALENDAR_HEADING}" are allowed and encouraged when you reference that day's schedule (use the title wording from the list; light paraphrase is OK). Same for tool results, diary body, and short-term bullets for this entry.`,
     "Do not invent events, titles, times, or places that do not appear in those sources. If nothing concrete is listed for plans, ask in general terms without making up names.",
   );

@@ -1132,3 +1132,80 @@ export function formatUserProfileForPrompt(profile: UserProfileSettings | undefi
   return lines.length > 0 ? lines.join("\n") : "（未登録）";
 }
 
+const ORCH_STATIC_TRUNC = {
+  studentLifeNotes: 520,
+  education: 720,
+  preferences: 420,
+  interestPicks: 960,
+  timetableSlice: 1000,
+} as const;
+
+function truncProfileField(s: string | undefined, max: number): string {
+  const t = (s ?? "").trim();
+  if (!t) return "";
+  return t.length <= max ? t : `${t.slice(0, max)}…`;
+}
+
+/**
+ * オーケストレーター専用: ペルソナ（formatAgentPersonaForPrompt）と重複しない静的プロフィール。
+ * 時間割は対象日の曜日列のみ（トークン削減・他曜の誤引用抑制）。
+ */
+export function formatOrchestratorStaticProfileBlock(
+  profile: UserProfileSettings | undefined,
+  entryDateYmd: string,
+): string {
+  if (!profile) return "";
+  const lines: string[] = [];
+
+  if (profile.nickname) lines.push(`- ニックネーム: ${profile.nickname}`);
+  if (profile.birthDate) {
+    const age = ageYearsFromYmd(profile.birthDate);
+    lines.push(
+      `- 生年月日: ${profile.birthDate}${age != null ? `（満${age}歳）` : ""}`,
+    );
+  }
+  if (profile.zodiac) lines.push(`- 星座: ${profile.zodiac}`);
+  if (profile.bloodType) lines.push(`- 血液型: ${profile.bloodType}`);
+  if (profile.gender) {
+    const gl: Record<string, string> = {
+      female: "女性",
+      male: "男性",
+      nonbinary: "ノンバイナリー",
+      no_answer: "答えたくない",
+      other: "その他",
+    };
+    lines.push(`- 性別: ${gl[profile.gender] ?? profile.gender}`);
+  }
+  if (profile.occupationRole) {
+    lines.push(`- 職業・立場: ${labelForOccupationRole(profile.occupationRole)}`);
+  }
+  const occNote = truncProfileField(profile.occupationNote, 320);
+  if (occNote) lines.push(`- 職種・補足: ${occNote}`);
+  const stNotes = truncProfileField(profile.studentLifeNotes, ORCH_STATIC_TRUNC.studentLifeNotes);
+  if (stNotes) lines.push(`- 学校・通学・居住など: ${stNotes}`);
+
+  if (profile.studentTimetable?.trim()) {
+    const slice = formatTimetableForPromptDaySlice(
+      profile.studentTimetable,
+      entryDateYmd,
+      ORCH_STATIC_TRUNC.timetableSlice,
+    );
+    if (slice.trim()) {
+      lines.push(`- 対象日の時間割（登録データ・曜日列のみ抜粋）:\n${slice}`);
+    }
+  }
+
+  const edu = truncProfileField(profile.education, ORCH_STATIC_TRUNC.education);
+  if (edu) lines.push(`- 出身地・学歴・職歴・アルバイトなど: ${edu}`);
+
+  const pickRaw = formatInterestPicksForPrompt(profile.interestPicks);
+  const picks = truncProfileField(pickRaw, ORCH_STATIC_TRUNC.interestPicks);
+  if (picks) lines.push(`- 関心タグ（選択）:\n${picks}`);
+
+  const pref = truncProfileField(profile.preferences, ORCH_STATIC_TRUNC.preferences);
+  if (pref) lines.push(`- メモ: ${pref}`);
+
+  if (lines.length === 0) return "";
+  return ["## ユーザー基本プロフィール（設定の抜粋。AIの話し方・避けたい話題等は「ペルソナ指示」）", "", ...lines].join("\n");
+}
+

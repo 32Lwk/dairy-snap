@@ -352,7 +352,7 @@ export function EntryChat({
         const res = await fetch("/api/ai/chat/opening", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ entryId }),
+          body: JSON.stringify({ entryId, clientNow: new Date().toISOString() }),
         });
         const ct = res.headers.get("content-type") ?? "";
         if (!res.ok) {
@@ -483,7 +483,7 @@ export function EntryChat({
       const res = await fetch("/api/ai/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entryId, message: text }),
+        body: JSON.stringify({ entryId, message: text, clientNow: new Date().toISOString() }),
       });
       if (!res.ok || !res.body) {
         const data = await res.json().catch(() => ({}));

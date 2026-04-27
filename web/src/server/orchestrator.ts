@@ -12,9 +12,10 @@ import {
   getOrchestratorChatModel,
   getOrchestratorOpeningChatFallbackModel,
   getOrchestratorOpeningChatModel,
+  orchestratorOpeningSamplingParams,
 } from "@/lib/ai/openai-chat-models";
 import { withChatModelFallbackAndModel } from "@/lib/ai/openai-model-fallback";
-import { parseUserSettings } from "@/lib/user-settings";
+import { formatOrchestratorStaticProfileBlock, parseUserSettings } from "@/lib/user-settings";
 import { formatAgentPersonaForPrompt } from "@/lib/agent-persona-preferences";
 import { isMbtiType, mbtiDisplayJa } from "@/lib/mbti";
 import { isLoveMbtiType, loveMbtiDisplayJa } from "@/lib/love-mbti";
@@ -24,7 +25,7 @@ import {
   type CalendarEventBrief,
   type CalendarFetchResult,
 } from "@/server/calendar";
-import { formatYmdWithTokyoWeekday } from "@/lib/timetable";
+import { formatTimetableNextFocusForOpeningJa, formatYmdWithTokyoWeekday } from "@/lib/timetable";
 import { formatYmdTokyo } from "@/lib/time/tokyo";
 import {
   buildReflectiveOpeningSystemInstruction,
@@ -43,7 +44,7 @@ import {
   getEventSceneFollowupIntensity,
 } from "@/lib/reflective-chat-diary-nudge-rules";
 import { loadAgentPrompt } from "@/server/agents/utils";
-import { getWeatherContext, formatWeatherForPrompt } from "@/server/agents/weather-tool";
+import { getWeatherContext, formatWeatherForPrompt, formatWeatherToolReply } from "@/server/agents/weather-tool";
 import { runSchoolAgent } from "@/server/agents/school-agent";
 import { runCalendarDailyAgent } from "@/server/agents/calendar-daily-agent";
 import { runCalendarWorkAgent } from "@/server/agents/calendar-work-agent";
@@ -54,6 +55,7 @@ import { runSupervisorAgent } from "@/server/agents/supervisor-agent";
 import type { AgentRequest, PersonaContext, WeatherContext } from "@/server/agents/types";
 import { ORCHESTRATOR_TOOLS } from "@/server/agents/types";
 import { loadShortTermContextForEntry } from "@/server/mas-memory";
+import { scoreOpeningTopic } from "@/server/chat-context";
 
 const OPENING_OMIT_TOOLS = new Set([
   "query_weather",
@@ -153,20 +155,35 @@ function hhmmTokyoBrief(isoLike: string): string {
   }).format(new Date(ms));
 }
 
-function formatOpeningDayCalendarBrief(events: CalendarEventBrief[]): string {
+function formatOneOpeningCalendarLine(ev: CalendarEventBrief): string {
+  const t = hhmmTokyoBrief(ev.start);
+  const when = t || "終日";
+  const loc = ev.location?.trim() ? ` @${ev.location.trim()}` : "";
+  const title = ev.title?.trim() || "（タイトルなし）";
+  return `- ${when} ${title}${loc}`;
+}
+
+/** `orderedEvIdx`: 開口時は Impact×近さでソートした event インデックス（先頭ほど優先） */
+function formatOpeningDayCalendarBrief(events: CalendarEventBrief[], orderedEvIdx?: number[]): string {
   if (events.length === 0) {
     return "（この日の予定は登録されていないか、取得結果が空です）";
   }
-  return events
-    .slice(0, 28)
-    .map((ev) => {
-      const t = hhmmTokyoBrief(ev.start);
-      const when = t || "終日";
-      const loc = ev.location?.trim() ? ` @${ev.location.trim()}` : "";
-      const title = ev.title?.trim() || "（タイトルなし）";
-      return `- ${when} ${title}${loc}`;
-    })
-    .join("\n");
+  const used = new Set<number>();
+  const lines: string[] = [];
+  const max = 28;
+  if (orderedEvIdx?.length) {
+    for (const i of orderedEvIdx) {
+      if (i < 0 || i >= events.length || used.has(i)) continue;
+      used.add(i);
+      lines.push(formatOneOpeningCalendarLine(events[i]!));
+      if (lines.length >= max) break;
+    }
+  }
+  for (let i = 0; i < events.length && lines.length < max; i++) {
+    if (used.has(i)) continue;
+    lines.push(formatOneOpeningCalendarLine(events[i]!));
+  }
+  return lines.join("\n");
 }
 
 /** カレンダー連携が有効か（未連携・設定不備・invalid_grant ではツールを登録しない） */
@@ -262,6 +279,8 @@ export type OrchestratorParams = {
   reflectiveUserTurnIncludingCurrent?: number;
   /** 短文だけのターン: mini モデル＋ツールなしで軽量応答 */
   preferMiniOrchestrator?: boolean;
+  /** クライアント送信時刻を反映した壁時計（未指定時は呼び出し側で `new Date()` を渡す） */
+  clockNow?: Date;
 };
 
 export type OrchestratorResult = {
@@ -293,9 +312,10 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     currentBody,
     reflectiveUserTurnIncludingCurrent,
     preferMiniOrchestrator,
+    clockNow,
   } = params;
 
-  const orchestratorNow = new Date();
+  const orchestratorNow = clockNow ?? new Date();
   const todayYmd = formatYmdTokyo(orchestratorNow);
   const useMini = Boolean(preferMiniOrchestrator) && !isOpening;
   let primaryModel = isOpening ? getOrchestratorOpeningChatModel() : getOrchestratorChatModel();
@@ -350,6 +370,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     aiMemoryForgetBias: profile?.aiMemoryForgetBias,
   });
   const personaInstructions = personaLines.join("\n");
+  const staticProfileBlock = formatOrchestratorStaticProfileBlock(profile, entryDateYmd);
   const avoidTopics = profile?.aiAvoidTopics ?? [];
   const mbti = profile?.mbti;
   const loveMbti = profile?.loveMbti;
@@ -385,6 +406,45 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
 
   const openingRecommendedForPrompt = openingHint.recommendedAgents.filter((n) => !OPENING_OMIT_TOOLS.has(n));
 
+  let calendarOrderedEvIdx: number[] | undefined;
+  let openingCalendarPriorityJa = "";
+  if (isOpening && calendarRes.ok && calendarRes.events.length > 0) {
+    const sco = scoreOpeningTopic({
+      dayEvents: calendarRes.events,
+      occupationRole: profile?.occupationRole ?? "",
+      calendarOpening: profile?.calendarOpening,
+      profileSignals: profile
+        ? {
+            interestPicks: profile.interestPicks,
+            aiAvoidTopics: profile.aiAvoidTopics,
+            aiCurrentFocus: profile.aiCurrentFocus,
+          }
+        : null,
+      wallNow: orchestratorNow,
+    });
+    calendarOrderedEvIdx = sco.orderedEvIdx.length > 0 ? sco.orderedEvIdx : undefined;
+    if (sco.primary) {
+      openingCalendarPriorityJa = [
+        "### 開口優先（カテゴリ系インパクト × 壁時計からの近さ）",
+        `- 第一候補: 「${sco.primary.title}」${sco.primary.time ? ` ${sco.primary.time}` : ""}（時系列: ${sco.primary.timing}）`,
+        sco.secondary
+          ? `- 第二候補: 「${sco.secondary.title}」${sco.secondary.time ? ` ${sco.secondary.time}` : ""}（時系列: ${sco.secondary.timing}）`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+    }
+  }
+
+  const timetableOpeningFocusJa =
+    isOpening &&
+    diffCalendarDaysTokyo(entryDateYmd, todayYmd) === 0 &&
+    profile?.occupationRole === "student" &&
+    profile.studentTimetable?.trim()
+      ? formatTimetableNextFocusForOpeningJa(profile.studentTimetable, entryDateYmd, orchestratorNow)
+      : "";
+  const hasTimetableLecturesToday = Boolean(timetableOpeningFocusJa);
+
   const rawBody = (currentBody ?? "").trim();
   const bodyForPrompt =
     rawBody.length > DIARY_BODY_MAX_CHARS_ORCHESTRATOR
@@ -402,6 +462,8 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     "",
     "## ペルソナ指示（最優先で遵守）",
     personaInstructions || "（未設定）",
+    "",
+    staticProfileBlock,
     "",
     mbtiHint ? `## MBTIヒント\n${mbtiHint}` : "",
     corrections.length > 0
@@ -435,13 +497,20 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
           hasDiaryBody: rawBody.length > 0,
           calendarLinked: calendarRes.ok,
           calendarEventCount: calendarRes.ok ? calendarRes.events.length : 0,
+          hasTimetableLecturesToday,
         })
       : "",
     isOpening && openingHint.openingNote ? `## 開口のヒント\n${openingHint.openingNote}` : "",
     isOpening && openingRecommendedForPrompt.length > 0
       ? `## 推奨エージェント（開口時・参考）\n${openingRecommendedForPrompt.join(", ")}`
       : "",
-    calendarRes.ok ? `${ORCHESTRATOR_DAY_CALENDAR_HEADING}\n${formatOpeningDayCalendarBrief(calendarRes.events)}` : "",
+    isOpening && openingCalendarPriorityJa ? openingCalendarPriorityJa : "",
+    isOpening && timetableOpeningFocusJa
+      ? `## 時間割ベースのこの後の講義（Googleカレンダーに無いことが多い）\n${timetableOpeningFocusJa}`
+      : "",
+    calendarRes.ok
+      ? `${ORCHESTRATOR_DAY_CALENDAR_HEADING}\n${formatOpeningDayCalendarBrief(calendarRes.events, calendarOrderedEvIdx)}`
+      : "",
     "",
     !calendarAvailable
       ? "※ Google カレンダー未連携、またはトークン無効のためカレンダー系ツールは呼ばない。"
@@ -515,6 +584,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
             tools: allowedTools as Parameters<typeof openai.chat.completions.create>[0]["tools"],
             tool_choice: loopCount === 1 ? "auto" : "none",
             ...chatCompletionOutputTokenLimit(model, ORCHESTRATOR_TOOL_ROUND_MAX_TOKENS),
+            ...(isOpening ? orchestratorOpeningSamplingParams(model) : {}),
           }),
       );
 
@@ -559,7 +629,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
         let toolResult = "";
 
         if (toolName === "query_weather") {
-          toolResult = weatherText;
+          toolResult = formatWeatherToolReply(weatherText, weather);
         } else if (toolName === "query_school") {
           const mem = await loadAgentMemory(userId, "school");
           toolResult = await callAgent({
@@ -638,6 +708,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
           model,
           isOpening ? ORCHESTRATOR_STREAM_MAX_TOKENS_OPENING : ORCHESTRATOR_STREAM_MAX_TOKENS,
         ),
+        ...(isOpening ? orchestratorOpeningSamplingParams(model) : {}),
       }),
   );
 
