@@ -36,6 +36,8 @@ export type WeatherContext = {
   source: "db_cached" | "open_meteo" | "none";
   /** 会話での活用ヒント（オーケストレーターが生成） */
   narrativeHint?: string;
+  /** オーケストレーター system 用（英語）：東京の壁時計・同一日なら太陽位相 */
+  wallClockDaylightBlockEn?: string;
 };
 
 // ─── エージェント共通リクエスト ──────────────────────────────────────────
@@ -70,6 +72,8 @@ export type WeatherToolRequest = {
   userId: string;
   entryId: string;
   entryDateYmd: string;
+  /** テスト・決定的な開口用。省略時は `new Date()` */
+  now?: Date;
 };
 
 // ─── スーパーバイザー ─────────────────────────────────────────────────────

@@ -1,4 +1,5 @@
-import { formatYmdTokyo } from "@/lib/time/tokyo";
+import { formatHmTokyo, formatYmdTokyo } from "@/lib/time/tokyo";
+import { getLocalSolarPhaseForEntryDay } from "@/lib/time/local-solar-phase";
 
 function startOfDayTokyoMs(ymd: string): number {
   return new Date(`${ymd}T00:00:00+09:00`).getTime();
@@ -263,6 +264,68 @@ export function formatOrchestratorConversationScopeBlock(): string {
 export function formatOrchestratorTemporalBlock(entryDateYmd: string, now?: Date): string {
   const ctx = getEntryTemporalContext(entryDateYmd, now);
   return ["## Date framing for this thread (must follow)", ctx.summaryJa, "", ctx.orchestratorInstructions].join("\n");
+}
+
+/**
+ * Wall-clock (Tokyo) + local sunrise/sunset phase when the entry is Tokyo-"today".
+ * English for model instructions; user-visible replies stay Japanese.
+ */
+export function formatOrchestratorWallClockDaylightBlock(params: {
+  entryDateYmd: string;
+  now: Date;
+  lat: number;
+  lon: number;
+}): string {
+  const { entryDateYmd, now, lat, lon } = params;
+  const todayYmd = formatYmdTokyo(now);
+  const hm = formatHmTokyo(now);
+  const daysDiff = diffCalendarDaysTokyo(entryDateYmd, todayYmd);
+
+  const lines: string[] = [
+    "## Wall clock & daylight (tone; must follow)",
+    `- Generator wall time (Asia/Tokyo): **${hm}** on calendar date **${todayYmd}**.`,
+    `- Diary entry date (Tokyo calendar): **${entryDateYmd}** (${
+      daysDiff === 0
+        ? 'same as Tokyo "today"'
+        : daysDiff > 0
+          ? `${daysDiff} calendar day(s) before Tokyo "today"`
+          : `${-daysDiff} calendar day(s) after Tokyo "today" (future entry)`
+    }).`,
+  ];
+
+  if (daysDiff === 0) {
+    const sol = getLocalSolarPhaseForEntryDay(entryDateYmd, now, lat, lon);
+    if (sol.phase === "unknown") {
+      lines.push(
+        `- Local solar phase at user coordinates: **unknown** (polar edge or calculation limits). Do not insist on bright daylight or pre-dawn; stay neutral.`,
+      );
+    } else {
+      const sr = sol.sunrise ? formatHmTokyo(sol.sunrise) : "?";
+      const ss = sol.sunset ? formatHmTokyo(sol.sunset) : "?";
+      lines.push(
+        `- For this entry day at user coordinates, versus **now**: **${sol.phase}** (approx. sunrise **${sr}** / sunset **${ss}**, clock shown in Asia/Tokyo for those instants).`,
+      );
+      if (sol.phase === "before_sunrise") {
+        lines.push(
+          `- **before_sunrise** on an entry-today thread: do **not** write as if it is already broad daylight; do **not** push going outside for sunshine or 「よく晴れた一日」-style past-day sunshine. Forecast may still mention clear skies later — use soft wording (e.g. 予報では) and focus on sleep, waking, or plans ahead.`,
+        );
+      } else if (sol.phase === "after_sunset") {
+        lines.push(
+          `- **after_sunset** on an entry-today thread: prefer evening/night framing for \"right now\"; weather lines describe the calendar day overall — use past or soft wording for outdoor brightness \"now\".`,
+        );
+      } else {
+        lines.push(
+          `- **daytime**: daylight / outdoor references are more plausible; still ground only in forecast labels and other supplied facts.`,
+        );
+      }
+    }
+  } else {
+    lines.push(
+      `- Entry is not Tokyo-"today"; the opening reflects **that entry day**. Wall time above is the user's **current** moment — avoid a tone that ignores it (e.g. midday small-talk at 04:30).`,
+    );
+  }
+
+  return lines.join("\n");
 }
 
 /** Prefixed to journal composer user message */

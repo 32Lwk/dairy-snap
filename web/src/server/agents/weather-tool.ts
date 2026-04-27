@@ -2,6 +2,12 @@ import { prisma } from "@/server/db";
 import { fetchOpenMeteoDayAmPm } from "@/server/weather";
 import { resolveWeatherCoordinates } from "@/server/weather-resolve";
 import { weatherLabelForCode } from "@/server/weather";
+import {
+  diffCalendarDaysTokyo,
+  formatOrchestratorWallClockDaylightBlock,
+} from "@/lib/time/entry-temporal-context";
+import { getLocalSolarPhaseForEntryDay, type LocalSolarPhase } from "@/lib/time/local-solar-phase";
+import { formatYmdTokyo } from "@/lib/time/tokyo";
 import type { WeatherContext, WeatherToolRequest } from "./types";
 
 type AmPmEntry = {
@@ -16,8 +22,23 @@ type StoredWeatherJson = {
   pm?: AmPmEntry;
 };
 
-function buildNarrativeHint(ctx: Omit<WeatherContext, "narrativeHint">): string {
+function subjectForHint(daysDiff: number): string {
+  if (daysDiff === 0) return "今日";
+  if (daysDiff === 1) return "きのう";
+  return "この日";
+}
+
+function buildWeatherNarrativeHintJa(
+  ctx: Pick<WeatherContext, "amLabel" | "pmLabel" | "amTempC" | "pmTempC" | "source">,
+  meta: { daysDiff: number; solarPhase: LocalSolarPhase },
+): string {
+  if (ctx.source === "none") return "天気情報を取得できなかった。";
+
   const { amLabel, pmLabel, amTempC, pmTempC } = ctx;
+  const { daysDiff, solarPhase } = meta;
+  const sub = subjectForHint(daysDiff);
+  const isToday = daysDiff === 0;
+
   const rainWords = ["雨", "霧雨", "雷雨"];
   const cloudyWords = ["曇り", "霧"];
   const snowWords = ["雪"];
@@ -31,26 +52,112 @@ function buildNarrativeHint(ctx: Omit<WeatherContext, "narrativeHint">): string 
   const hints: string[] = [];
 
   if (isRainy(amLabel) || isRainy(pmLabel)) {
-    hints.push("今日は雨が降っていた。天気が気分に与えた影響を聞いてみてもよい。");
+    if (isToday && solarPhase === "before_sunrise") {
+      hints.push(
+        "予報では雨の傾向。いまは夜明け前の時間帯かもしれない。体調・起床・これからの予定に触れ、外出を強く勧めない。",
+      );
+    } else if (isToday && solarPhase === "daytime") {
+      hints.push("雨の予報。傘・移動・気分の話につなげてもよい。");
+    } else if (isToday && solarPhase === "after_sunset") {
+      hints.push("この日の予報では雨。夕方以降の振り返りや体調に触れてもよい。");
+    } else if (isToday) {
+      hints.push("雨の予報。体調や予定の話につなげてもよい。");
+    } else {
+      hints.push(`${sub}は雨の予報だった。天気が体調や行動に与えた影響を聞いてもよい。`);
+    }
   } else if (isSnowy(amLabel) || isSnowy(pmLabel)) {
-    hints.push("今日は雪だった。寒さや外出について触れてもよい。");
+    if (isToday && solarPhase === "before_sunrise") {
+      hints.push(
+        "予報では雪の傾向。夜明け前の時間帯でもある。寒さ・防寒・これからの予定に触れ、無理な外出は勧めない。",
+      );
+    } else if (isToday && solarPhase === "daytime") {
+      hints.push("雪の予報。寒さ・移動・気分の話につなげてもよい。");
+    } else if (isToday && solarPhase === "after_sunset") {
+      hints.push("この日の予報では雪。寒さや振り返りに触れてもよい。");
+    } else if (isToday) {
+      hints.push("雪の予報。寒さや体調の話につなげてもよい。");
+    } else {
+      hints.push(`${sub}は雪の予報だった。寒さや外出の振り返りに触れてもよい。`);
+    }
   } else if (isCloudy(amLabel) && isCloudy(pmLabel)) {
-    hints.push("今日は曇りがちだった。気分・体調の話につなげてもよい。");
+    if (isToday && solarPhase === "before_sunrise") {
+      hints.push(
+        "予報では終日曇り寄り。夜明け前の時間帯でもある。睡眠・起床・気分の変化に触れ、日中の天気を断定しない。",
+      );
+    } else if (isToday && solarPhase === "after_sunset") {
+      hints.push("この日の予報では曇りがち。夕方以降の過ごし方や気分の振り返りに触れてもよい。");
+    } else if (!isToday) {
+      hints.push(`${sub}は曇りがちの予報だった。気分・体調の話につなげてもよい。`);
+    } else {
+      hints.push("曇りがちの予報。気分・体調の話につなげてもよい。");
+    }
   } else if (amLabel.includes("晴") || pmLabel.includes("晴")) {
-    hints.push("今日は晴れていた。外出・気分良さの話につなげてもよい。");
+    if (isToday && solarPhase === "before_sunrise") {
+      hints.push(
+        "午前・午後の予報は晴れ寄りだが、いまはまだ夜明け前の可能性が高い。外出や日差しの話より、起床・睡眠・これからの流れに触れてよい。",
+      );
+    } else if (isToday && solarPhase === "daytime") {
+      hints.push("晴れの予報。外の様子や気分の話にもつなげてよい。");
+    } else if (isToday && solarPhase === "after_sunset") {
+      hints.push("昼間は晴れの予報だった。夕方以降の過ごし方や振り返りに触れてもよい。");
+    } else if (isToday) {
+      hints.push("晴れ寄りの予報。気分や予定に触れてもよい。");
+    } else {
+      hints.push(`${sub}の予報は晴れ寄り。外出や気分の振り返りに触れてもよい。`);
+    }
   }
 
   if (tempDiff != null && tempDiff >= 8) {
-    hints.push(`昼と夜の気温差が大きかった（約${Math.round(tempDiff)}℃差）。体調管理を気にかけてもよい。`);
+    hints.push(
+      isToday
+        ? `今日は昼と夜の気温差が大きい予報（約${Math.round(tempDiff)}℃差）。体調管理を気にかけてもよい。`
+        : `${sub}は昼と夜の気温差が大きい予報だった（約${Math.round(tempDiff)}℃差）。体調の振り返りに触れてもよい。`,
+    );
   }
 
   if (amTempC != null && amTempC <= 5) {
-    hints.push("今日はかなり寒かった。防寒・体調の話をしてもよい。");
+    if (isToday && solarPhase === "before_sunrise") {
+      hints.push("早朝は冷え込みがち。防寒や体調に触れてもよい。");
+    } else {
+      hints.push(
+        isToday
+          ? "午前はかなり寒い予報。防寒・体調の話をしてもよい。"
+          : `${sub}の午前はかなり寒い予報だった。防寒・体調の振り返りに触れてもよい。`,
+      );
+    }
   } else if (pmTempC != null && pmTempC >= 30) {
-    hints.push("今日はかなり暑かった。熱中症・疲れの話をしてもよい。");
+    hints.push(
+      isToday
+        ? "午後はかなり暑い予報。熱中症・疲れの話をしてもよい。"
+        : `${sub}の午後はかなり暑い予報だった。熱中症・疲れの振り返りに触れてもよい。`,
+    );
   }
 
   return hints.join(" ") || "天気情報から特別なヒントなし。";
+}
+
+function attachPromptLayers(
+  base: Omit<WeatherContext, "narrativeHint" | "wallClockDaylightBlockEn">,
+  req: WeatherToolRequest,
+  lat: number,
+  lon: number,
+): WeatherContext {
+  const now = req.now ?? new Date();
+  const todayYmd = formatYmdTokyo(now);
+  const daysDiff = diffCalendarDaysTokyo(req.entryDateYmd, todayYmd);
+  const solarPhase =
+    daysDiff === 0 ? getLocalSolarPhaseForEntryDay(req.entryDateYmd, now, lat, lon).phase : "unknown";
+
+  return {
+    ...base,
+    narrativeHint: buildWeatherNarrativeHintJa(base, { daysDiff, solarPhase }),
+    wallClockDaylightBlockEn: formatOrchestratorWallClockDaylightBlock({
+      entryDateYmd: req.entryDateYmd,
+      now,
+      lat,
+      lon,
+    }),
+  };
 }
 
 export async function getWeatherContext(req: WeatherToolRequest): Promise<WeatherContext> {
@@ -59,10 +166,15 @@ export async function getWeatherContext(req: WeatherToolRequest): Promise<Weathe
     select: { weatherJson: true, latitude: true, longitude: true, userId: true },
   });
 
+  const resolved = await resolveWeatherCoordinates(req.userId, {
+    latitude: entry?.latitude ?? null,
+    longitude: entry?.longitude ?? null,
+  });
+
   if (entry?.weatherJson) {
     const wj = entry.weatherJson as StoredWeatherJson;
     if (wj.kind === "am_pm" && wj.am && wj.pm) {
-      const ctx: Omit<WeatherContext, "narrativeHint"> = {
+      const base: Omit<WeatherContext, "narrativeHint" | "wallClockDaylightBlockEn"> = {
         dateYmd: req.entryDateYmd,
         amLabel: wj.am.weatherLabel ?? weatherLabelForCode(wj.am.weatherCode ?? null),
         amTempC: wj.am.temperatureC ?? null,
@@ -70,17 +182,13 @@ export async function getWeatherContext(req: WeatherToolRequest): Promise<Weathe
         pmTempC: wj.pm.temperatureC ?? null,
         source: "db_cached",
       };
-      return { ...ctx, narrativeHint: buildNarrativeHint(ctx) };
+      return attachPromptLayers(base, req, resolved.lat, resolved.lon);
     }
   }
 
   try {
-    const resolved = await resolveWeatherCoordinates(req.userId, {
-      latitude: entry?.latitude ?? null,
-      longitude: entry?.longitude ?? null,
-    });
     const snap = await fetchOpenMeteoDayAmPm(resolved.lat, resolved.lon, req.entryDateYmd);
-    const ctx: Omit<WeatherContext, "narrativeHint"> = {
+    const base: Omit<WeatherContext, "narrativeHint" | "wallClockDaylightBlockEn"> = {
       dateYmd: req.entryDateYmd,
       amLabel: snap.am.weatherLabel,
       amTempC: snap.am.temperatureC,
@@ -88,16 +196,29 @@ export async function getWeatherContext(req: WeatherToolRequest): Promise<Weathe
       pmTempC: snap.pm.temperatureC,
       source: "open_meteo",
     };
-    return { ...ctx, narrativeHint: buildNarrativeHint(ctx) };
+    return attachPromptLayers(base, req, resolved.lat, resolved.lon);
   } catch {
-    return {
+    const now = req.now ?? new Date();
+    const base: Omit<WeatherContext, "narrativeHint" | "wallClockDaylightBlockEn"> = {
       dateYmd: req.entryDateYmd,
       amLabel: "不明",
       amTempC: null,
       pmLabel: "不明",
       pmTempC: null,
       source: "none",
-      narrativeHint: "天気情報を取得できなかった。",
+    };
+    return {
+      ...base,
+      narrativeHint: buildWeatherNarrativeHintJa(base, {
+        daysDiff: diffCalendarDaysTokyo(req.entryDateYmd, formatYmdTokyo(now)),
+        solarPhase: "unknown",
+      }),
+      wallClockDaylightBlockEn: formatOrchestratorWallClockDaylightBlock({
+        entryDateYmd: req.entryDateYmd,
+        now,
+        lat: resolved.lat,
+        lon: resolved.lon,
+      }),
     };
   }
 }

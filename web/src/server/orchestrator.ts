@@ -32,8 +32,10 @@ import {
   formatOrchestratorConversationScopeBlock,
   formatOrchestratorScheduleGroundingBlock,
   formatOrchestratorTemporalBlock,
+  formatOrchestratorWallClockDaylightBlock,
   ORCHESTRATOR_DAY_CALENDAR_HEADING,
 } from "@/lib/time/entry-temporal-context";
+import { DEFAULT_WEATHER_LATITUDE, DEFAULT_WEATHER_LONGITUDE } from "@/lib/location-defaults";
 import {
   formatOrchestratorDiaryProposalGateBlock,
   formatOrchestratorEventSceneFollowupBlock,
@@ -293,7 +295,8 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     preferMiniOrchestrator,
   } = params;
 
-  const todayYmd = formatYmdTokyo(new Date());
+  const orchestratorNow = new Date();
+  const todayYmd = formatYmdTokyo(orchestratorNow);
   const useMini = Boolean(preferMiniOrchestrator) && !isOpening;
   let primaryModel = isOpening ? getOrchestratorOpeningChatModel() : getOrchestratorChatModel();
   let fallbackModel = isOpening ? getOrchestratorOpeningChatFallbackModel() : getOrchestratorChatFallbackModel();
@@ -309,7 +312,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     }),
     loadLongTermContext(userId),
     loadShortTermContextForEntry(userId, entryId),
-    getWeatherContext({ userId, entryId, entryDateYmd }).catch(
+    getWeatherContext({ userId, entryId, entryDateYmd, now: orchestratorNow }).catch(
       (): WeatherContext => ({
         dateYmd: entryDateYmd,
         amLabel: "不明",
@@ -317,6 +320,13 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
         pmLabel: "不明",
         pmTempC: null,
         source: "none",
+        narrativeHint: "天気情報を取得できなかった。",
+        wallClockDaylightBlockEn: formatOrchestratorWallClockDaylightBlock({
+          entryDateYmd,
+          now: orchestratorNow,
+          lat: DEFAULT_WEATHER_LATITUDE,
+          lon: DEFAULT_WEATHER_LONGITUDE,
+        }),
       }),
     ),
     fetchCalendarEventsForDay(userId, entryDateYmd),
@@ -398,7 +408,9 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
       ? `## ユーザーの訂正メモ（断定を避けること）\n${corrections.map((c) => `- ${c}`).join("\n")}`
       : "",
     "",
-    formatOrchestratorTemporalBlock(entryDateYmd),
+    formatOrchestratorTemporalBlock(entryDateYmd, orchestratorNow),
+    "",
+    weather.wallClockDaylightBlockEn ?? "",
     "",
     formatOrchestratorScheduleGroundingBlock(),
     "",
@@ -419,7 +431,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     "",
     bodyForPrompt ? `## 本文（このエントリ）\n${bodyForPrompt}` : "",
     isOpening
-      ? buildReflectiveOpeningSystemInstruction(entryDateYmd, new Date(), {
+      ? buildReflectiveOpeningSystemInstruction(entryDateYmd, orchestratorNow, {
           hasDiaryBody: rawBody.length > 0,
           calendarLinked: calendarRes.ok,
           calendarEventCount: calendarRes.ok ? calendarRes.events.length : 0,
