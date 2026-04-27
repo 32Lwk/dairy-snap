@@ -2,8 +2,8 @@
 
 本リポジトリの変更を **日付（AuthorDate）** 単位で整理したドキュメントです。README とは別ファイルとして保守します。
 
-**最終更新**: 2026-04-20  
-**対象期間**: 2026-04-02（初期コミット）〜 2026-04-20（`main` 先端）
+**最終更新**: 2026-04-28  
+**対象期間**: 2026-04-02（初期コミット）〜 2026-04-28（`main` 先端＋同日の作業ツリー追記）
 
 ---
 
@@ -42,6 +42,8 @@ git log -1 --oneline origin/main
 | 2026-04-18 | あり | [§ 04-18](#2026-04-18土) |
 | 2026-04-19 | あり | [§ 04-19](#2026-04-19日) |
 | 2026-04-20 | あり | [§ 04-20](#2026-04-20月) |
+| 2026-04-21〜27 | なし | [§ 04-21〜27](#2026-04-21火-2026-04-27月) |
+| 2026-04-28 | 作業ツリー | [§ 04-28](#2026-04-28火) |
 
 ---
 
@@ -678,6 +680,80 @@ git log -1 --oneline origin/main
 
 ---
 
+## 2026-04-21（火）〜 2026-04-27（月）
+
+### リポジトリ上の活動
+
+**この期間のコミットは `git log` 上にありません**（`origin/main` 先端は 2026-04-20 のまま）。
+
+---
+
+## 2026-04-28（火）
+
+### 注記（コミットと作業ツリー）
+
+- **コミット**: 本日付分のアプリ変更は、執筆時点では **リポジトリに未コミット**（作業ツリーのみ）。
+- **`web/src/server/orchestrator.ts`**: 作業ツリーで「変更」に含まれるが、`git diff` では**行末（CRLF/LF）以外の差分は表示されない**状態。実質的なロジック変更がない可能性がある。
+
+### 概要
+
+公開向けの**マーケティング／法務ページ**、**ルートのランディング**、**PWA／favicon 用アイコン**、および **`SNAP_MARKETING_HOST` による正規ホストへの寄せ**を追加・変更する塊。
+
+### 環境変数（`web/.env.example`）
+
+- **`SNAP_MARKETING_HOST`**（任意）: 本番で `snap.yutok.dev` 等に公開 URL を揃える場合。`/home`・`/privacy`・`/terms` が別ホストから開かれたとき、**`https://<SNAP_MARKETING_HOST><path>` へリダイレクト**する旨をコメントで説明。ローカル（`localhost` / `127.0.0.1`）は対象外。
+
+### プロキシ（`web/src/proxy.ts`）
+
+- **マーケパス**: `/home`、`/privacy`、`/terms` を集合 `MARKETING_PATHS` で判定。
+- **公開ランディング**: パス正規化後に **`/` または上記マーケパス**を `isPublicLanding` とし、未ログインでも **ログインへ飛ばさず `next()`**（ルート LP・法務ページの閲覧を許可）。
+- **正規ホストリダイレクト**: `SNAP_MARKETING_HOST` が設定されているとき、マーケパスへ **`Host` が正規値以外**（かつ localhost 系以外）で来たリクエストを **`https://` ＋正規ホスト**へリダイレクト。
+- **オンボーディング**: ログイン済み・オンボ未完了のとき、**公開ランディングはオンボード強制の例外**（`!isPublicLanding` のときだけ `/onboarding` へ）。
+
+### ルートページ（`web/src/app/page.tsx`）
+
+- 従来の **即時 `redirect("/today")` を廃止**。
+- **`getResolvedAuthUser()`** で認証状態を判定: `ok` → `/today`、`session_mismatch` → `/login?error=session_mismatch`、それ以外 → **`<HomeLanding />`**（未ログイン向け LP）。
+- **メタデータ**: タイトル・説明文を LP／ストア説明向けに明示。
+
+### アプリシェル・PWA（`web/src/app/layout.tsx`, `web/public/manifest.webmanifest`）
+
+- **`metadata.icons`**: `/brand/daily-snap-icon-192.png` を favicon／Apple タッチ向けに指定。
+- **`manifest.webmanifest`**: 192 / 512 の PNG アイコンエントリを追加（`purpose: "any"`）。
+
+### 静的アセット（`web/public/brand/`）
+
+- **本番利用想定**: `daily-snap-icon-192.png`、`daily-snap-icon-512.png`、`daily-snap-icon-master.png`、`daily-snap-oauth-logo.png`（OAuth 同意画面・ヘッダー等）。
+- **`proposals/`**: 複数案のアイコン・ロゴ（`a-open-book` / `b-bookmark` / `c-closed-book` / `d-page-fold` の 192/512/master）。デザイン検討用。
+
+### マーケルートグループ（`web/src/app/(marketing)/`）
+
+| パス | 内容 |
+|------|------|
+| `layout.tsx` | `metadataBase`（`NEXT_PUBLIC_APP_ORIGIN`）、タイトルテンプレート、OG 画像（512 アイコン）。子は **`MarketingSiteShell`** でラップ。 |
+| `home/page.tsx` | 公開ホーム（コメント上 OAuth 同意・Search Console 用 URL 想定: `https://snap.yutok.dev/home`）。`MarketingHomeContent` を表示。 |
+| `privacy/page.tsx` | **プライバシーポリシー**（最終更新 2026-04-28）。Google API User Data Policy への言及、取得情報の列挙など。 |
+| `terms/page.tsx` | **利用規約**（最終更新 2026-04-28）。 |
+
+### コンポーネント（`web/src/components/marketing/`）
+
+- **`marketing-site-shell.tsx`**: ヘッダー（ロゴ・`/home` `/privacy` `/terms`・ログイン）、フッター、年表示付きコピーライト。
+- **`marketing-home-content.tsx`**: LP 本文（キャッチ、はじめる／プライバシーへの CTA、規約リンク）。
+- **`home-landing.tsx`**: ルート `/` 用。シェル＋`MarketingHomeContent`（`/home` と同じ公開向けコピー）。
+- **`legal-contact-block.tsx`**: お問い合わせ（`legal-site.ts` の定数を表示）。
+
+### 法務定数（`web/src/lib/marketing/legal-site.ts`）
+
+- 運営者名、問い合わせメール、Google フォーム URL を **1 箇所に集約**（プライバシー／利用規約・連絡ブロックから参照）。
+
+### 利用者・運用への影響
+
+1. **本番でマーケ URL を 1 ホストに固定する場合**: `SNAP_MARKETING_HOST` を設定し、DNS／ロードバランサが別名で来ても正規ホストへ寄せられる。
+2. **OAuth ブランディング**: 同意画面用ロゴは `daily-snap-oauth-logo.png` を想定。
+3. **未コミット資産**: `public/brand` と `(marketing)` 一式は **コミット前**のため、デプロイ手順に含める場合はリポジトリへ取り込む必要がある。
+
+---
+
 ## サマリー表（期間全体）
 
 | 日付 | コミット数（目安） | 主テーマ |
@@ -695,6 +771,8 @@ git log -1 --oneline origin/main
 | 04-18 | 5 | レスポンシブ・Playwright、access-control |
 | 04-19 | 10 | 統一検索、オーケストレーター、Apple/Photos、Safari 修正 |
 | 04-20 | 複数 | セキュリティレビュー、Plutchik、ローカル GCal、Photos、日記 UI、および同日の CHANGELOG 反復更新 |
+| 04-21〜27 | 0 | — |
+| 04-28 | 作業ツリー | 公開 LP／法務ページ、`SNAP_MARKETING_HOST`、PWA アイコン、`public/brand` |
 
 ---
 
@@ -710,3 +788,5 @@ git log --date=short --format="%ad %h %s"
 # 特定日の詳細
 git log --after=2026-04-19 --before=2026-04-21 --format=fuller
 ```
+
+---

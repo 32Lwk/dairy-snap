@@ -16,6 +16,10 @@ export const metadata: Metadata = {
   title: "daily-snap",
   description: "気楽に書ける、個人向け日記。",
   manifest: "/manifest.webmanifest",
+  icons: {
+    icon: [{ url: "/brand/daily-snap-icon-192.png", sizes: "192x192", type: "image/png" }],
+    apple: "/brand/daily-snap-icon-192.png",
+  },
   appleWebApp: {
     capable: true,
     title: "daily-snap",
