@@ -125,6 +125,41 @@ export const CALENDAR_OPENING_BUILTIN_CATS: { id: BuiltinCalendarOpeningCategory
   { id: "other", label: "その他" },
 ];
 
+/**
+ * 開口インパクトのおすすめ倍率（組み込みカテゴリのみ）。
+ * 授業・就活・記念日・通院などをやや強め、バイト・家族・趣味は控えめに上げる想定。
+ */
+export const RECOMMENDED_CALENDAR_OPENING_CATEGORY_IMPACT_MULTIPLIERS: Partial<
+  Record<BuiltinCalendarOpeningCategory, number>
+> = {
+  school: 1.5,
+  job_hunt: 1.35,
+  birthday: 1.35,
+  health: 1.25,
+  date: 1.2,
+  parttime: 1.15,
+  family: 1.1,
+  hobby: 1.1,
+};
+
+/**
+ * 既存の倍率に、おすすめプリセット（上表のキーのみ）を上書きマージする。
+ * カスタムカテゴリ（usercat:*）や、プリセットに無い組み込みカテゴリの値はそのまま残す。
+ */
+export function mergeRecommendedCalendarOpeningImpactMultipliers(
+  existing: Partial<Record<CalendarOpeningCategory, number>> | undefined,
+): CalendarOpeningSettings["categoryMultiplierById"] {
+  const base = { ...(existing ?? {}) } as Record<string, number>;
+  for (const [id, rec] of Object.entries(RECOMMENDED_CALENDAR_OPENING_CATEGORY_IMPACT_MULTIPLIERS)) {
+    if (typeof rec !== "number" || !Number.isFinite(rec)) continue;
+    const clamped = Math.max(0.2, Math.min(3, rec));
+    if (Math.abs(clamped - 1) < 1e-9) delete base[id];
+    else base[id] = clamped;
+  }
+  if (Object.keys(base).length === 0) return undefined;
+  return base as Partial<Record<CalendarOpeningCategory, number>>;
+}
+
 const CAL_USERCAT_ID_RE = /^usercat:[a-z0-9_]{1,32}$/;
 
 /** 表示ラベルから安定したカテゴリ ID を生成（保存・ルール参照に使う） */
@@ -174,6 +209,12 @@ export type CalendarOpeningSettings = {
   rules?: CalendarOpeningRule[];
   /** ユーザー定義カテゴリ（表示名。内部 ID は labelToUserCategoryId で決定） */
   customCategoryLabels?: string[];
+  /**
+   * 開口トピックのカテゴリ別倍率（インパクト側）。
+   * - 例: { school: 1.4, parttime: 1.15 }
+   * - 1.0 は保存しない（未設定扱い）
+   */
+  categoryMultiplierById?: Partial<Record<CalendarOpeningCategory, number>>;
   /** Google カレンダー ID → 分類デフォルト（ルール・キーワードより強く効かせる） */
   calendarCategoryById?: Record<string, CalendarOpeningCategory>;
   /** Google カレンダー ID → このアプリ内だけの表示名（Google 側の名前は変えない） */
@@ -603,6 +644,10 @@ export function stripCalendarOpeningCustomLabel(
   const nextLabels = (opening.customCategoryLabels ?? []).filter((l) => labelToUserCategoryId(l) !== id);
   const nextPo = (opening.priorityOrder ?? []).filter((c) => c !== id);
   const nextRules = (opening.rules ?? []).filter((r) => r.category !== id);
+  const prevMult = opening.categoryMultiplierById ?? {};
+  const nextMult = Object.fromEntries(Object.entries(prevMult).filter(([k]) => k !== id)) as Partial<
+    Record<CalendarOpeningCategory, number>
+  >;
   const prevCalCat = opening.calendarCategoryById;
   const nextCalCat =
     prevCalCat && Object.keys(prevCalCat).length > 0
@@ -615,6 +660,8 @@ export function stripCalendarOpeningCustomLabel(
   else delete out.priorityOrder;
   if (nextRules.length) out.rules = nextRules;
   else delete out.rules;
+  if (Object.keys(nextMult).length) out.categoryMultiplierById = nextMult;
+  else delete out.categoryMultiplierById;
   if (nextCalCat && Object.keys(nextCalCat).length > 0) out.calendarCategoryById = nextCalCat;
   else delete out.calendarCategoryById;
   return out;
@@ -819,10 +866,32 @@ function parseCalendarOpening(raw: unknown): CalendarOpeningSettings | undefined
     if (Object.keys(sub).length) gridDisplay = sub;
   }
 
+  // categoryMultiplierById: { "school": 1.4, "usercat:xxx": 1.2, ... }
+  let categoryMultiplierById: Partial<Record<CalendarOpeningCategory, number>> | undefined;
+  const multRaw = o.categoryMultiplierById;
+  if (multRaw && typeof multRaw === "object" && !Array.isArray(multRaw)) {
+    const rec: Partial<Record<CalendarOpeningCategory, number>> = {};
+    let n = 0;
+    for (const [k, v] of Object.entries(multRaw as Record<string, unknown>)) {
+      if (n >= 40) break;
+      if (typeof k !== "string" || k.length > 80) continue;
+      const key = builtinCat.has(k.toLowerCase()) ? k.toLowerCase() : k;
+      if (!isAllowedCategory(key)) continue;
+      const num = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
+      if (!Number.isFinite(num)) continue;
+      const clamped = Math.max(0.2, Math.min(3, num));
+      if (Math.abs(clamped - 1) < 1e-9) continue;
+      rec[key as CalendarOpeningCategory] = clamped;
+      n++;
+    }
+    if (Object.keys(rec).length) categoryMultiplierById = rec;
+  }
+
   const out: CalendarOpeningSettings = {};
   if (priorityOrder?.length) out.priorityOrder = priorityOrder;
   if (rules?.length) out.rules = rules;
   if (customCategoryLabels?.length) out.customCategoryLabels = customCategoryLabels;
+  if (categoryMultiplierById && Object.keys(categoryMultiplierById).length) out.categoryMultiplierById = categoryMultiplierById;
   if (calendarCategoryById && Object.keys(calendarCategoryById).length) out.calendarCategoryById = calendarCategoryById;
   if (calendarDisplayLabelById && Object.keys(calendarDisplayLabelById).length)
     out.calendarDisplayLabelById = calendarDisplayLabelById;

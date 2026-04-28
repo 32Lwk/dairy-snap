@@ -552,6 +552,22 @@ export function useHighSchoolSubjectPalette(stLevel: string): boolean {
   return lv === "jh" || lv === "hs";
 }
 
+function defaultPeriodStartHmByStudentLevel(stLevelRaw: string, period: number): string | null {
+  const st = (stLevelRaw ?? "").trim();
+  const p = period;
+  if (!Number.isInteger(p) || p < 1 || p > 10) return null;
+
+  // Middle/High school in Japan (typical): 08:45, 10:30, 13:00, 14:45, 16:30...
+  const jhhs = ["08:45", "10:30", "13:00", "14:45", "16:30", "18:10", "19:50", "21:30", "23:10", "00:50"];
+  // University (typical): 09:00, 10:40, 13:00, 14:40, 16:20...
+  const univ = ["09:00", "10:40", "13:00", "14:40", "16:20", "18:00", "19:40", "21:20", "23:00", "00:40"];
+  // Technical college / vocational often starts a bit earlier and has longer blocks.
+  const tech = ["08:30", "10:15", "13:10", "14:55", "16:40", "18:25", "20:10", "21:55", "23:40", "01:25"];
+
+  const arr = st === "univ" ? univ : st === "tech" || st === "jun_col" ? tech : jhhs;
+  return arr[p - 1] ?? null;
+}
+
 function normalizeHmToHhMm(s: string): string | null {
   const t = s.trim();
   const m = t.match(/^(\d{1,2}):(\d{2})$/);
@@ -562,9 +578,8 @@ function normalizeHmToHhMm(s: string): string | null {
   return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
 }
 
-function periodStartMsTokyo(entryDateYmd: string, hmRaw: string | undefined): number | null {
-  if (!hmRaw?.trim()) return null;
-  const norm = normalizeHmToHhMm(hmRaw);
+function periodStartMsTokyo(entryDateYmd: string, hmRaw: string | undefined, fallbackHm?: string | null): number | null {
+  const norm = hmRaw?.trim() ? normalizeHmToHhMm(hmRaw) : fallbackHm?.trim() ? normalizeHmToHhMm(fallbackHm) : null;
   if (!norm) return null;
   const ms = new Date(`${entryDateYmd}T${norm}:00+09:00`).getTime();
   return Number.isFinite(ms) ? ms : null;
@@ -577,6 +592,7 @@ export function formatTimetableNextFocusForOpeningJa(
   raw: string | undefined,
   entryDateYmd: string,
   wallNow: Date,
+  stLevelRaw: string,
 ): string {
   if (!raw?.trim()) return "";
   const b = parseTimetableStored(raw);
@@ -597,7 +613,8 @@ export function formatTimetableNextFocusForOpeningJa(
     for (let p = 1; p <= pat.periodCount; p++) {
       const title = (pat.cells[`${col.id}-${p}`] ?? "").trim();
       if (!title) continue;
-      const startMs = periodStartMsTokyo(ymd, pat.periodMeta[p - 1]?.start?.trim());
+      const fallbackHm = defaultPeriodStartHmByStudentLevel(stLevelRaw, p);
+      const startMs = periodStartMsTokyo(ymd, pat.periodMeta[p - 1]?.start?.trim(), fallbackHm);
       if (startMs == null) continue;
       const dur = effectiveDurationMin(pat, p - 1) ?? 90;
       const endMs = startMs + dur * 60_000;

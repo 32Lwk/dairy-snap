@@ -43,7 +43,7 @@ git log -1 --oneline origin/main
 | 2026-04-19 | あり | [§ 04-19](#2026-04-19日) |
 | 2026-04-20 | あり | [§ 04-20](#2026-04-20月) |
 | 2026-04-21〜27 | なし | [§ 04-21〜27](#2026-04-21火-2026-04-27月) |
-| 2026-04-28 | 作業ツリー | [§ 04-28](#2026-04-28火) |
+| 2026-04-28 | あり | [§ 04-28](#2026-04-28火) |
 
 ---
 
@@ -690,18 +690,20 @@ git log -1 --oneline origin/main
 
 ## 2026-04-28（火）
 
-### 注記（コミットと作業ツリー）
+### 概要（本日の変更の全体像）
 
-- **コミット**: 本日付分のアプリ変更は、執筆時点では **リポジトリに未コミット**（作業ツリーのみ）。
-- **`web/src/server/orchestrator.ts`**: 作業ツリーで「変更」に含まれるが、`git diff` では**行末（CRLF/LF）以外の差分は表示されない**状態。実質的なロジック変更がない可能性がある。
+1. **公開マーケ／法務／PWA** — ルート LP、`(marketing)` 配下、`SNAP_MARKETING_HOST`、ブランドアイコン類（下記「マーケ・法務・PWA」）。
+2. **設定 UI（開口トピック）** — カレンダー開口の**優先順位**・**カテゴリ別インパクト倍率**をインラインから **モーダル編集**へ移行。倍率の**おすすめプリセット**と **「反映して保存」** フローを実装（下記「設定画面・API・保存形式」）。
+3. **ResponsiveDialog（sheet）** — スマホ〜ノート PC 幅では **`min-h-[100dvh]` + `flex-col` + `justify-end`** でパネルを**画面下に寄せる**。横余白・**四隅 `rounded-2xl`**。**中央モーダルは `2xl` 以上**（`1536px`）に変更。
+4. **開口スコアのデバッグ** — `scoreOpeningTopic` が環境変数 **`OPENING_TOPIC_SCORE_DEBUG`** 有効時に **ターミナルへ詳細ログ**（イベントごとのスコア推移・近接係数・ソート結果）。
+5. **時間割（開口）** — `formatTimetableNextFocusForOpeningJa` に **`st_level`** を渡し、**時限の既定開始時刻**を学生種別から補完。`runOrchestrator` から `profile.workLifeAnswers?.st_level` を連携。
 
-### 概要
-
-公開向けの**マーケティング／法務ページ**、**ルートのランディング**、**PWA／favicon 用アイコン**、および **`SNAP_MARKETING_HOST` による正規ホストへの寄せ**を追加・変更する塊。
+先行コミットまたは同一時期の作業として、**クライアント時刻 `clientNow`、Open-Meteo 現況、太陽位相・開口 temperature、静的プロフィールブロック、`scoreOpeningTopic` の近接係数・`orderedEvIdx`、時間割ブロックの開口指示** などがオーケストレーター／天気／`entry-temporal-context` 周辺に含まれる（詳細は本節末尾の「関連: 振り返りチャット・オーケストレーター」）。
 
 ### 環境変数（`web/.env.example`）
 
 - **`SNAP_MARKETING_HOST`**（任意）: 本番で `snap.yutok.dev` 等に公開 URL を揃える場合。`/home`・`/privacy`・`/terms` が別ホストから開かれたとき、**`https://<SNAP_MARKETING_HOST><path>` へリダイレクト**する旨をコメントで説明。ローカル（`localhost` / `127.0.0.1`）は対象外。
+- **`OPENING_TOPIC_SCORE_DEBUG`**（任意）: `1` または `true` で **`scoreOpeningTopic`** がサーバー標準出力に **詳細ログ**（プロフィール倍率・各イベントのスコア・近接係数・ソート結果）を出す。本番では通常オフ。
 
 ### プロキシ（`web/src/proxy.ts`）
 
@@ -746,13 +748,42 @@ git log -1 --oneline origin/main
 
 - 運営者名、問い合わせメール、Google フォーム URL を **1 箇所に集約**（プライバシー／利用規約・連絡ブロックから参照）。
 
-### 利用者・運用への影響
+### 利用者・運用への影響（マーケ）
 
 1. **本番でマーケ URL を 1 ホストに固定する場合**: `SNAP_MARKETING_HOST` を設定し、DNS／ロードバランサが別名で来ても正規ホストへ寄せられる。
 2. **OAuth ブランディング**: 同意画面用ロゴは `daily-snap-oauth-logo.png` を想定。
-3. **未コミット資産**: `public/brand` と `(marketing)` 一式は **コミット前**のため、デプロイ手順に含める場合はリポジトリへ取り込む必要がある。
+3. **`public/brand` と `(marketing)`**: デプロイ・リポジトリ運用ではアイコン・LP 一式が含まれることを確認する。
 
-### 振り返りチャット・オーケストレーター（追記・作業ツリー）
+### 設定画面・開口トピック保存（`web/src/app/(main)/settings/settings-form.tsx` ほか）
+
+- **カテゴリの優先順位**: 一覧は見出し＋**設定**ボタン＋先頭からのプレビュー文のみ。**`ResponsiveDialog`** 内で `CalendarOpeningPriorityEditor` を編集。**優先順位を保存**成功時のみモーダルを閉じる（`saveCalendarOpening` が **`Promise<boolean>`** を返すよう変更）。
+- **カテゴリ別倍率（インパクト）**: 同様にモーダル化。**おすすめを適用**で **プリセット説明モーダル**（`z-[260]`）を重ね表示。プリセットは **`mergeRecommendedCalendarOpeningImpactMultipliers`** で既存の `usercat:*` 倍率を保持したまま組み込みカテゴリのみ上書き。一覧のプリセット行は **倍率編集グリッドと同じ** `sm:grid-cols-2`・行スタイル（`!max-w-2xl` で親と同幅）。
+- **React**: ジオロケーション用コールバックの命名を **`requestDefaultLocationGeolocation`** に変更（Hooks ルール回避）。
+
+### 設定 API（`web/src/app/api/settings/route.ts`）
+
+- **`profile.calendarOpening.categoryMultiplierById`**: `z.record` で **0.2〜3**、キー最大 80 文字・**最大 40 キー** を検証。
+
+### ユーザー設定パース（`web/src/lib/user-settings.ts`）
+
+- **`CalendarOpeningSettings.categoryMultiplierById`**: 保存・パース・カスタムカテゴリ削除時の掃除。
+- **`RECOMMENDED_CALENDAR_OPENING_CATEGORY_IMPACT_MULTIPLIERS`** / **`mergeRecommendedCalendarOpeningImpactMultipliers`**: UI・サーバー双方から利用可能なおすすめ倍率。
+
+### ResponsiveDialog（`web/src/components/responsive-dialog.tsx`）
+
+- **`presentation="sheet"`**（既定）のオーバーレイ: **`min-h-[100dvh] flex flex-col justify-end items-center`** ＋横パディング・セーフエリア。パネルに **`shrink-0`**、**四隅 `rounded-2xl`**（従来の「狭い画面は上だけ角丸・全幅」から変更）。
+- **デスクトップ中央**: 切り替え幅を **`xl` → `2xl`**（`2xl:justify-center` 等）。
+
+### 開口スコア（`web/src/server/chat-context.ts`）
+
+- **`OPENING_TOPIC_SCORE_DEBUG`**: 各イベントについて **プロフィール後スコア／ユーザー倍率後／impact・prox・effScore** などを **`console.log`**。ソート後に primary / secondary を出力。
+
+### 時間割（`web/src/lib/timetable.ts`）とオーケストレーター（`web/src/server/orchestrator.ts`）
+
+- **既定の時限開始時刻**: 学生種別（`st_level`）に応じたフォールバックで、**未入力の開始時刻**でも開口用の「この後の講義」が立てやすいようにする。
+- **`runOrchestrator`**: `formatTimetableNextFocusForOpeningJa` に **`profile.workLifeAnswers?.st_level ?? ""`** を渡す。
+
+### 関連: 振り返りチャット・オーケストレーター（同一時期の機能まとめ）
 
 - **クライアント時刻**: `entry-chat` から `clientNow`（ISO）を開口・送信 API に付与。サーバー時刻から **±12 時間**を超える値は無視（`resolveOrchestratorClockNow`）。`runOrchestrator` は `clockNow` で壁時計・天気・太陽位相を統一。
 - **Open-Meteo 現況**: `fetchOpenMeteoDayAmPm` と並列で `fetchOpenMeteoCurrent` を取り、`formatWeatherForPrompt` に **現況行**を追加（forecast 取得経路のみ）。
@@ -783,7 +814,7 @@ git log -1 --oneline origin/main
 | 04-19 | 10 | 統一検索、オーケストレーター、Apple/Photos、Safari 修正 |
 | 04-20 | 複数 | セキュリティレビュー、Plutchik、ローカル GCal、Photos、日記 UI、および同日の CHANGELOG 反復更新 |
 | 04-21〜27 | 0 | — |
-| 04-28 | 作業ツリー | 公開 LP／法務ページ、`SNAP_MARKETING_HOST`、PWA アイコン、`public/brand` |
+| 04-28 | あり | 公開 LP／法務／PWA、開口設定モーダル・倍率プリセット、`ResponsiveDialog` 下寄せ、`scoreOpeningTopic` デバッグ、時間割 `st_level` 連携 |
 
 ---
 

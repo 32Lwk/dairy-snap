@@ -73,6 +73,18 @@ function nowTokyoIsoMinute(): string {
     .replace(" ", "T");
 }
 
+function isOpeningTopicScoreDebug(): boolean {
+  const v = process.env.OPENING_TOPIC_SCORE_DEBUG;
+  return v === "1" || (typeof v === "string" && v.toLowerCase() === "true");
+}
+
+function formatOpeningScoreMap(m: Map<CalendarOpeningCategory, number>): string {
+  return [...m.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([k, n]) => `${k}=${n.toFixed(2)}`)
+    .join(", ");
+}
+
 function eventTimingStatus(ev: { start: string; end: string }): "all_day" | "upcoming" | "ongoing" | "past" {
   // all-day: YYYY-MM-DD
   if (/^\d{4}-\d{2}-\d{2}$/.test(ev.start)) return "all_day";
@@ -126,7 +138,7 @@ export function scoreOpeningTopic(args: {
 } {
   const rules = args.calendarOpening?.rules ?? [];
   const priority = normalizePriorityOrder(args.calendarOpening);
-
+  const scoreDebug = isOpeningTopicScoreDebug();
 
   const roleBoost: Partial<Record<string, { cat: CalendarOpeningCategory; w: number }>> = {
     student: { cat: "school", w: 3 },
@@ -146,6 +158,14 @@ export function scoreOpeningTopic(args: {
   const picks: Pick[] = [];
   const timings = args.dayEvents.map((ev) => eventTimingStatus(ev));
   const hasNonPast = timings.some((t) => t !== "past");
+
+  if (scoreDebug) {
+    console.log(
+      `[opening-topic-score] start wallNow=${args.wallNow?.toISOString() ?? "(なし)"} ` +
+        `events=${args.dayEvents.length} occupationRole=${JSON.stringify(args.occupationRole)} ` +
+        `priority=${priority.join(">")} categoryMult=${JSON.stringify(args.calendarOpening?.categoryMultiplierById ?? {})}`,
+    );
+  }
 
   for (let i = 0; i < args.dayEvents.length; i++) {
     const ev = args.dayEvents[i]!;
@@ -210,6 +230,17 @@ export function scoreOpeningTopic(args: {
     const flat = new Map<CalendarOpeningCategory, number>();
     for (const [cat, v] of scores) flat.set(cat, v.score);
     applyProfileSignalsToOpeningScores(flat, args.profileSignals);
+    const flatAfterProfile = scoreDebug ? new Map(flat) : flat;
+
+    // User-controlled multipliers (impact layer): multiply per-category AFTER profile signals.
+    const mult = args.calendarOpening?.categoryMultiplierById ?? {};
+    for (const [cat, s] of flat) {
+      const m = mult[cat];
+      if (typeof m === "number" && Number.isFinite(m) && m > 0) {
+        flat.set(cat, s * m);
+      }
+    }
+
     const winning = pickWinningCalendarCategory(flat, priority);
     const best = scores.get(winning);
     if (!best) continue;
@@ -217,10 +248,29 @@ export function scoreOpeningTopic(args: {
     const time = hhmmTokyoFromIsoLike(ev.start);
     // pastの予定は開口に選びにくくする（ただし当日が過去予定だけの場合は許可）
     const timingPenalty = hasNonPast && timing === "past" ? -100 : 0;
-    let effScore = best.score + timingPenalty;
+    const impact = flat.get(winning) ?? best.score;
+    const proxMult = args.wallNow
+      ? openingProximityImpactMultiplier(args.wallNow, ev.start, ev.end, timing)
+      : 1;
+    let effScore = impact + timingPenalty;
     if (args.wallNow) {
-      effScore *= openingProximityImpactMultiplier(args.wallNow, ev.start, ev.end, timing);
+      effScore *= proxMult;
     }
+
+    if (scoreDebug) {
+      const catM = mult[winning];
+      const multNote =
+        typeof catM === "number" && Number.isFinite(catM) && catM > 0 ? `user×${catM}` : "user×(既定1)";
+      console.log(
+        `[opening-topic-score] ev#${i} timing=${timing} title=${JSON.stringify(truncate(ev.title, 80))} ` +
+          `win=${winning} reasons=${best.reasons.slice(0, 6).join(";")} ` +
+          `afterProfile{${formatOpeningScoreMap(flatAfterProfile)}} ` +
+          `afterUserMult{${formatOpeningScoreMap(flat)}} ` +
+          `impact=${impact.toFixed(2)} timingPen=${timingPenalty} prox=${proxMult.toFixed(3)} ${multNote} ` +
+          `effScore=${effScore.toFixed(2)}`,
+      );
+    }
+
     picks.push({
       evIdx: i,
       category: winning,
@@ -256,6 +306,18 @@ export function scoreOpeningTopic(args: {
   const orderedEvIdx = picks.map((p) => p.evIdx);
   const primary = picks[0]!;
   const secondary = picks.find((p) => p.evIdx !== primary.evIdx) ?? null;
+
+  if (scoreDebug) {
+    console.log(
+      `[opening-topic-score] sorted: ` +
+        picks.map((p, rank) => `#${rank} ev${p.evIdx} score=${p.score.toFixed(2)} ${p.timing} ${p.category} ${truncate(p.title, 60)}`).join(" | "),
+    );
+    console.log(
+      `[opening-topic-score] primary=${primary ? `${truncate(primary.title, 80)} (${primary.score.toFixed(2)})` : "null"} ` +
+        `secondary=${secondary ? `${truncate(secondary.title, 80)} (${secondary.score.toFixed(2)})` : "null"} ` +
+        `confidence=${primary.score >= 8 ? "high" : primary.score >= 3 ? "medium" : "low"}`,
+    );
+  }
 
   const confidence = primary.score >= 8 ? "high" : primary.score >= 3 ? "medium" : "low";
   return {

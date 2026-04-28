@@ -2,6 +2,7 @@
 
 import { CalendarOpeningPriorityEditor } from "@/components/calendar-opening-priority-editor";
 import { PlaceCoordsLine } from "@/components/place-coords-line";
+import { ResponsiveDialog } from "@/components/responsive-dialog";
 import { SettingsAccountActions } from "@/components/settings-account-actions";
 import { SettingsMemoryPanel } from "@/components/settings-memory-panel";
 import { UserProfileForm, type UserProfilePayload } from "@/components/user-profile-form";
@@ -11,8 +12,11 @@ import type {
   CalendarOpeningSettings,
 } from "@/lib/user-settings";
 import {
+  CALENDAR_OPENING_BUILTIN_CATS,
+  RECOMMENDED_CALENDAR_OPENING_CATEGORY_IMPACT_MULTIPLIERS,
   calendarOpeningCategoryOptions,
   hydrateProfilePayloadForForms,
+  mergeRecommendedCalendarOpeningImpactMultipliers,
   normalizeCalendarOpeningPriorityOrder,
 } from "@/lib/user-settings";
 import {
@@ -23,7 +27,7 @@ import { reverseGeocodeClient } from "@/lib/reverse-geocode-client";
 import { OnboardingChatFlow } from "@/app/(main)/onboarding/onboarding-chat-flow";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 
 const WeatherLocationMapPicker = dynamic(
   () =>
@@ -82,6 +86,12 @@ export function SettingsForm({ userId }: { userId: string }) {
   const [profileChatMode, setProfileChatMode] = useState<"chat" | "form">("chat");
   const [profileChatDraft, setProfileChatDraft] = useState<UserProfilePayload | null>(null);
   const [profileFormMountKey, setProfileFormMountKey] = useState(0);
+  const [openingPriorityEditorOpen, setOpeningPriorityEditorOpen] = useState(false);
+  const [categoryMultiplierEditorOpen, setCategoryMultiplierEditorOpen] = useState(false);
+  const [categoryMultiplierRecommendOpen, setCategoryMultiplierRecommendOpen] = useState(false);
+  const openingPriorityEditorTitleId = useId();
+  const categoryMultiplierEditorTitleId = useId();
+  const categoryMultiplierRecommendTitleId = useId();
 
   const applySettingsJson = useCallback((json: SettingsPayload & { defaultWeatherLocation?: unknown }) => {
     setData(json);
@@ -291,7 +301,7 @@ export function SettingsForm({ userId }: { userId: string }) {
     }
   }
 
-  function useDefaultLocationGeolocation() {
+  function requestDefaultLocationGeolocation() {
     if (!navigator.geolocation) {
       setError("この環境では位置情報が使えません");
       return;
@@ -339,7 +349,7 @@ export function SettingsForm({ userId }: { userId: string }) {
   const openingCatOptions = calendarOpeningCategoryOptions(opening);
   const openingRuleCats = openingCatOptions.map(({ id, label }) => ({ id, label }));
 
-  async function saveCalendarOpening(next: CalendarOpeningSettings) {
+  async function saveCalendarOpening(next: CalendarOpeningSettings): Promise<boolean> {
     setOpeningBusy(true);
     setError(null);
     try {
@@ -351,10 +361,11 @@ export function SettingsForm({ userId }: { userId: string }) {
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(typeof json.error === "string" ? json.error : "保存に失敗しました");
-        return;
+        return false;
       }
       emitLocalSettingsSavedFromJson(json);
       await reloadSettingsFromServer();
+      return true;
     } finally {
       setOpeningBusy(false);
     }
@@ -457,36 +468,56 @@ export function SettingsForm({ userId }: { userId: string }) {
 
         <div className="mt-4 space-y-4">
           <div>
-            <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">カテゴリの優先順位（上ほど優先）</p>
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+              <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">
+                カテゴリの優先順位（上ほど優先）
+              </p>
+              <button
+                type="button"
+                disabled={openingBusy}
+                onClick={() => setOpeningPriorityEditorOpen(true)}
+                className="shrink-0 rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-800 shadow-sm disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 sm:px-3 sm:text-sm"
+              >
+                設定
+              </button>
+            </div>
             <p className="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-              ここはカレンダー予定の分類・開口トピック用です。趣味・関心タグや「避けたい話題」「いま関心が高いもの」はプロフィール側の別ストリームとしてスコアにだけ微調整され、この優先リストには混ぜません。
+              カレンダー予定の分類・開口トピック用の並びです。趣味・関心タグなどはプロフィール側の別ストリームでスコアだけ微調整され、このリストには混ざりません。
             </p>
-            <CalendarOpeningPriorityEditor
-              priorityList={normalizeCalendarOpeningPriorityOrder(opening)}
-              catOptions={openingCatOptions}
-              disabled={openingBusy}
-              onSetPriorityOrder={(next) =>
-                setOpening((prev) => {
-                  const base = { ...(prev ?? {}) };
-                  const current = normalizeCalendarOpeningPriorityOrder(base);
-                  const resolved = typeof next === "function" ? next(current) : next;
-                  return { ...base, priorityOrder: resolved };
-                })
-              }
-            />
-            <button
-              type="button"
-              disabled={openingBusy}
-              onClick={() =>
-                void saveCalendarOpening({
-                  ...(opening ?? {}),
-                  priorityOrder: normalizeCalendarOpeningPriorityOrder(opening),
-                })
-              }
-              className="mt-3 rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
-            >
-              優先順位を保存
-            </button>
+            <p className="mt-1.5 text-[11px] text-zinc-600 dark:text-zinc-300">
+              {(() => {
+                const order = normalizeCalendarOpeningPriorityOrder(opening);
+                const labelFor = (id: CalendarOpeningCategory) =>
+                  openingCatOptions.find((c) => c.id === id)?.label ?? id;
+                const head = order.slice(0, 4).map(labelFor).join(" → ");
+                const tail = order.length > 4 ? ` …（全${order.length}件）` : "";
+                return `現在の順（先頭から）: ${head}${tail}`;
+              })()}
+            </p>
+          </div>
+
+          <div>
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+              <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">
+                カテゴリ別倍率（インパクト）
+              </p>
+              <button
+                type="button"
+                disabled={openingBusy}
+                onClick={() => setCategoryMultiplierEditorOpen(true)}
+                className="shrink-0 rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-800 shadow-sm disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 sm:px-3 sm:text-sm"
+              >
+                設定
+              </button>
+            </div>
+            <p className="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+              開口の分類スコアに掛ける倍率です。近さ（開始までの時間）とは別に効きます。1.0 は既定で、未保存のときはサーバーに書き込みません。
+            </p>
+            <p className="mt-1.5 text-[11px] text-zinc-600 dark:text-zinc-300">
+              {Object.keys(opening?.categoryMultiplierById ?? {}).length === 0
+                ? "現在はすべて既定（1.0）です。"
+                : `${Object.keys(opening?.categoryMultiplierById ?? {}).length} 件のカテゴリで倍率を変更中（未保存の変更を含む場合があります）。`}
+            </p>
           </div>
 
           <div>
@@ -586,7 +617,7 @@ export function SettingsForm({ userId }: { userId: string }) {
           <button
             type="button"
             disabled={saving || geoBusy}
-            onClick={() => useDefaultLocationGeolocation()}
+            onClick={() => requestDefaultLocationGeolocation()}
             className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm dark:border-zinc-700"
           >
             {geoBusy ? "…" : "現在地"}
@@ -769,6 +800,280 @@ export function SettingsForm({ userId }: { userId: string }) {
           </div>
         </div>
       ) : null}
+
+      <ResponsiveDialog
+        open={openingPriorityEditorOpen}
+        onClose={() => setOpeningPriorityEditorOpen(false)}
+        labelledBy={openingPriorityEditorTitleId}
+        dialogId="settings-opening-priority-editor"
+        zClass="z-[250]"
+        presentation="sheet"
+        panelClassName="!max-w-2xl"
+      >
+        <div className="flex max-h-[min(92dvh,52rem)] min-h-0 w-full flex-col">
+          <div className="shrink-0 border-b border-zinc-200 px-4 py-3 sm:px-5 dark:border-zinc-800">
+            <h2
+              id={openingPriorityEditorTitleId}
+              className="text-base font-semibold text-zinc-900 dark:text-zinc-50"
+            >
+              カテゴリの優先順位（上ほど優先）
+            </h2>
+            <p className="mt-1.5 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+              ここはカレンダー予定の分類・開口トピック用です。趣味・関心タグや「避けたい話題」「いま関心が高いもの」はプロフィール側の別ストリームとしてスコアにだけ微調整され、この優先リストには混ぜません。
+            </p>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3 sm:px-5">
+            <CalendarOpeningPriorityEditor
+              priorityList={normalizeCalendarOpeningPriorityOrder(opening)}
+              catOptions={openingCatOptions}
+              disabled={openingBusy}
+              onSetPriorityOrder={(next) =>
+                setOpening((prev) => {
+                  const base = { ...(prev ?? {}) };
+                  const current = normalizeCalendarOpeningPriorityOrder(base);
+                  const resolved = typeof next === "function" ? next(current) : next;
+                  return { ...base, priorityOrder: resolved };
+                })
+              }
+            />
+          </div>
+          <div className="shrink-0 space-y-2 border-t border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950 sm:px-5">
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+              <button
+                type="button"
+                disabled={openingBusy}
+                onClick={() => setOpeningPriorityEditorOpen(false)}
+                className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-800 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 sm:w-auto"
+              >
+                閉じる
+              </button>
+              <button
+                type="button"
+                disabled={openingBusy}
+                onClick={() =>
+                  void (async () => {
+                    const ok = await saveCalendarOpening({
+                      ...(opening ?? {}),
+                      priorityOrder: normalizeCalendarOpeningPriorityOrder(opening),
+                    });
+                    if (ok) setOpeningPriorityEditorOpen(false);
+                  })()
+                }
+                className="w-full rounded-lg bg-zinc-900 px-3 py-2 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900 sm:w-auto"
+              >
+                優先順位を保存
+              </button>
+            </div>
+          </div>
+        </div>
+      </ResponsiveDialog>
+
+      <ResponsiveDialog
+        open={categoryMultiplierEditorOpen}
+        onClose={() => setCategoryMultiplierEditorOpen(false)}
+        labelledBy={categoryMultiplierEditorTitleId}
+        dialogId="settings-category-multiplier-editor"
+        zClass="z-[250]"
+        presentation="sheet"
+        panelClassName="!max-w-2xl"
+      >
+        <div className="flex max-h-[min(92dvh,52rem)] min-h-0 w-full flex-col">
+          <div className="shrink-0 border-b border-zinc-200 px-4 py-3 sm:px-5 dark:border-zinc-800">
+            <h2
+              id={categoryMultiplierEditorTitleId}
+              className="text-base font-semibold text-zinc-900 dark:text-zinc-50"
+            >
+              カテゴリ別倍率（インパクト）
+            </h2>
+            <p className="mt-1.5 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+              開口の「インパクト（分類スコア）」側に掛ける倍率です（例: 授業=1.5）。近さ（開始までの時間）とは別に効きます。1.0
+              は既定として扱い、保存しません。
+            </p>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3 sm:px-5">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {openingCatOptions.map((c) => {
+                const v = (opening?.categoryMultiplierById ?? {})[c.id];
+                const shown = typeof v === "number" && Number.isFinite(v) ? String(v) : "";
+                return (
+                  <label
+                    key={c.id}
+                    className="flex min-h-[2.75rem] items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-xs dark:border-zinc-700 dark:bg-zinc-950"
+                  >
+                    <span className="min-w-0 flex-1 text-zinc-700 dark:text-zinc-200 sm:truncate">
+                      {c.custom ? `${c.label}（カスタム）` : c.label}
+                    </span>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      step="0.05"
+                      min="0.2"
+                      max="3"
+                      placeholder="1.0"
+                      value={shown}
+                      disabled={openingBusy}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        const n = raw.trim() === "" ? NaN : Number(raw);
+                        setOpening((prev) => {
+                          const base = { ...(prev ?? {}) };
+                          const cur = { ...(base.categoryMultiplierById ?? {}) } as Record<string, number>;
+                          if (!Number.isFinite(n)) {
+                            delete cur[c.id];
+                          } else {
+                            const clamped = Math.max(0.2, Math.min(3, n));
+                            if (Math.abs(clamped - 1) < 1e-9) delete cur[c.id];
+                            else cur[c.id] = clamped;
+                          }
+                          if (Object.keys(cur).length === 0) {
+                            delete (base as { categoryMultiplierById?: unknown }).categoryMultiplierById;
+                            return base;
+                          }
+                          return { ...base, categoryMultiplierById: cur };
+                        });
+                      }}
+                      className="w-[5.5rem] shrink-0 rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm tabular-nums dark:border-zinc-700 dark:bg-zinc-950 sm:w-24"
+                      aria-label={`${c.label} 倍率`}
+                    />
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+          <div className="shrink-0 space-y-2 border-t border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950 sm:px-5">
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+              <button
+                type="button"
+                disabled={openingBusy}
+                onClick={() => setCategoryMultiplierEditorOpen(false)}
+                className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-800 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 sm:w-auto"
+              >
+                閉じる
+              </button>
+              <button
+                type="button"
+                disabled={openingBusy}
+                onClick={() => setCategoryMultiplierRecommendOpen(true)}
+                className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-800 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 sm:w-auto"
+              >
+                おすすめを適用
+              </button>
+              <button
+                type="button"
+                disabled={openingBusy}
+                onClick={() =>
+                  void (async () => {
+                    const ok = await saveCalendarOpening({
+                      ...(opening ?? {}),
+                      priorityOrder: normalizeCalendarOpeningPriorityOrder(opening),
+                      rules: opening?.rules ?? [],
+                      categoryMultiplierById: opening?.categoryMultiplierById,
+                    });
+                    if (ok) setCategoryMultiplierEditorOpen(false);
+                  })()
+                }
+                className="w-full rounded-lg bg-zinc-900 px-3 py-2 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900 sm:w-auto"
+              >
+                倍率を保存
+              </button>
+            </div>
+          </div>
+        </div>
+      </ResponsiveDialog>
+
+      <ResponsiveDialog
+        open={categoryMultiplierRecommendOpen}
+        onClose={() => setCategoryMultiplierRecommendOpen(false)}
+        labelledBy={categoryMultiplierRecommendTitleId}
+        dialogId="settings-category-multiplier-recommend"
+        zClass="z-[260]"
+        presentation="sheet"
+        panelClassName="!max-w-2xl"
+      >
+        <div className="flex max-h-[min(92dvh,52rem)] min-h-0 w-full flex-col">
+          <div className="shrink-0 border-b border-zinc-200 px-4 py-3 sm:px-5 dark:border-zinc-800">
+            <h2
+              id={categoryMultiplierRecommendTitleId}
+              className="text-base font-semibold text-zinc-900 dark:text-zinc-50"
+            >
+              おすすめの倍率プリセット
+            </h2>
+            <p className="mt-1.5 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+              授業・就活・記念日・通院などをやや強め、バイト・家族・趣味は控えめに上げます。「その他」は既定のままです。カスタムカテゴリの倍率は消えません。反映後は親モーダル下部の「倍率を保存」でサーバーに書き込んでください。
+            </p>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3 sm:px-5">
+            <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2" role="list">
+              {CALENDAR_OPENING_BUILTIN_CATS.map(({ id, label }) => {
+                const rec = RECOMMENDED_CALENDAR_OPENING_CATEGORY_IMPACT_MULTIPLIERS[id];
+                const mult =
+                  typeof rec === "number" && Number.isFinite(rec) ? Math.max(0.2, Math.min(3, rec)) : 1;
+                return (
+                  <li
+                    key={id}
+                    className="flex min-h-[2.75rem] items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-xs dark:border-zinc-700 dark:bg-zinc-950"
+                  >
+                    <span className="min-w-0 flex-1 text-zinc-700 dark:text-zinc-200 sm:truncate">{label}</span>
+                    <span className="shrink-0 tabular-nums text-sm text-zinc-600 dark:text-zinc-400">
+                      {Math.abs(mult - 1) < 1e-9 ? "1.0（既定）" : `×${mult.toFixed(2)}`}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+          <div className="shrink-0 space-y-2 border-t border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950 sm:px-5">
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+              <button
+                type="button"
+                disabled={openingBusy}
+                onClick={() => setCategoryMultiplierRecommendOpen(false)}
+                className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-800 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 sm:w-auto"
+              >
+                閉じる
+              </button>
+              <button
+                type="button"
+                disabled={openingBusy}
+                onClick={() => {
+                  const merged = mergeRecommendedCalendarOpeningImpactMultipliers(opening?.categoryMultiplierById);
+                  setOpening((prev) => {
+                    const base = { ...(prev ?? {}) };
+                    if (!merged) {
+                      delete base.categoryMultiplierById;
+                      return base;
+                    }
+                    return { ...base, categoryMultiplierById: merged };
+                  });
+                  setCategoryMultiplierRecommendOpen(false);
+                }}
+                className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-800 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 sm:w-auto"
+              >
+                フォームにだけ反映
+              </button>
+              <button
+                type="button"
+                disabled={openingBusy}
+                onClick={() => {
+                  const merged = mergeRecommendedCalendarOpeningImpactMultipliers(opening?.categoryMultiplierById);
+                  void (async () => {
+                    const ok = await saveCalendarOpening({
+                      ...(opening ?? {}),
+                      priorityOrder: normalizeCalendarOpeningPriorityOrder(opening),
+                      rules: opening?.rules ?? [],
+                      categoryMultiplierById: merged,
+                    });
+                    if (ok) setCategoryMultiplierRecommendOpen(false);
+                  })();
+                }}
+                className="w-full rounded-lg bg-zinc-900 px-3 py-2 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900 sm:w-auto"
+              >
+                反映して保存
+              </button>
+            </div>
+          </div>
+        </div>
+      </ResponsiveDialog>
     </>
   );
 }

@@ -441,7 +441,12 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     diffCalendarDaysTokyo(entryDateYmd, todayYmd) === 0 &&
     profile?.occupationRole === "student" &&
     profile.studentTimetable?.trim()
-      ? formatTimetableNextFocusForOpeningJa(profile.studentTimetable, entryDateYmd, orchestratorNow)
+      ? formatTimetableNextFocusForOpeningJa(
+          profile.studentTimetable,
+          entryDateYmd,
+          orchestratorNow,
+          profile.workLifeAnswers?.st_level ?? "",
+        )
       : "";
   const hasTimetableLecturesToday = Boolean(timetableOpeningFocusJa);
 

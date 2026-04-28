@@ -81,6 +81,12 @@ const profilePatchSchema = z
       .object({
         priorityOrder: z.array(z.string().max(48)).max(32).optional(),
         customCategoryLabels: z.array(z.string().min(1).max(24)).max(16).optional(),
+        categoryMultiplierById: z
+          .record(z.string().max(80), z.number().min(0.2).max(3))
+          .optional()
+          .refine((rec) => rec == null || Object.keys(rec).length <= 40, {
+            message: "categoryMultiplierById が多すぎます",
+          }),
         rules: z
           .array(
             z.object({

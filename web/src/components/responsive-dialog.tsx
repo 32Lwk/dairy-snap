@@ -14,7 +14,7 @@ type ResponsiveDialogProps = {
   /** z-index layer (default 50) */
   zClass?: string;
   /**
-   * sheet: スマホ・タブレットは下からのシート、lg 以上は中央モーダル（既定）。
+   * sheet: スマホ〜大きめノートPC幅までは下寄せのカード、2xl 以上は中央モーダル（既定）。
    * island: 全ブレークポイントで中央のカード（縦横に余白）。
    * sheetBottom: 常に画面下からのシート（lg でも中央モーダルにしない）。
    */
@@ -27,7 +27,7 @@ function getFocusable(root: HTMLElement): HTMLElement[] {
 }
 
 /**
- * presentation=sheet: 下シート（〜lg 未満）／lg 以上は中央モーダル。
+ * presentation=sheet: 下寄せ＋横余白（〜2xl 未満）／2xl 以上は中央モーダル。
  * presentation=sheetBottom: 全幅域で下シートのみ。
  * presentation=island: 全幅で中央のフローティングカード。
  * Focus trap（Tab）、Escape で閉じる、body スクロールとフォーカスを復元。
@@ -111,13 +111,13 @@ export function ResponsiveDialog({
     ? `fixed inset-0 ${zClass} flex items-center justify-center overflow-y-auto bg-zinc-950/50 p-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]`
     : sheetBottom
       ? `fixed inset-0 ${zClass} flex items-end justify-center overflow-y-auto bg-zinc-950/50 px-2 pb-[max(0.25rem,env(safe-area-inset-bottom))] pt-[max(0.5rem,env(safe-area-inset-top))] sm:px-4`
-      : `fixed inset-0 ${zClass} flex items-end justify-center bg-zinc-950/50 lg:items-center lg:justify-center lg:overflow-y-auto lg:p-4 lg:pt-[max(1rem,env(safe-area-inset-top))] lg:pb-[max(1rem,env(safe-area-inset-bottom))]`;
+      : `fixed inset-0 ${zClass} flex min-h-[100dvh] flex-col justify-end items-center overflow-y-auto bg-zinc-950/50 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.5rem,env(safe-area-inset-top))] sm:px-4 2xl:min-h-0 2xl:justify-center 2xl:items-center 2xl:p-4 2xl:pt-[max(1rem,env(safe-area-inset-top))] 2xl:pb-[max(1rem,env(safe-area-inset-bottom))]`;
 
   const panelBase = island
     ? "flex max-h-[min(90dvh,52rem)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl outline-none ring-1 ring-black/5 dark:border-zinc-800 dark:bg-zinc-950 dark:ring-white/10"
     : sheetBottom
       ? "mx-auto flex max-h-[min(92dvh,92svh)] w-full max-w-[min(96vw,56rem)] flex-col overflow-hidden rounded-t-2xl border border-zinc-200 bg-white shadow-xl outline-none dark:border-zinc-800 dark:bg-zinc-950"
-      : "flex max-h-[min(90dvh,92svh)] w-full max-w-3xl flex-col overflow-hidden rounded-t-2xl border border-zinc-200 bg-white shadow-xl outline-none dark:border-zinc-800 dark:bg-zinc-950 lg:mt-0 lg:max-h-[min(90dvh,52rem)] lg:rounded-2xl";
+      : "mx-auto flex w-full max-w-3xl shrink-0 flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-xl outline-none dark:border-zinc-800 dark:bg-zinc-950 max-h-[min(90dvh,92svh)] 2xl:max-h-[min(90dvh,52rem)]";
   const panelClass = [panelBase, panelClassName].filter(Boolean).join(" ");
 
   return (
