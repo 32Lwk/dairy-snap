@@ -40,7 +40,11 @@ export function WeatherLocationMapPicker({
 }) {
   const [shouldLoadMap, setShouldLoadMap] = useState(() => {
     if (typeof navigator === "undefined") return true;
-    const connection = navigator.connection;
+    const connection = (
+      navigator as Navigator & {
+        connection?: { saveData?: boolean; effectiveType?: string };
+      }
+    ).connection;
     if (!connection) return true;
     return !(
       connection.saveData ||
