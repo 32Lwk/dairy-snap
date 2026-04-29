@@ -806,6 +806,9 @@ git log -1 --oneline origin/main
 3. **監査・レート制限・可観測性** — 設定自動適用は 24h あたり 5 回に制限し、拒否理由（rate_limit/validation/persist_failed）を `audit_logs` に記録。成功時は AI 生成物として `AIArtifact(kind=SETTINGS_PATCH)` を保存する。
 4. **Usage カウンタの拡張** — `usage_counters.settingsChanges`（日次）を追加し、チャット経由の設定適用成功時にインクリメントする。
 5. **設定 UI / UX の補強** — 設定画面にタイムゾーン・日付境界を扱う UI を追加し、ブラウザのタイムゾーンを **1 回だけサイレント反映**する `TimeZoneBootstrap` を導入。選択 UI として `FancySelect`、アイコン操作用に `SettingsActionIconButton` を追加した。
+6. **祝日シグナルの導入（講義の断定抑制）** — カレンダーの終日イベントや日付ベースの祝日判定を「祝日/休みの可能性」として扱い、時間割があっても講義があったと断定しないガードを追加した。
+7. **開口/チャットの応答性改善（後処理のバックグラウンド化）** — ストリーム close を待たせないために、記憶抽出などの重い後処理を非同期に回し、UI 側も done を見たら reader を cancel して復帰するようにした。
+8. **エントリ画面のレイアウト改善** — 固定ヘッダー化とグリッド高さ制御、チャットパネルの `fill` 対応などで、PC/モバイルのスクロール体験と入力時の視認性を改善した。
 
 ### データベース（Prisma / マイグレーション）
 
@@ -818,6 +821,38 @@ git log -1 --oneline origin/main
 - **設定の適用**: `lib/server/apply-settings-from-chat.ts` が、ユーザーの肯定文を検知した場合にのみ保留パッチを検証して適用。成功/失敗を AuditLog と UsageCounter に反映。
 - **日付文脈**: `lib/server/user-effective-day.ts` により、ユーザー設定（TZ/日付境界）を踏まえた `effectiveYmd` / `calendarYmd` / `resetAtIso` を提供し、オーケストレーターや画面側の「今日」を合わせやすくした。
 - **オーケストレーター**: `opening` 側で「日付がズレていそう」なときに `propose_settings_change` を候補に含めるガイドを追加。
+
+### （追記・作業ツリー）祝日/休日シグナルと講義断定の抑制
+
+- **祝日判定ユーティリティ**: `web/src/lib/jp-holiday.ts` を追加し、`japanese-holidays` で `YYYY-MM-DD` から祝日名を引けるようにした（無効入力や非祝日は `null`）。
+- **オーケストレーターのガード注入**: `web/src/server/orchestrator.ts` で、
+  - Google カレンダーの **終日イベント**（祝日カレンダー/「祝日」「休日」「振替休日」「代休」「休み」などの明示タイトル）を検出して「休みシグナル」を立てる
+  - カレンダー側で検出できない場合は、日付ベースで祝日名をフォールバックする
+  - system に **「祝日・休みの可能性（重要）」** ブロックを追加し、時間割があっても講義を断定しないよう明示
+  - `buildReflectiveOpeningSystemInstruction` に `holidayNameJa` を渡して、開口時の講義断定を抑制する指示（確認質問を優先）を追加
+- **プロンプト側ルール強化**: `web/prompts/agents/orchestrator.md` と `web/prompts/agents/school.md` で、祝日/休みのシグナルがある場合は講義を断定しないルールを追記。
+
+### （追記・作業ツリー）開口/チャットのパフォーマンス改善（後処理の非同期化）
+
+- **開口 API**: `web/src/app/api/ai/orchestrator/opening/route.ts`
+  - 昨日の「ユーザー発話 0」判定のためだけにメッセージ全文を読むのをやめ、`chatMessage.count`（role=user）で軽量化。
+  - ストリーム応答後の `runMasMemoryExtraction` を **バックグラウンド実行**に変更し、クライアントを待たせない。
+- **チャット API**: `web/src/app/api/ai/orchestrator/chat/route.ts`
+  - ストリーム close を待つ必要がない後処理（記憶抽出など）をバックグラウンドへ回し、応答性を優先する。
+- **クライアント**: `web/src/app/(main)/entries/[date]/entry-chat.tsx`
+  - SSE で `done` を受けたら `reader.cancel()` して UI を復帰（サーバー側の後処理遅延の影響を低減）。
+  - キーボード表示で `visualViewport` が縮むケースに、入力が詰まらないよう `maxHeight` を動的に抑制。
+
+### （追記・作業ツリー）エントリ画面レイアウト改善
+
+- `web/src/app/(main)/entries/[date]/entry-by-date-view.tsx`: ヘッダーを固定化し、safe-area を考慮した上でタイトル/導線を常時見える位置に寄せた。
+- `web/src/app/(main)/entries/[date]/entry-by-date-main-grid.tsx`: md 以上でグリッドに高さを与え、左（本文/チャット）と右（草案/画像/操作）のスクロール責務を分離。`EntryChat` に `layoutHeight="fill"` を渡してパネルを列いっぱいに伸ばす。
+
+### （追記・作業ツリー）依存関係
+
+- `web/package.json` / `web/package-lock.json`
+  - `japanese-holidays` を追加
+  - `@types/japanese-holidays` を追加
 
 ---
 

@@ -99,17 +99,20 @@ export async function POST(req: NextRequest) {
   const boundaryMin = hmToMinutes(dayCtx.dayBoundaryEndTime) ?? hmToMinutes(DEFAULT_DAY_BOUNDARY_END_TIME) ?? 0;
 
   const yesterdayYmd = previousCalendarYmdInZone(dayCtx.calendarYmd, dayCtx.timeZone);
-  const yesterday = await prisma.dailyEntry.findUnique({
-    where: { userId_entryDateYmd: { userId: session.user.id, entryDateYmd: yesterdayYmd } },
-    select: {
-      id: true,
-      chatThreads: { select: { messages: { select: { role: true, content: true } } } },
+  // PERF: 開口判定のためだけに昨日のメッセージ全文を読むのは重いので、DB側で件数だけ数える。
+  // `trim()` 相当まではDBで厳密に判定しない（空文字の user 発話は通常保存されない想定）。
+  const yesterdayUserTurns = await prisma.chatMessage.count({
+    where: {
+      role: "user",
+      content: { not: "" },
+      thread: {
+        entry: {
+          userId: session.user.id,
+          entryDateYmd: yesterdayYmd,
+        },
+      },
     },
   });
-  const yesterdayUserTurns =
-    yesterday?.chatThreads
-      ?.flatMap((t) => t.messages)
-      .filter((m) => m.role === "user" && m.content.trim()).length ?? 0;
   // ユーザー要件: 「本文が空」= 昨日のチャットでユーザーが返していない（ユーザー発話0）
   const yesterdayHasReflection = yesterdayUserTurns > 0;
 
@@ -370,20 +373,24 @@ export async function POST(req: NextRequest) {
           encoder.encode(`data: ${JSON.stringify({ done: true, threadId, agentsUsed })}\n\n`),
         );
 
-        const entryForMemory = await prisma.dailyEntry.findUnique({
-          where: { id: entry.id },
-          select: { body: true },
-        });
-        await runMasMemoryExtraction({
-          userId: session.user.id,
-          entryId: entry.id,
-          entryDateYmd: entry.entryDateYmd,
-          encryptionMode: entry.encryptionMode,
-          diaryBody: entryForMemory?.body ?? entry.body,
-          userMessage: "",
-          assistantMessage: storedAssistant,
-          recentTurns: [{ role: "assistant" as const, content: storedAssistant }],
-        }).catch(() => {});
+        // PERF: クライアントはストリームの close まで待つため、後処理は待たずにcloseする。
+        // 記憶抽出などの重い処理はバックグラウンドに回す（失敗してもチャットの応答性を優先）。
+        void (async () => {
+          const entryForMemory = await prisma.dailyEntry.findUnique({
+            where: { id: entry.id },
+            select: { body: true },
+          });
+          await runMasMemoryExtraction({
+            userId: session.user.id,
+            entryId: entry.id,
+            entryDateYmd: entry.entryDateYmd,
+            encryptionMode: entry.encryptionMode,
+            diaryBody: entryForMemory?.body ?? entry.body,
+            userMessage: "",
+            assistantMessage: storedAssistant,
+            recentTurns: [{ role: "assistant" as const, content: storedAssistant }],
+          });
+        })().catch(() => {});
 
         controller.close();
       } catch (e) {

@@ -72,6 +72,7 @@ export async function POST(req: NextRequest) {
     return new Response(JSON.stringify({ error: "見つかりません" }), { status: 404 });
   }
   let entry = entryRaw;
+  const originalEntryId = entryRaw.id;
   const profile = parseUserSettings(userRow?.settings ?? {}).profile;
 
   const counter = await getTodayCounter(session.user.id);
@@ -94,6 +95,26 @@ export async function POST(req: NextRequest) {
         where: { userId_entryDateYmd: { userId: session.user.id, entryDateYmd: yesterdayYmd } },
       });
       if (yEntry) {
+        // 今日側（originalEntryId）のスレッドに「開口メッセージだけ」が残っている場合は自動削除する。
+        // 条件: ユーザー発話がまだ無い（開口のみ）スレッドに限定して誤削除を避ける。
+        if (originalEntryId !== yEntry.id) {
+          const originalThread = await prisma.chatThread.findFirst({
+            where: { entryId: originalEntryId },
+            orderBy: { updatedAt: "desc" },
+            select: { id: true },
+          });
+          if (originalThread) {
+            const originalUserTurns = await prisma.chatMessage.count({
+              where: { threadId: originalThread.id, role: "user" },
+            });
+            if (originalUserTurns === 0) {
+              await prisma.chatMessage.deleteMany({
+                where: { threadId: originalThread.id, role: "assistant" },
+              });
+            }
+          }
+        }
+
         entry = yEntry;
         navigateToEntryYmd = yesterdayYmd;
       }
@@ -347,20 +368,24 @@ export async function POST(req: NextRequest) {
           ),
         );
 
-        const entryForMemory = await prisma.dailyEntry.findUnique({
-          where: { id: entry.id },
-          select: { body: true },
-        });
-        await runMasMemoryExtraction({
-          userId: session.user.id,
-          entryId: entry.id,
-          entryDateYmd: entry.entryDateYmd,
-          encryptionMode: entry.encryptionMode,
-          diaryBody: entryForMemory?.body ?? entry.body,
-          userMessage: parsed.data.message,
-          assistantMessage: storedAssistant,
-          recentTurns,
-        }).catch(() => {});
+        // PERF: クライアントはストリームの close まで待つため、後処理は待たずにcloseする。
+        // 記憶抽出などの重い処理はバックグラウンドに回す（失敗してもチャットの応答性を優先）。
+        void (async () => {
+          const entryForMemory = await prisma.dailyEntry.findUnique({
+            where: { id: entry.id },
+            select: { body: true },
+          });
+          await runMasMemoryExtraction({
+            userId: session.user.id,
+            entryId: entry.id,
+            entryDateYmd: entry.entryDateYmd,
+            encryptionMode: entry.encryptionMode,
+            diaryBody: entryForMemory?.body ?? entry.body,
+            userMessage: parsed.data.message,
+            assistantMessage: storedAssistant,
+            recentTurns,
+          });
+        })().catch(() => {});
 
         controller.close();
       } catch (e) {

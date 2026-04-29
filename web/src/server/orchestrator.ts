@@ -41,6 +41,7 @@ import {
   formatOrchestratorWallClockDaylightBlock,
   ORCHESTRATOR_DAY_CALENDAR_HEADING,
 } from "@/lib/time/entry-temporal-context";
+import { getJapaneseHolidayNameJa } from "@/lib/jp-holiday";
 import { DEFAULT_WEATHER_LATITUDE, DEFAULT_WEATHER_LONGITUDE } from "@/lib/location-defaults";
 import {
   formatOrchestratorDiaryProposalGateBlock,
@@ -195,6 +196,55 @@ function formatOpeningDayCalendarBrief(
     lines.push(formatOneOpeningCalendarLine(events[i]!, timeZone));
   }
   return lines.join("\n");
+}
+
+type HolidaySignal = {
+  /** True when calendar contains an all-day holiday/off signal. */
+  hasHolidayLikeAllDay: boolean;
+  /** Human-readable short list of all-day holiday/off event titles. */
+  titles: string[];
+};
+
+function isAllDayIsoLike(s: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test((s ?? "").trim());
+}
+
+function looksLikeHolidayCalendarIdOrName(ev: CalendarEventBrief): boolean {
+  const id = (ev.calendarId ?? "").toLowerCase();
+  const name = (ev.calendarName ?? "").toLowerCase();
+  if (id.includes("#holiday@")) return true;
+  if (id.includes("holiday") && id.includes("@group.v.calendar.google.com")) return true;
+  if (name.includes("祝日") || name.includes("holiday")) return true;
+  if (name.includes("日本の祝日") || name.includes("祝日カレンダー")) return true;
+  return false;
+}
+
+function looksLikeHolidayTitle(titleRaw: string): boolean {
+  const t = (titleRaw ?? "").trim();
+  if (!t) return false;
+  // Keep conservative: aim for "obvious" holiday/off signals only.
+  if (t.includes("祝日")) return true;
+  if (t.includes("休日")) return true;
+  if (t.includes("振替休日")) return true;
+  if (t.includes("代休")) return true;
+  // "休み" is ambiguous; treat as holiday-like only when it is explicit enough.
+  if (t === "休み" || t === "お休み") return true;
+  if (/^(休み|お休み)(（|$)/.test(t)) return true;
+  return false;
+}
+
+function detectHolidaySignal(events: CalendarEventBrief[]): HolidaySignal {
+  const titles: string[] = [];
+  for (const ev of events) {
+    if (!isAllDayIsoLike(ev.start)) continue;
+    const title = (ev.title ?? "").trim();
+    if (!title) continue;
+    if (looksLikeHolidayCalendarIdOrName(ev) || looksLikeHolidayTitle(title)) {
+      titles.push(title);
+    }
+  }
+  const uniq = [...new Set(titles)].slice(0, 6);
+  return { hasHolidayLikeAllDay: uniq.length > 0, titles: uniq };
 }
 
 /** カレンダー連携が有効か（未連携・設定不備・invalid_grant ではツールを登録しない） */
@@ -384,6 +434,12 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     fetchCalendarEventsForDay(userId, entryDateYmd),
   ]);
   const calendarAvailable = isCalendarToolEligible(calendarRes);
+  const holidaySignal =
+    calendarRes.ok && calendarRes.events.length > 0 ? detectHolidaySignal(calendarRes.events) : null;
+  // Calendar may be unavailable or may not include a holiday calendar. Fall back to date-based JP holiday check.
+  const jpHolidayNameJa =
+    (holidaySignal?.hasHolidayLikeAllDay ? holidaySignal.titles[0] ?? null : null) ??
+    getJapaneseHolidayNameJa(entryDateYmd);
 
   const personaLines = formatAgentPersonaForPrompt({
     aiAddressStyle: profile?.aiAddressStyle,
@@ -495,6 +551,14 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
       : `## エントリ日（${formatYmdWithTokyoWeekday(entryDateYmd)}）の天気`;
 
   const baseSystem = loadAgentPrompt("orchestrator");
+  const holidayGuardBlock =
+    jpHolidayNameJa
+      ? [
+          "## 祝日・休みの可能性（重要）",
+          `この日は祝日/休日の可能性がある: 「${jpHolidayNameJa}」`,
+          "ルール: 時間割や推測があっても「講義があった」と断定しない。必要なら短く確認し、ユーザーが講義があったと言った場合にのみ講義の話題へ進む。",
+        ].join("\n")
+      : "";
   let systemBlocks = [
     baseSystem,
     "",
@@ -546,6 +610,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
             calendarLinked: calendarRes.ok,
             calendarEventCount: calendarRes.ok ? calendarRes.events.length : 0,
             hasTimetableLecturesToday,
+            holidayNameJa: jpHolidayNameJa,
           },
           temporalOpts,
         )
@@ -561,6 +626,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     calendarRes.ok
       ? `${ORCHESTRATOR_DAY_CALENDAR_HEADING}\n${formatOpeningDayCalendarBrief(calendarRes.events, calendarOrderedEvIdx, userTimeZone)}`
       : "",
+    holidayGuardBlock,
     "",
     !calendarAvailable
       ? "※ Google カレンダー未連携、またはトークン無効のためカレンダー系ツールは呼ばない。"

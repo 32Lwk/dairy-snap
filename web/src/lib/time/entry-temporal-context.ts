@@ -419,6 +419,8 @@ export type ReflectiveOpeningContext = {
   calendarEventCount: number;
   /** 今日のエントリで、登録時間割から「この後の講義」行が付いた */
   hasTimetableLecturesToday?: boolean;
+  /** 祝日/休日のシグナル（カレンダー or 日付判定）。開口では講義の断定を避ける。 */
+  holidayNameJa?: string | null;
 };
 
 /**
@@ -473,6 +475,12 @@ export function buildReflectiveOpeningSystemInstruction(
     } else if (!opening.hasDiaryBody) {
       anchorRules.push(
         "No calendar summary block — do not claim the user had several plans that day; stay with weather, memories, and open questions.",
+      );
+    }
+
+    if (opening.holidayNameJa) {
+      anchorRules.push(
+        `Holiday signal present (${opening.holidayNameJa}). Do NOT assume classes/lectures happened even if a timetable slice exists. Prefer a neutral confirmation question like 「祝日だけど、授業はあった日だった？」 or 「授業はいつも通りだった？」 before discussing specific lectures.`,
       );
     }
   }

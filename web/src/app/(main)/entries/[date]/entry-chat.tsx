@@ -467,6 +467,7 @@ export function EntryChat({
         const decoder = new TextDecoder();
         let assistant = "";
         let sseBuf = "";
+        let doneSeen = false;
 
         while (true) {
           const { value, done } = await reader.read();
@@ -485,13 +486,19 @@ export function EntryChat({
               }
               if (json.done && json.threadId) {
                 setTid(json.threadId);
+                doneSeen = true;
               }
             } catch {
               /* ignore */
             }
           }
+          if (doneSeen) break;
         }
 
+        if (doneSeen) {
+          // サーバー側の後処理でストリームcloseが遅れても UI を待たせない
+          await reader.cancel().catch(() => {});
+        }
         setStreaming("");
         router.refresh();
       } catch {
@@ -626,6 +633,7 @@ export function EntryChat({
       let doneAssistantModel: string | null | undefined;
       let triggerJournalDraft = false;
       let streamingSettingsUndo: SettingsChangeTip | undefined;
+      let doneSeen = false;
 
       while (true) {
         const { value, done } = await reader.read();
@@ -656,6 +664,7 @@ export function EntryChat({
               setTid(json.threadId);
             }
             if (json.done) {
+              doneSeen = true;
               if (typeof json.userMessageId === "string") doneUserMessageId = json.userMessageId;
               if (typeof json.assistantMessageId === "string") doneAssistantMessageId = json.assistantMessageId;
               if (json.assistantModel !== undefined) doneAssistantModel = json.assistantModel ?? null;
@@ -674,8 +683,13 @@ export function EntryChat({
             /* ignore */
           }
         }
+        if (doneSeen) break;
       }
 
+      if (doneSeen) {
+        // サーバー側の後処理でストリームcloseが遅れても UI を待たせない
+        await reader.cancel().catch(() => {});
+      }
       setMessages((m) => {
         const withRealUser = m.map((row) =>
           row.id === optimisticUserId && doneUserMessageId
