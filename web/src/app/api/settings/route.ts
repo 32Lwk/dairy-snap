@@ -4,6 +4,7 @@ import { requireSession } from "@/lib/api/require-session";
 import { resolveDbUserFromSession } from "@/lib/api/resolve-db-user-from-session";
 import { isLoveMbtiType } from "@/lib/love-mbti";
 import { isMbtiType } from "@/lib/mbti";
+import { isValidIanaTimeZone } from "@/lib/time/user-day-boundary";
 import {
   mergeUserSettingsJson,
   parseUserSettings,
@@ -126,11 +127,40 @@ const profilePatchSchema = z
       .optional(),
     /** AIの誤推測の訂正（短い箇条書き） */
     aiCorrections: z.array(z.string().max(200)).max(60).optional(),
+    /** IANA タイムゾーン（例 Asia/Tokyo）。空文字で削除 */
+    timeZone: z
+      .string()
+      .max(120)
+      .optional()
+      .refine((s) => s === undefined || s === "" || isValidIanaTimeZone(s), {
+        message: "timeZone は有効な IANA 識別子",
+      }),
   })
   .strict();
 
 const patchSchema = z.object({
   encryptionMode: z.enum(["STANDARD", "EXPERIMENTAL_E2EE"]).optional(),
+  /**
+   * 1日の区切り（前の日の終了時刻）。HH:mm（24h）。例: "02:00"
+   * null でクリア（既定 00:00 に戻す）。
+   */
+  dayBoundaryEndTime: z
+    .string()
+    .regex(/^\d{2}:\d{2}$/)
+    .nullable()
+    .optional()
+    .refine(
+      (s) => {
+        if (s == null) return true;
+        const [hhRaw, mmRaw] = s.split(":");
+        const hh = Number(hhRaw);
+        const mm = Number(mmRaw);
+        if (!Number.isInteger(hh) || !Number.isInteger(mm)) return false;
+        if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return false;
+        return hh * 60 + mm <= 3 * 60;
+      },
+      { message: "dayBoundaryEndTime は HH:mm（00:00〜03:00）" },
+    ),
   defaultWeatherLocation: z
     .object({
       latitude: z.number().min(-90).max(90),
@@ -175,6 +205,7 @@ export async function GET(req: NextRequest) {
       email: user.email,
       encryptionMode: user.encryptionMode,
       defaultWeatherLocation: s.defaultWeatherLocation ?? null,
+      dayBoundaryEndTime: s.dayBoundaryEndTime ?? null,
       profile: s.profile ?? {},
       serverSyncToken,
       limits: LIMITS,
@@ -182,6 +213,7 @@ export async function GET(req: NextRequest) {
         chatMessages: counter.chatMessages,
         imageGenerations: counter.imageGenerations,
         dailySummaries: counter.dailySummaries,
+        settingsChanges: counter.settingsChanges,
       },
       promptVersions: PROMPT_VERSIONS,
     },
@@ -270,12 +302,16 @@ export async function PATCH(req: NextRequest) {
 
   const settingsPatch =
     "defaultWeatherLocation" in rawObj ||
+    "dayBoundaryEndTime" in rawObj ||
     "profile" in rawObj ||
     "completeOnboardingSkipProfile" in rawObj ||
     "finalizeOnboarding" in rawObj
       ? mergeUserSettingsJson(existing.settings, {
           ...(parsed.data.defaultWeatherLocation !== undefined
             ? { defaultWeatherLocation: parsed.data.defaultWeatherLocation ?? null }
+            : {}),
+          ...(parsed.data.dayBoundaryEndTime !== undefined
+            ? { dayBoundaryEndTime: parsed.data.dayBoundaryEndTime ?? null }
             : {}),
           ...(profilePatch !== undefined ? { profile: profilePatch } : {}),
         })
@@ -288,6 +324,15 @@ export async function PATCH(req: NextRequest) {
         ? { encryptionMode: parsed.data.encryptionMode }
         : {}),
       ...(settingsPatch !== undefined ? { settings: settingsPatch } : {}),
+      /** `profile.timeZone` と DB の `User.timeZone` を同期（空文字は既定 Asia/Tokyo） */
+      ...(parsed.data.profile?.timeZone !== undefined
+        ? {
+            timeZone:
+              parsed.data.profile.timeZone.trim() === ""
+                ? "Asia/Tokyo"
+                : parsed.data.profile.timeZone.trim(),
+          }
+        : {}),
     },
   });
 
@@ -299,6 +344,7 @@ export async function PATCH(req: NextRequest) {
       user: {
         encryptionMode: user.encryptionMode,
         defaultWeatherLocation: s.defaultWeatherLocation ?? null,
+        dayBoundaryEndTime: s.dayBoundaryEndTime ?? null,
         profile: s.profile ?? {},
       },
     },

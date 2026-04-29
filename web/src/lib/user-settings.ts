@@ -1,6 +1,7 @@
 import type { Prisma } from "@/generated/prisma/client";
 import { formatAgentPersonaForPrompt } from "@/lib/agent-persona-preferences";
 import { ageYearsFromYmd, sanitizeHtmlDateYmd } from "@/lib/age-from-ymd";
+import { isValidIanaTimeZone, resolveDayBoundaryEndTime } from "@/lib/time/user-day-boundary";
 import { formatInterestPicksForPrompt } from "@/lib/interest-taxonomy";
 import { labelForOccupationRole } from "@/lib/occupation-role";
 import { isLoveMbtiType, loveMbtiDisplayJa, loveMbtiUserPromptSubLines } from "@/lib/love-mbti";
@@ -92,6 +93,9 @@ export type UserProfileSettings = {
    * 「たぶん〜」のような推測を訂正されたら追加し、次回以降の会話で参照する。
    */
   aiCorrections?: string[];
+
+  /** IANA タイムゾーン（例: Asia/Tokyo）。日付境界・「今日」の解釈に使用 */
+  timeZone?: string;
 };
 
 export const CALENDAR_OPENING_USERCAT_PREFIX = "usercat:" as const;
@@ -669,6 +673,11 @@ export function stripCalendarOpeningCustomLabel(
 
 export type AppUserSettings = {
   defaultWeatherLocation?: DefaultWeatherLocation;
+  /**
+   * 1日の区切り（「前の日」の終了時刻）。
+   * 例: "02:00" を指定すると、00:00〜01:59 は「まだ前日」として扱う（今日ページ等の基準日）。
+   */
+  dayBoundaryEndTime?: string;
   profile?: UserProfileSettings;
 };
 
@@ -942,6 +951,9 @@ function parseProfile(raw: unknown): UserProfileSettings | undefined {
   const workLifeAnswers = parseWorkLifeAnswers(o.workLifeAnswers);
   const calendarOpening = parseCalendarOpening(o.calendarOpening);
   const aiCorrections = parseProfileStringArray(o.aiCorrections, 200, 60);
+  const timeZoneRaw = str("timeZone");
+  const timeZone =
+    timeZoneRaw && timeZoneRaw.length <= 120 && isValidIanaTimeZone(timeZoneRaw) ? timeZoneRaw.trim() : undefined;
 
   if (nickname) out.nickname = nickname;
   if (birthDate) out.birthDate = birthDate;
@@ -975,6 +987,7 @@ function parseProfile(raw: unknown): UserProfileSettings | undefined {
   if (workLifeAnswers) out.workLifeAnswers = workLifeAnswers;
   if (calendarOpening) out.calendarOpening = calendarOpening;
   if (aiCorrections) out.aiCorrections = aiCorrections;
+  if (timeZone) out.timeZone = timeZone;
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
@@ -984,15 +997,22 @@ export function parseUserSettings(settings: Prisma.JsonValue): AppUserSettings {
   }
   const o = settings as Record<string, unknown>;
   const defaultWeatherLocation = parseDefaultWeatherLocation(o.defaultWeatherLocation);
+  const rawBoundary =
+    typeof o.dayBoundaryEndTime === "string" && /^\d{2}:\d{2}$/.test(o.dayBoundaryEndTime.trim())
+      ? o.dayBoundaryEndTime.trim()
+      : undefined;
+  const dayBoundaryEndTime = rawBoundary ? resolveDayBoundaryEndTime(rawBoundary) : undefined;
   const profile = parseProfile(o.profile);
   const out: AppUserSettings = {};
   if (defaultWeatherLocation) out.defaultWeatherLocation = defaultWeatherLocation;
+  if (dayBoundaryEndTime) out.dayBoundaryEndTime = dayBoundaryEndTime;
   if (profile) out.profile = profile;
   return out;
 }
 
 export type SettingsPatch = {
   defaultWeatherLocation?: DefaultWeatherLocation | null;
+  dayBoundaryEndTime?: string | null;
   profile?: Partial<UserProfileSettings> | null;
 };
 
@@ -1010,6 +1030,14 @@ export function mergeUserSettingsJson(
       delete base.defaultWeatherLocation;
     } else {
       base.defaultWeatherLocation = patch.defaultWeatherLocation;
+    }
+  }
+  if ("dayBoundaryEndTime" in patch) {
+    const raw = patch.dayBoundaryEndTime;
+    if (raw == null || raw === "") {
+      delete base.dayBoundaryEndTime;
+    } else {
+      base.dayBoundaryEndTime = raw;
     }
   }
   if ("profile" in patch) {
@@ -1114,6 +1142,7 @@ export function serializeProfileForApi(
     aiMemoryRecallStyle: t(form.aiMemoryRecallStyle),
     aiMemoryNamePolicy: t(form.aiMemoryNamePolicy),
     aiMemoryForgetBias: t(form.aiMemoryForgetBias),
+    ...(t(form.timeZone) && isValidIanaTimeZone(t(form.timeZone)) ? { timeZone: t(form.timeZone) } : {}),
     ...(studentTimetable ? { studentTimetable } : {}),
     ...(workLifeAnswers ? { workLifeAnswers } : {}),
   };

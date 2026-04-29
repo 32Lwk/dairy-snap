@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "ArtifactKind" ADD VALUE 'SETTINGS_PATCH';

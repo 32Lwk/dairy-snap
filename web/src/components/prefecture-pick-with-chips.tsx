@@ -7,6 +7,7 @@ import {
   prefectureChipSuggestions,
   type WorkLifeOption,
 } from "@/lib/onboarding-work-life";
+import { FancySelect } from "@/components/fancy-select";
 
 const chipBase =
   "rounded-lg border px-2.5 py-1 text-left text-xs font-medium transition";
@@ -83,13 +84,13 @@ export function PrefecturePickWithChips({
             育ちに近い国はどれですか？（任意）
           </p>
         ) : null}
-        <select value={value} onChange={(e) => onChange(e.target.value)} className={inputCls}>
+        <FancySelect value={value} onChange={(e) => onChange(e.target.value)} className={inputCls}>
           {countryOpts.map((o) => (
             <option key={o.value || "empty"} value={o.value}>
               {o.label}
             </option>
           ))}
-        </select>
+        </FancySelect>
         <p className="text-[10px] leading-snug text-zinc-500 dark:text-zinc-400">
           国内の都道府県ではなく、国名を選んでください。
         </p>
@@ -144,13 +145,13 @@ export function PrefecturePickWithChips({
       ) : null}
       {showNationwideSelect ? (
         <>
-          <select value={value} onChange={(e) => onChange(e.target.value)} className={inputCls}>
+          <FancySelect value={value} onChange={(e) => onChange(e.target.value)} className={inputCls}>
             {selectOptions.map((o) => (
               <option key={o.value || "empty"} value={o.value}>
                 {o.label}
               </option>
             ))}
-          </select>
+          </FancySelect>
           {isHomePref ? (
             <p className="text-[10px] leading-snug text-zinc-500 dark:text-zinc-400">
               一覧は全国固定順です。出身県と同じなら、上のチップからも選べます。

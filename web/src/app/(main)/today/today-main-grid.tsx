@@ -7,7 +7,7 @@ import { EntryChat } from "../entries/[date]/entry-chat";
 import { EntryImages } from "../entries/[date]/entry-images";
 import { JournalDraftPanel } from "../entries/[date]/journal-draft-panel";
 
-type Msg = { id: string; role: string; content: string };
+type Msg = { id: string; role: string; content: string; model?: string | null };
 
 export function TodayMainGrid({
   entryId,

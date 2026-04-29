@@ -12,6 +12,14 @@ import { upsertTextEmbedding } from "@/server/embeddings";
 import { computeAssistantStreamDelta, stripAssistantMetaEchoPrefix } from "@/lib/chat-assistant-sanitize";
 import { buildSecurityReviewPayload, scheduleSecurityReview } from "@/server/security-review-queue";
 import { resolveOrchestratorClockNow } from "@/lib/time/client-clock";
+import { getUserEffectiveDayContext } from "@/lib/server/user-effective-day";
+import {
+  DEFAULT_DAY_BOUNDARY_END_TIME,
+  MAX_DAY_BOUNDARY_END_TIME,
+  formatHmInTimeZone,
+  hmToMinutes,
+  previousCalendarYmdInZone,
+} from "@/lib/time/user-day-boundary";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -78,6 +86,180 @@ export async function POST(req: NextRequest) {
   const serverNow = new Date();
   const orchestratorNow = resolveOrchestratorClockNow(serverNow, parsed.data.clientNow);
 
+  const [dayCtx, userMsgCount] = await Promise.all([
+    getUserEffectiveDayContext(session.user.id),
+    prisma.chatMessage.count({ where: { threadId, role: "user" } }),
+  ]);
+  const isFirstTurn = userMsgCount === 0;
+
+  const nowHm = formatHmInTimeZone(orchestratorNow, dayCtx.timeZone);
+  const nowMin = hmToMinutes(nowHm) ?? 0;
+  const maxMin = hmToMinutes(MAX_DAY_BOUNDARY_END_TIME) ?? 180;
+  const withinLateNightWindow = nowMin >= 0 && nowMin < maxMin;
+  const boundaryMin = hmToMinutes(dayCtx.dayBoundaryEndTime) ?? hmToMinutes(DEFAULT_DAY_BOUNDARY_END_TIME) ?? 0;
+
+  const yesterdayYmd = previousCalendarYmdInZone(dayCtx.calendarYmd, dayCtx.timeZone);
+  const yesterday = await prisma.dailyEntry.findUnique({
+    where: { userId_entryDateYmd: { userId: session.user.id, entryDateYmd: yesterdayYmd } },
+    select: {
+      id: true,
+      chatThreads: { select: { messages: { select: { role: true, content: true } } } },
+    },
+  });
+  const yesterdayUserTurns =
+    yesterday?.chatThreads
+      ?.flatMap((t) => t.messages)
+      .filter((m) => m.role === "user" && m.content.trim()).length ?? 0;
+  // ユーザー要件: 「本文が空」= 昨日のチャットでユーザーが返していない（ユーザー発話0）
+  const yesterdayHasReflection = yesterdayUserTurns > 0;
+
+  // ケースA: すでに日付がズレている（boundary により前日扱いで開いている）
+  const calendarSplit =
+    dayCtx.calendarYmd !== dayCtx.effectiveYmd && entry.entryDateYmd === dayCtx.effectiveYmd;
+
+  // ケースB: 既定が 0:00（=ズレ無し）だが、深夜で「昨日の振り返りが未実施」なら区切り変更を提案してよい
+  const isDefaultBoundary = dayCtx.dayBoundaryEndTime === DEFAULT_DAY_BOUNDARY_END_TIME;
+  // 追加要件: 区切り時間を少し越えた直後でも「昨日の続きにしたい」ニーズが強いので提案してよい
+  // 例: 06:00 区切りで 06:10、昨日未振り返り → 07:00 への繰り上げ提案など
+  const smallOverrunAfterBoundaryMin = 30;
+  const justAfterBoundary = nowMin >= boundaryMin && nowMin < boundaryMin + smallOverrunAfterBoundaryMin;
+  const canExtendBoundary = boundaryMin < maxMin;
+
+  const proposeBecauseYesterdayMissing =
+    withinLateNightWindow &&
+    entry.entryDateYmd === dayCtx.calendarYmd &&
+    !yesterdayHasReflection &&
+    (isDefaultBoundary || (canExtendBoundary && justAfterBoundary));
+
+  const proposeBoundaryFromNow = (() => {
+    // 00:00〜(MAX-1) のみ。次の「ちょうど1時間」へ切り上げ（最大 MAX）。
+    if (!withinLateNightWindow) return null;
+    const maxHour = Math.max(1, Math.floor(maxMin / 60));
+    const nextHour = Math.min(maxHour, Math.max(1, Math.ceil(nowMin / 60)));
+    return `${String(nextHour).padStart(2, "0")}:00`;
+  })();
+
+  // 「まだ寝ていない」寄りの時間帯。提案を優先してよい（ただし boundary 直後の小超過も含む）。
+  const likelyAwakeWindow = (nowMin >= 30 && nowMin < maxMin) || justAfterBoundary;
+
+  const openingAllowSettingsTool = isFirstTurn && (calendarSplit || proposeBecauseYesterdayMissing);
+
+  const openingShouldAskSettingsFirst =
+    isFirstTurn && proposeBecauseYesterdayMissing && likelyAwakeWindow && Boolean(proposeBoundaryFromNow);
+
+  // ツール呼び出しは LLM の裁量でスキップされることがあるため、
+  // 条件が強いケース（「昨日のユーザー発話が0」+深夜+既定0:00）ではサーバー側で先に保留を保存して確実に提案する。
+  if (openingShouldAskSettingsFirst && proposeBoundaryFromNow) {
+    const trow = await prisma.chatThread.findUnique({
+      where: { id: threadId },
+      select: { conversationNotes: true },
+    });
+    const notes = (trow?.conversationNotes as Record<string, unknown>) ?? {};
+    await prisma.chatThread.update({
+      where: { id: threadId },
+      data: {
+        conversationNotes: {
+          ...notes,
+          pendingSettingsChange: {
+            dayBoundaryEndTime: proposeBoundaryFromNow,
+            reasonJa: "深夜に昨日の振り返りをしやすくするため",
+            proposedAt: new Date().toISOString(),
+          },
+        },
+      },
+    });
+  }
+
+  // 提案優先フラグが立っている開口では、振り返りを並列に始めず「提案→ユーザー返答待ち」だけを返す。
+  if (openingShouldAskSettingsFirst && proposeBoundaryFromNow) {
+    const msg = [
+      `まだ${nowHm}で夜中だけど、昨日（${yesterdayYmd}）の振り返りがまだ無さそう。`,
+      `日付の区切りを **${proposeBoundaryFromNow}** にして、「まだ昨日の続き」として振り返れるようにしておく？`,
+      "よければ「はい」か「いいえ」で教えてください。",
+    ].join("\n");
+
+    await prisma.chatMessage.update({
+      where: { id: assistantMessageId },
+      data: {
+        content: msg,
+        model: "rule_based_opening",
+        latencyMs: Date.now() - started,
+        tokenEstimate: Math.ceil(msg.length / 4),
+      },
+    });
+
+    const latencyMs = Date.now() - started;
+    await prisma.auditLog.create({
+      data: {
+        userId: session.user.id,
+        entryId: entry.id,
+        action: "ai_orchestrator_opening_complete",
+        metadata: {
+          threadId,
+          model: "rule_based_opening",
+          latencyMs,
+          agentsUsed: ["rule_based_settings_prompt"],
+          promptVersion: PROMPT_VERSIONS.reflective_chat,
+        },
+      },
+    });
+
+    await prisma.aIArtifact.create({
+      data: {
+        userId: session.user.id,
+        entryId: entry.id,
+        kind: "CHAT_MESSAGE",
+        promptVersion: PROMPT_VERSIONS.reflective_chat,
+        model: "rule_based_opening",
+        latencyMs,
+        tokenEstimate: Math.ceil(msg.length / 4),
+        metadata: {
+          threadId,
+          assistantMessageId,
+          mas: true,
+          ruleBased: true,
+          pendingSettings: {
+            dayBoundaryEndTime: proposeBoundaryFromNow,
+            reasonJa: "深夜に昨日の振り返りをしやすくするため",
+          },
+        },
+      },
+    });
+
+    return new Response(JSON.stringify({ skipped: true, threadId }), {
+      status: 200,
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+    });
+  }
+
+  const openingExtraAppend = openingAllowSettingsTool
+    ? [
+        "## ルールベース（開口・日付の区切り提案）",
+        `壁時計: ${dayCtx.calendarYmd} ${nowHm}（${dayCtx.timeZone}）`,
+        `このスレッドのエントリ日: ${entry.entryDateYmd}`,
+        calendarSplit
+          ? `いまカレンダー上は **${dayCtx.calendarYmd}** が「今日」だが、このエントリ日は **${dayCtx.effectiveYmd}**（区切り設定のため「まだ前日の続き」）。`
+          : "",
+        proposeBecauseYesterdayMissing
+          ? `深夜帯で、${yesterdayYmd} の振り返りでユーザー発話がまだ無い。日付の区切りを **${proposeBoundaryFromNow ?? MAX_DAY_BOUNDARY_END_TIME}** に変更して「まだ昨日の続き」にできる提案をしてよい。`
+          : "",
+        "ユーザー発言はまだない。次から自然に選べる（2〜3文以内）:",
+        proposeBecauseYesterdayMissing && likelyAwakeWindow
+          ? "優先: まず区切り変更の提案 → 同意が取れそうなら `propose_settings_change` で**提案の保留だけ**（このターン適用しない）。その後に昨日の振り返りを開始する。"
+          : "",
+        proposeBecauseYesterdayMissing && likelyAwakeWindow && proposeBoundaryFromNow
+          ? `この条件ではサーバー側で保留（pending）を先に保存している場合がある。ユーザーには「区切りを ${proposeBoundaryFromNow} に変更しますか？」と短く確認する。`
+          : "",
+        "1) このエントリ日の振り返りを始める（天気・予定・本文から一文で声をかける）",
+        "2) ユーザーが日付のズレ/未振り返りに困りそうなら、区切り時刻の変更を短く提案し、同意が取れそうなら `propose_settings_change` で**提案の保留だけ**行う（このターンでは適用しない）",
+        proposeBecauseYesterdayMissing
+          ? `提案パッチ例: { dayBoundaryEndTime: \"${proposeBoundaryFromNow ?? MAX_DAY_BOUNDARY_END_TIME}\", reasonJa: \"深夜に昨日の振り返りをしやすくするため\" }`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n")
+    : "";
+
   const { stream, agentsUsed, personaInstructions, mbtiHint, orchestratorModel } = await runOrchestrator({
     userId: session.user.id,
     entryId: entry.id,
@@ -88,6 +270,9 @@ export async function POST(req: NextRequest) {
     encryptionMode: entry.encryptionMode,
     currentBody: entry.body,
     clockNow: orchestratorNow,
+    threadId,
+    extraSystemAppend: openingExtraAppend,
+    openingAllowSettingsTool,
   });
 
   const encoder = new TextEncoder();

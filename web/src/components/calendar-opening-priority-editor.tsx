@@ -12,6 +12,7 @@ import {
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { CalendarOpeningCategory } from "@/lib/user-settings";
+import { FancySelect } from "@/components/fancy-select";
 
 type CatOpt = { id: CalendarOpeningCategory; label: string; custom: boolean };
 
@@ -67,11 +68,11 @@ function SortablePriorityRow({
           ⋮⋮
         </button>
         <span className="shrink-0 text-[11px] text-zinc-500">#{idx + 1}</span>
-        <select
+        <FancySelect
           value={cat}
           disabled={disabled}
           onChange={(e) => onCatChange(idx, e.target.value as CalendarOpeningCategory)}
-          className="min-w-[10rem] shrink-0 flex-1 rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+          className="min-w-[10rem] shrink-0 flex-1 px-2 py-1.5 text-sm"
           aria-label={`優先順位 ${idx + 1}`}
         >
           {catOptions.map((c) => (
@@ -79,7 +80,7 @@ function SortablePriorityRow({
               {c.custom ? `${c.label}（カスタム）` : c.label}
             </option>
           ))}
-        </select>
+        </FancySelect>
       <button
         type="button"
         disabled={disabled || !canDelete}

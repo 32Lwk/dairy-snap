@@ -7,7 +7,7 @@ import { CalendarReconnectButton } from "./calendar-reconnect";
 import { SettingsForm } from "./settings-form";
 
 const CALENDAR_BODY =
-  "AI の質問文脈と「予定を確認」に使います。カレンダー画面の日付モーダルから予定を編集するには、Google の再連携でイベント編集スコープ（calendar.events）が付与されている必要があります。再ログインで refresh_token が返らない場合でも、既存トークンが消えないよう補正しています。取得できないときは下の再連携を試してください。";
+  "AI の質問文脈と「予定を確認」に使います。アプリ内で予定を編集する場合は、再連携で編集スコープ（calendar.events）が必要です。うまく取得できないときは下の再連携を試してください。";
 
 export default async function SettingsPage() {
   const r = await getResolvedAuthUser();
@@ -15,21 +15,19 @@ export default async function SettingsPage() {
   if (r.status === "session_mismatch") redirect("/login?error=session_mismatch");
 
   const cal = await getCalendarConnectionSummary(r.user.id);
+  const email = r.authSession.user?.email ?? null;
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-lg px-4 pb-10 pt-[calc(7.5rem+env(safe-area-inset-top,0px))] sm:max-w-2xl sm:px-6 md:max-w-3xl md:pb-12 md:pt-[calc(8rem+env(safe-area-inset-top,0px))] lg:max-w-4xl lg:px-10 xl:max-w-5xl 2xl:max-w-6xl">
+    <div className="mx-auto w-full min-w-0 max-w-lg px-4 pb-10 pt-[calc(3.5rem+env(safe-area-inset-top,0px))] sm:max-w-2xl sm:px-6 md:max-w-3xl md:pb-12 md:pt-[calc(3.75rem+env(safe-area-inset-top,0px))] lg:max-w-4xl lg:px-10 xl:max-w-5xl 2xl:max-w-6xl">
       <header className="fixed left-0 right-0 top-0 z-30 border-b border-zinc-200/90 bg-white/95 backdrop-blur-md dark:border-zinc-800/90 dark:bg-zinc-950/95">
-        <div className="mx-auto w-full min-w-0 max-w-lg px-4 pb-6 pt-[max(1rem,env(safe-area-inset-top))] sm:max-w-2xl sm:px-6 md:max-w-3xl lg:max-w-4xl lg:px-10 lg:pb-8 xl:max-w-5xl 2xl:max-w-6xl">
-          <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50 lg:text-3xl">
+        <div className="mx-auto flex w-full min-w-0 max-w-lg items-center justify-between gap-3 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] sm:max-w-2xl sm:px-6 md:max-w-3xl lg:max-w-4xl lg:px-10 xl:max-w-5xl 2xl:max-w-6xl">
+          <h1 className="min-w-0 flex-1 truncate text-2xl font-bold leading-none tracking-tight text-zinc-900 dark:text-zinc-50 lg:text-3xl">
             設定
           </h1>
-          <p className="mt-2 max-w-3xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400 lg:text-base">
-            暗号化モード・AI 上限・プロンプト版の参照（MVP）
-          </p>
         </div>
       </header>
 
-      <section className="mt-8 w-full min-w-0 rounded-2xl border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/40 sm:p-5 lg:mt-10 lg:p-6">
+      <section className="mt-3 w-full min-w-0 rounded-2xl border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/40 sm:p-5 lg:mt-4 lg:p-6">
         <div className="lg:flex lg:items-start lg:gap-10 xl:gap-12">
           <div className="min-w-0 flex-1">
             <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50 lg:text-base">
@@ -38,7 +36,43 @@ export default async function SettingsPage() {
             <p className="mt-1 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400 lg:text-sm">
               {CALENDAR_BODY}
             </p>
-            <ul className="mt-3 space-y-1.5 text-xs text-zinc-700 dark:text-zinc-300 lg:text-sm">
+            {email ? (
+              <p className="mt-3 text-xs font-medium text-zinc-700 dark:text-zinc-200 lg:text-sm">
+                ログイン中: <span className="font-semibold">{email}</span>
+              </p>
+            ) : null}
+
+            {/* mobile/tablet: accordion for details */}
+            <details className="mt-2 lg:hidden">
+              <summary className="cursor-pointer select-none text-xs font-medium text-zinc-700 underline underline-offset-2 dark:text-zinc-200">
+                詳細
+              </summary>
+              <ul className="mt-2 space-y-1.5 text-xs text-zinc-700 dark:text-zinc-300">
+                <li>Google 連携: {cal.hasGoogleAccount ? "あり" : "なし"}</li>
+                <li>
+                  リフレッシュトークン:{" "}
+                  {cal.hasRefreshToken ? "保存済み" : "未保存（再連携が必要なことがあります）"}
+                </li>
+                <li>
+                  カレンダー読み取りスコープ:{" "}
+                  {cal.hasCalendarReadonlyScope ? "付与済み" : "未確認（再連携推奨）"}
+                </li>
+                <li>
+                  予定の編集スコープ（calendar.events）:{" "}
+                  {cal.hasCalendarEventsWriteScope
+                    ? "付与済み"
+                    : "未付与（アプリ内で予定を編集する場合は再連携）"}
+                </li>
+                <li>
+                  Photos Picker スコープ:{" "}
+                  {cal.hasGooglePhotosPickerScope ? "付与済み" : "未確認（再連携推奨）"}
+                </li>
+              </ul>
+            </details>
+
+            {/* desktop: show all details */}
+            <ul className="mt-3 hidden space-y-1.5 text-xs text-zinc-700 dark:text-zinc-300 lg:block lg:text-sm">
+              {email ? <li>ログイン中: {email}</li> : null}
               <li>Google 連携: {cal.hasGoogleAccount ? "あり" : "なし"}</li>
               <li>リフレッシュトークン: {cal.hasRefreshToken ? "保存済み" : "未保存（再連携が必要なことがあります）"}</li>
               <li>
@@ -46,11 +80,11 @@ export default async function SettingsPage() {
                 {cal.hasCalendarReadonlyScope ? "付与済み" : "未確認（再連携推奨）"}
               </li>
               <li>
-                カレンダー予定の編集スコープ（calendar.events）:{" "}
+                予定の編集スコープ（calendar.events）:{" "}
                 {cal.hasCalendarEventsWriteScope ? "付与済み" : "未付与（アプリ内で予定を編集する場合は再連携）"}
               </li>
               <li>
-                Google Photos Picker スコープ: {cal.hasGooglePhotosPickerScope ? "付与済み" : "未確認（再連携推奨）"}
+                Photos Picker スコープ: {cal.hasGooglePhotosPickerScope ? "付与済み" : "未確認（再連携推奨）"}
               </li>
             </ul>
           </div>
@@ -60,7 +94,7 @@ export default async function SettingsPage() {
         </div>
       </section>
 
-      <section className="mt-6 w-full min-w-0 rounded-2xl border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/40 sm:p-5 lg:mt-8 lg:p-6">
+      <section className="mt-3 w-full min-w-0 rounded-2xl border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/40 sm:p-5 lg:mt-4 lg:p-6">
         <div className="lg:flex lg:items-start lg:gap-10 xl:gap-12">
           <div className="min-w-0 flex-1">
             <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50 lg:text-base">Apple 連携</h2>
@@ -78,10 +112,10 @@ export default async function SettingsPage() {
         </div>
       </section>
 
-      <div className="mt-8 w-full min-w-0 lg:mt-10">
+      <div className="mt-4 w-full min-w-0 lg:mt-5">
         <SettingsForm userId={r.user.id} />
       </div>
-      <p className="mt-8 text-sm lg:mt-10">
+      <p className="mt-4 text-sm lg:mt-5">
         <Link href="/settings/bb84" className="text-blue-600 hover:underline dark:text-blue-400">
           {"BB84 \u937e\u5171\u6709\u30b7\u30df\u30e5\u30ec\u30fc\u30b7\u30e7\u30f3\uff08\u5b66\u7fd2\u7528\uff09"}
         </Link>

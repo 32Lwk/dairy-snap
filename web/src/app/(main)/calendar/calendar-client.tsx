@@ -13,6 +13,7 @@ import { PlutchikDominantChip } from "@/components/plutchik-dominant-chip";
 import { ResponsiveDialog } from "@/components/responsive-dialog";
 import { WeatherAmPmDisplay } from "@/components/weather-am-pm-display";
 import { SearchPanel } from "@/components/search-panel";
+import { FancySelect } from "@/components/fancy-select";
 import { CALENDAR_GRID_COLOR_PRESETS, GCAL_COLOR_MAP, resolveGcalEventColor } from "@/lib/gcal-event-color";
 import {
   type CalendarOpeningCategory,
@@ -1000,7 +1001,7 @@ export function CalendarClient(props: {
             >
               <svg
                 xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 20 20"
+                viewBox="-1 -1 22 22"
                 fill="currentColor"
                 className="block h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400"
                 aria-hidden
@@ -1028,7 +1029,7 @@ export function CalendarClient(props: {
       </header>
 
       <div className="mt-2 flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,7fr)_minmax(0,3fr)] lg:items-start lg:gap-8">
-        <div className="min-w-0 space-y-4 lg:min-w-0">
+        <div className="order-2 min-w-0 space-y-4 lg:order-1 lg:min-w-0">
           <div className="space-y-1.5">
         <p className="text-[11px] font-medium text-zinc-600 dark:text-zinc-300">表示の絞り込み</p>
         <div
@@ -1136,7 +1137,7 @@ export function CalendarClient(props: {
             />
           )}
         </div>
-        <div className="min-w-0 space-y-4 lg:min-h-0">
+        <div className="order-1 min-w-0 space-y-4 lg:order-2 lg:min-h-0">
           <UpcomingGoogleEvents
             key="upcoming-google-events"
             filter={filterSettings}
@@ -1144,7 +1145,7 @@ export function CalendarClient(props: {
             calendarDisplayLabelById={opening?.calendarDisplayLabelById}
           />
           {props.selectedDateYmd ? (
-            <p className="text-center text-sm text-zinc-600 sm:text-left dark:text-zinc-400">
+            <p className="hidden text-center text-sm text-zinc-600 dark:text-zinc-400 lg:block">
               <Link
                 href={`/entries/${props.selectedDateYmd}`}
                 className="font-medium text-emerald-700 underline decoration-emerald-700/30 underline-offset-2 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300"
@@ -1203,38 +1204,34 @@ export function CalendarClient(props: {
               >
                 表示方式
               </label>
-              <select
+              <FancySelect
                 id="calendar-view-mode-select"
                 disabled={busy}
                 value={calendarView}
-                onChange={(e) => commitCalendarView(e.target.value as CalendarViewMode)}
-                className="mt-1.5 w-full rounded-lg border border-zinc-200 bg-white px-1.5 py-1 text-[13px] font-medium text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
-              >
-                <option value="grid">月グリッド</option>
-                <option value="list">リスト</option>
-              </select>
+                onValueChange={(v) => commitCalendarView(v as CalendarViewMode)}
+                className="mt-1.5"
+                options={[
+                  { value: "grid", label: "月グリッド" },
+                  { value: "list", label: "リスト" },
+                ]}
+              />
             </div>
 
             <div className="rounded-xl border border-zinc-200/90 bg-white p-2.5 shadow-sm dark:border-zinc-700 dark:bg-zinc-950">
               <label className="block text-[13px] font-semibold text-zinc-600 dark:text-zinc-300">週の始まり</label>
-              <select
+              <FancySelect
                 disabled={busy}
-                value={gridDisplay.weekStartsOn}
-                onChange={(e) => {
-                  const v = Number(e.target.value) as CalendarWeekStartDay;
+                value={String(gridDisplay.weekStartsOn)}
+                className="mt-1.5"
+                onValueChange={(raw) => {
+                  const v = Number(raw) as CalendarWeekStartDay;
                   setOpening((prev) => ({
                     ...(prev ?? {}),
                     gridDisplay: { ...normalizeCalendarGridDisplay(prev?.gridDisplay), weekStartsOn: v },
                   }));
                 }}
-                className="mt-1.5 w-full rounded-lg border border-zinc-200 bg-white px-1.5 py-1 text-[13px] font-medium text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
-              >
-                {CALENDAR_WEEK_START_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
+                options={CALENDAR_WEEK_START_OPTIONS.map((o) => ({ value: String(o.value), label: o.label }))}
+              />
             </div>
 
             <div className="rounded-xl border border-zinc-200/90 bg-white p-2.5 shadow-sm dark:border-zinc-700 dark:bg-zinc-950">
@@ -1242,24 +1239,19 @@ export function CalendarClient(props: {
                 1マスに並べる予定（最大）
               </label>
               <p className="mt-0.5 text-[12px] leading-snug text-zinc-400 dark:text-zinc-500">月グリッド表示のとき</p>
-              <select
+              <FancySelect
                 disabled={busy}
-                value={gridDisplay.maxEventsPerCell}
-                onChange={(e) => {
-                  const n = Number(e.target.value);
+                className="mt-1"
+                value={String(gridDisplay.maxEventsPerCell)}
+                onValueChange={(raw) => {
+                  const n = Number(raw);
                   setOpening((prev) => ({
                     ...(prev ?? {}),
                     gridDisplay: { ...normalizeCalendarGridDisplay(prev?.gridDisplay), maxEventsPerCell: n },
                   }));
                 }}
-                className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-1.5 py-1 text-[13px] font-medium text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
-              >
-                {[1, 2, 3, 4, 5].map((n) => (
-                  <option key={n} value={n}>
-                    {n}件
-                  </option>
-                ))}
-              </select>
+                options={[1, 2, 3, 4, 5].map((n) => ({ value: String(n), label: `${n}件` }))}
+              />
             </div>
 
             <div className="flex flex-col justify-center rounded-xl border border-dashed border-zinc-200/90 bg-zinc-50/80 p-2.5 dark:border-zinc-700 dark:bg-zinc-900/40">
@@ -1355,11 +1347,11 @@ export function CalendarClient(props: {
                 ) : null}
                 <label className="mt-2 block text-[13px] font-medium text-zinc-500 dark:text-zinc-400">
                   <span className="sr-only">対象カレンダー</span>
-                  <select
+                  <FancySelect
                     disabled={busy}
                     value={activeCalendarId}
                     onChange={(e) => setActiveCalendarId(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-2 py-1.5 text-[13px] font-medium text-zinc-900 shadow-sm outline-none ring-zinc-400 focus-visible:ring-2 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:focus-visible:ring-zinc-500"
+                    className="mt-1 w-full px-2 py-1.5 text-[13px] font-medium"
                   >
                     {calendarsForUi.map((cal) => {
                       const catId = lookupCalendarCategoryById(opening?.calendarCategoryById, cal.calendarId);
@@ -1377,7 +1369,7 @@ export function CalendarClient(props: {
                         </option>
                       );
                     })}
-                  </select>
+                  </FancySelect>
                 </label>
                 {activeCalendar ? (
                   <div className="mt-3 space-y-3">
@@ -1712,7 +1704,7 @@ export function CalendarClient(props: {
                                         onClick={(e) => e.stopPropagation()}
                                       >
                                         同タイトル一括
-                                        <select
+                                        <FancySelect
                                           key={`bulk-${calId}-${lookupCalendarCategoryById(opening?.calendarCategoryById, calId) ?? "_"}-${g.titleKey}`}
                                           disabled={busy || missingId}
                                           defaultValue={groupSuggested}
@@ -1723,7 +1715,7 @@ export function CalendarClient(props: {
                                             void applyFixedCategoryByExactTitle(calId, g.titleKey, cat);
                                             e.currentTarget.value = "";
                                           }}
-                                          className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-1.5 py-0.5 text-[13px] font-medium text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                                          className="mt-1 w-full px-1.5 py-0.5 text-[13px] font-medium"
                                         >
                                           <option value="">選ぶ…</option>
                                           <option value="__clear__">固定しない（DBの固定を外す）</option>
@@ -1732,7 +1724,7 @@ export function CalendarClient(props: {
                                               {c.label}
                                             </option>
                                           ))}
-                                        </select>
+                                        </FancySelect>
                                       </label>
                                       <span
                                         className="mt-0.5 shrink-0 text-zinc-400 transition-transform group-open:rotate-180 dark:text-zinc-500"
@@ -1770,7 +1762,7 @@ export function CalendarClient(props: {
                                           </p>
                                           <label className="shrink-0 text-[13px] font-medium text-zinc-500 dark:text-zinc-400">
                                             個別
-                                            <select
+                                            <FancySelect
                                               disabled={busy || !eventId}
                                               value={selectValue}
                                               onChange={(e) => {
@@ -1785,7 +1777,7 @@ export function CalendarClient(props: {
                                                   v as CalendarOpeningCategory,
                                                 );
                                               }}
-                                              className="mt-1 w-full min-w-[9.5rem] rounded-lg border border-zinc-200 bg-white px-1.5 py-0.5 text-[13px] font-medium text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                                              className="mt-1 w-full min-w-[9.5rem] px-1.5 py-0.5 text-[13px] font-medium"
                                             >
                                               <option value="__clear__">固定しない（DBの固定を外す）</option>
                                               {catOptions.map((c) => (
@@ -1793,7 +1785,7 @@ export function CalendarClient(props: {
                                                   {c.label}
                                                 </option>
                                               ))}
-                                            </select>
+                                            </FancySelect>
                                           </label>
                                         </li>
                                       );
@@ -2131,13 +2123,12 @@ function CalendarDotColorPicker({
   onSelectHex: (hex: string) => void;
   onClearOverride: () => void;
 }) {
-  const [draftLabel, setDraftLabel] = useState(() => customDisplayLabel ?? "");
-  useEffect(() => {
-    setDraftLabel(customDisplayLabel ?? "");
-  }, [detailTitle, customDisplayLabel]);
+  const [editingLabel, setEditingLabel] = useState(false);
+  const [draftLabel, setDraftLabel] = useState("");
+  const shownLabel = editingLabel ? draftLabel : (customDisplayLabel ?? "");
 
   function flushDisplayLabel() {
-    const normalized = draftLabel.normalize("NFKC").trim().slice(0, 80);
+    const normalized = shownLabel.normalize("NFKC").trim().slice(0, 80);
     const stored = (customDisplayLabel ?? "").trim();
     if (normalized === stored) return;
     if (!normalized && !stored) return;
@@ -2180,9 +2171,19 @@ function CalendarDotColorPicker({
         <input
           type="text"
           disabled={busy}
-          value={draftLabel}
-          onChange={(e) => setDraftLabel(e.target.value)}
-          onBlur={() => flushDisplayLabel()}
+          value={shownLabel}
+          onFocus={() => {
+            setEditingLabel(true);
+            setDraftLabel(customDisplayLabel ?? "");
+          }}
+          onChange={(e) => {
+            setEditingLabel(true);
+            setDraftLabel(e.target.value);
+          }}
+          onBlur={() => {
+            flushDisplayLabel();
+            setEditingLabel(false);
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault();

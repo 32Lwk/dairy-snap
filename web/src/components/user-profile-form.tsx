@@ -16,6 +16,7 @@ import { MBTI_16, MBTI_AXES_JA, MBTI_TEST_URL_JA, mbtiDisplayJa } from "@/lib/mb
 import { PrefecturePickWithChips } from "@/components/prefecture-pick-with-chips";
 import { SchoolSearchFields } from "@/components/school-search-fields";
 import { TimetableEditor } from "@/components/timetable-editor";
+import { FancySelect } from "@/components/fancy-select";
 import { ONBOARDING_GENDER_OPTIONS } from "@/lib/onboarding-chat-messages";
 import {
   CO_INDUSTRY_OPTIONS,
@@ -210,6 +211,9 @@ export function UserProfileForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [studentTimetableSheetOpen, setStudentTimetableSheetOpen] = useState(false);
+  const sheetInnerBlurAtRef = useRef<number | null>(null);
+  const sheetInnerInteractAtRef = useRef<number | null>(null);
+  const sheetBackdropDownRef = useRef(false);
   const [internal, setInternal] = useState<UserProfilePayload>(initial);
   const controlled = value !== undefined && onValuesChange !== undefined;
   const form = controlled ? value : internal;
@@ -553,7 +557,7 @@ export function UserProfileForm({
         </label>
         <label className="block text-xs text-zinc-600 dark:text-zinc-400">
           性別
-          <select
+          <FancySelect
             value={form.gender ?? ""}
             onChange={(e) => set("gender", e.target.value)}
             className={inputCls}
@@ -563,11 +567,11 @@ export function UserProfileForm({
                 {o.label}
               </option>
             ))}
-          </select>
+          </FancySelect>
         </label>
         <label className="block text-xs text-zinc-600 dark:text-zinc-400">
           血液型
-          <select
+          <FancySelect
             value={form.bloodType ?? ""}
             onChange={(e) => set("bloodType", e.target.value)}
             className={inputCls}
@@ -578,11 +582,11 @@ export function UserProfileForm({
             <option value="O">O</option>
             <option value="AB">AB</option>
             <option value="不明">不明</option>
-          </select>
+          </FancySelect>
         </label>
         <label className="block text-xs text-zinc-600 dark:text-zinc-400 sm:col-span-2">
           職業・立場
-          <select
+          <FancySelect
             value={form.occupationRole ?? ""}
             onChange={(e) => setOccupationRole(e.target.value)}
             className={inputCls}
@@ -592,7 +596,7 @@ export function UserProfileForm({
                 {o.label}
               </option>
             ))}
-          </select>
+          </FancySelect>
         </label>
         <div className="rounded-xl border border-zinc-200 p-3 dark:border-zinc-800 sm:col-span-2">
           <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">
@@ -624,7 +628,7 @@ export function UserProfileForm({
               </p>
               <label className="block text-xs text-zinc-600 dark:text-zinc-400">
                 学校の段階に近いものはどれですか？（任意・1つ）
-                <select
+                <FancySelect
                   value={workLife.st_level ?? ""}
                   onChange={(e) => patchOnboardingWorkLife({ st_level: e.target.value })}
                   className={inputCls}
@@ -634,7 +638,7 @@ export function UserProfileForm({
                       {o.label}
                     </option>
                   ))}
-                </select>
+                </FancySelect>
               </label>
               <div className="mt-3">
                 <p className="mb-1 text-xs text-zinc-500 dark:text-zinc-400">学校名を教えてください。（任意）</p>
@@ -666,7 +670,7 @@ export function UserProfileForm({
               </div>
               <label className="mt-3 block text-xs text-zinc-600 dark:text-zinc-400">
                 学年・年次に近いものはどれですか？（大学・大学院生のみ。該当しない場合は選ばない）
-                <select
+                <FancySelect
                   value={workLife.st_univ_year ?? ""}
                   onChange={(e) => patchOnboardingWorkLife({ st_univ_year: e.target.value })}
                   className={inputCls}
@@ -676,11 +680,11 @@ export function UserProfileForm({
                       {o.label}
                     </option>
                   ))}
-                </select>
+                </FancySelect>
               </label>
               <label className="block text-xs text-zinc-600 dark:text-zinc-400">
                 学部・学科・学問領域に近いものはどれですか？（大学・大学院生のみ。該当しない場合は選ばない）
-                <select
+                <FancySelect
                   value={workLife.st_univ_field ?? ""}
                   onChange={(e) => patchOnboardingWorkLife({ st_univ_field: e.target.value })}
                   className={inputCls}
@@ -690,11 +694,11 @@ export function UserProfileForm({
                       {o.label}
                     </option>
                   ))}
-                </select>
+                </FancySelect>
               </label>
               <label className="mt-3 block text-xs text-zinc-600 dark:text-zinc-400">
                 いまの住まいに近いものはどれですか？（任意・1つ）
-                <select
+                <FancySelect
                   value={workLife.st_home_style ?? ""}
                   onChange={(e) => patchOnboardingWorkLife({ st_home_style: e.target.value })}
                   className={inputCls}
@@ -704,7 +708,7 @@ export function UserProfileForm({
                       {o.label}
                     </option>
                   ))}
-                </select>
+                </FancySelect>
               </label>
               <div className="mt-2">
                 <PrefecturePickWithChips
@@ -719,7 +723,7 @@ export function UserProfileForm({
               </div>
               <label className="mt-3 block text-xs text-zinc-600 dark:text-zinc-400">
                 通学の所要時間や移動のイメージに近いものはどれですか？（任意・1つ）
-                <select
+                <FancySelect
                   value={workLife.st_commute ?? ""}
                   onChange={(e) => patchOnboardingWorkLife({ st_commute: e.target.value })}
                   className={inputCls}
@@ -729,7 +733,7 @@ export function UserProfileForm({
                       {o.label}
                     </option>
                   ))}
-                </select>
+                </FancySelect>
               </label>
             </div>
             <div className="sm:col-span-2">
@@ -765,11 +769,31 @@ export function UserProfileForm({
                       aria-modal="true"
                       aria-labelledby="profile-timetable-sheet-title"
                     >
-                      <button
-                        type="button"
+                      <div
                         className="absolute inset-0 bg-black/45 backdrop-blur-[1px]"
                         aria-label="閉じる"
-                        onClick={() => setStudentTimetableSheetOpen(false)}
+                        role="presentation"
+                        onPointerDown={(e) => {
+                          sheetBackdropDownRef.current = e.target === e.currentTarget;
+                        }}
+                        onPointerUp={(e) => {
+                          // Close only when the pointer starts AND ends on the backdrop.
+                          if (!sheetBackdropDownRef.current) return;
+                          sheetBackdropDownRef.current = false;
+                          if (e.target !== e.currentTarget) return;
+
+                          // Mobile keyboards / IME completion may trigger synthetic "outside" pointer events
+                          // around focus changes. Guard against closing right after inner interactions.
+                          const now = Date.now();
+                          const lastBlur = sheetInnerBlurAtRef.current;
+                          const lastInteract = sheetInnerInteractAtRef.current;
+                          const recent =
+                            (lastBlur != null && now - lastBlur < 450) ||
+                            (lastInteract != null && now - lastInteract < 450);
+                          if (recent) return;
+
+                          setStudentTimetableSheetOpen(false);
+                        }}
                       />
                       <div className="relative z-10 w-full min-w-0 max-w-lg px-4">
                         <div className="flex max-h-[90dvh] min-h-0 flex-col overflow-hidden rounded-t-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-700 dark:bg-zinc-950">
@@ -789,12 +813,27 @@ export function UserProfileForm({
                             </button>
                           </div>
                           <div className="min-h-0 flex-1 overflow-auto overscroll-contain px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2">
-                            <TimetableEditor
-                              compact
-                              value={studentTimetableEditorValue}
-                              onChange={(v) => patchOnboardingWorkLife({ st_timetable_note: v })}
-                              stLevel={workLife.st_level ?? ""}
-                            />
+                            <div
+                              onBlurCapture={() => {
+                                sheetInnerBlurAtRef.current = Date.now();
+                              }}
+                              onFocusCapture={() => {
+                                sheetInnerInteractAtRef.current = Date.now();
+                              }}
+                              onKeyDownCapture={() => {
+                                sheetInnerInteractAtRef.current = Date.now();
+                              }}
+                              onPointerDownCapture={() => {
+                                sheetInnerInteractAtRef.current = Date.now();
+                              }}
+                            >
+                              <TimetableEditor
+                                compact
+                                value={studentTimetableEditorValue}
+                                onChange={(v) => patchOnboardingWorkLife({ st_timetable_note: v })}
+                                stLevel={workLife.st_level ?? ""}
+                              />
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -809,7 +848,7 @@ export function UserProfileForm({
               </p>
               <label className="block text-xs text-zinc-600 dark:text-zinc-400">
                 育ちや出身に近い地域はどれですか？（任意・1つ）
-                <select
+                <FancySelect
                   value={workLife.hi_origin ?? ""}
                   onChange={(e) => patchHiOrigin(e.target.value)}
                   className={inputCls}
@@ -819,7 +858,7 @@ export function UserProfileForm({
                       {o.label}
                     </option>
                   ))}
-                </select>
+                </FancySelect>
               </label>
               <div className="mt-2">
                 <PrefecturePickWithChips
@@ -834,7 +873,7 @@ export function UserProfileForm({
               </div>
               <label className="mt-3 block text-xs text-zinc-600 dark:text-zinc-400">
                 アルバイトやパートの経験に近いものはどれですか？（任意）
-                <select
+                <FancySelect
                   value={workLife.hi_part ?? ""}
                   onChange={(e) => patchOnboardingWorkLife({ hi_part: e.target.value })}
                   className={inputCls}
@@ -844,7 +883,7 @@ export function UserProfileForm({
                       {o.label}
                     </option>
                   ))}
-                </select>
+                </FancySelect>
               </label>
               <div className="mt-3">
                 <p className="mb-1 text-xs text-zinc-600 dark:text-zinc-400">
@@ -869,7 +908,7 @@ export function UserProfileForm({
               </p>
               <label className="block text-xs text-zinc-600 dark:text-zinc-400">
                 お仕事の業種に近いものはどれですか？（任意・1つ）
-                <select
+                <FancySelect
                   value={workLife.co_industry ?? ""}
                   onChange={(e) => patchOnboardingWorkLife({ co_industry: e.target.value })}
                   className={inputCls}
@@ -879,11 +918,11 @@ export function UserProfileForm({
                       {o.label}
                     </option>
                   ))}
-                </select>
+                </FancySelect>
               </label>
               <label className="mt-3 block text-xs text-zinc-600 dark:text-zinc-400">
                 働き方に近いものはどれですか？（任意・1つ）
-                <select
+                <FancySelect
                   value={workLife.co_style ?? ""}
                   onChange={(e) => patchOnboardingWorkLife({ co_style: e.target.value })}
                   className={inputCls}
@@ -893,11 +932,11 @@ export function UserProfileForm({
                       {o.label}
                     </option>
                   ))}
-                </select>
+                </FancySelect>
               </label>
               <label className="mt-3 block text-xs text-zinc-600 dark:text-zinc-400">
                 通勤に近いイメージはどれですか？（任意・1つ）
-                <select
+                <FancySelect
                   value={workLife.co_commute ?? ""}
                   onChange={(e) => patchOnboardingWorkLife({ co_commute: e.target.value })}
                   className={inputCls}
@@ -907,7 +946,7 @@ export function UserProfileForm({
                       {o.label}
                     </option>
                   ))}
-                </select>
+                </FancySelect>
               </label>
               {homePrefBlock}
             </div>
@@ -922,7 +961,7 @@ export function UserProfileForm({
               </p>
               <label className="block text-xs text-zinc-600 dark:text-zinc-400">
                 分野に近いものはどれですか？（任意・1つ）
-                <select
+                <FancySelect
                   value={workLife.ps_field ?? ""}
                   onChange={(e) => patchOnboardingWorkLife({ ps_field: e.target.value })}
                   className={inputCls}
@@ -932,11 +971,11 @@ export function UserProfileForm({
                       {o.label}
                     </option>
                   ))}
-                </select>
+                </FancySelect>
               </label>
               <label className="mt-3 block text-xs text-zinc-600 dark:text-zinc-400">
                 通勤に近いイメージはどれですか？（任意・1つ）
-                <select
+                <FancySelect
                   value={workLife.ps_commute ?? ""}
                   onChange={(e) => patchOnboardingWorkLife({ ps_commute: e.target.value })}
                   className={inputCls}
@@ -946,7 +985,7 @@ export function UserProfileForm({
                       {o.label}
                     </option>
                   ))}
-                </select>
+                </FancySelect>
               </label>
               {homePrefBlock}
             </div>
@@ -961,7 +1000,7 @@ export function UserProfileForm({
               </p>
               <label className="block text-xs text-zinc-600 dark:text-zinc-400">
                 活動の形に近いものはどれですか？（任意・1つ）
-                <select
+                <FancySelect
                   value={workLife.se_style ?? ""}
                   onChange={(e) => patchOnboardingWorkLife({ se_style: e.target.value })}
                   className={inputCls}
@@ -971,11 +1010,11 @@ export function UserProfileForm({
                       {o.label}
                     </option>
                   ))}
-                </select>
+                </FancySelect>
               </label>
               <label className="mt-3 block text-xs text-zinc-600 dark:text-zinc-400">
                 移動や通勤のイメージに近いものはどれですか？（任意・1つ）
-                <select
+                <FancySelect
                   value={workLife.se_commute ?? ""}
                   onChange={(e) => patchOnboardingWorkLife({ se_commute: e.target.value })}
                   className={inputCls}
@@ -985,7 +1024,7 @@ export function UserProfileForm({
                       {o.label}
                     </option>
                   ))}
-                </select>
+                </FancySelect>
               </label>
               {homePrefBlock}
             </div>
@@ -1000,7 +1039,7 @@ export function UserProfileForm({
               </p>
               <label className="block text-xs text-zinc-600 dark:text-zinc-400">
                 いま中心になっていることに近いものはどれですか？（任意・1つ）
-                <select
+                <FancySelect
                   value={workLife.hm_focus ?? ""}
                   onChange={(e) => patchOnboardingWorkLife({ hm_focus: e.target.value })}
                   className={inputCls}
@@ -1010,7 +1049,7 @@ export function UserProfileForm({
                       {o.label}
                     </option>
                   ))}
-                </select>
+                </FancySelect>
               </label>
               {homePrefBlock}
             </div>
@@ -1025,7 +1064,7 @@ export function UserProfileForm({
               </p>
               <label className="block text-xs text-zinc-600 dark:text-zinc-400">
                 いまの状況に近いものはどれですか？（任意・1つ）
-                <select
+                <FancySelect
                   value={workLife.js_situation ?? ""}
                   onChange={(e) => patchOnboardingWorkLife({ js_situation: e.target.value })}
                   className={inputCls}
@@ -1035,7 +1074,7 @@ export function UserProfileForm({
                       {o.label}
                     </option>
                   ))}
-                </select>
+                </FancySelect>
               </label>
               {homePrefBlock}
             </div>
@@ -1052,7 +1091,7 @@ export function UserProfileForm({
               </p>
               <label className="block text-xs text-zinc-600 dark:text-zinc-400">
                 育ちや出身に近い地域はどれですか？（任意・1つ）
-                <select
+                <FancySelect
                   value={workLife.hi_origin ?? ""}
                   onChange={(e) => patchHiOrigin(e.target.value)}
                   className={inputCls}
@@ -1062,7 +1101,7 @@ export function UserProfileForm({
                       {o.label}
                     </option>
                   ))}
-                </select>
+                </FancySelect>
               </label>
               <div className="mt-2">
                 <PrefecturePickWithChips
@@ -1078,7 +1117,7 @@ export function UserProfileForm({
               {hiHomePrefInHistoryBlock ? homePrefBlock : null}
               <label className="mt-3 block text-xs text-zinc-600 dark:text-zinc-400">
                 いちばん近い学歴はどれですか？（任意・1つ）
-                <select
+                <FancySelect
                   value={workLife.hi_edu ?? ""}
                   onChange={(e) => patchOnboardingWorkLife({ hi_edu: e.target.value })}
                   className={inputCls}
@@ -1088,13 +1127,13 @@ export function UserProfileForm({
                       {o.label}
                     </option>
                   ))}
-                </select>
+                </FancySelect>
               </label>
               {asksParttimeHist ? (
                 <>
                   <label className="mt-3 block text-xs text-zinc-600 dark:text-zinc-400">
                     アルバイトやパートの経験に近いものはどれですか？（任意）
-                    <select
+                    <FancySelect
                       value={workLife.hi_part ?? ""}
                       onChange={(e) => patchOnboardingWorkLife({ hi_part: e.target.value })}
                       className={inputCls}
@@ -1104,7 +1143,7 @@ export function UserProfileForm({
                           {o.label}
                         </option>
                       ))}
-                    </select>
+                    </FancySelect>
                   </label>
                   <div className="mt-3">
                     <p className="mb-1 text-xs text-zinc-600 dark:text-zinc-400">
@@ -1125,7 +1164,7 @@ export function UserProfileForm({
 
         <label className="block text-xs text-zinc-600 dark:text-zinc-400 sm:col-span-2">
           MBTI
-          <select
+        <FancySelect
             value={form.mbti ?? ""}
             onChange={(e) => set("mbti", e.target.value)}
             className={inputCls}
@@ -1136,7 +1175,7 @@ export function UserProfileForm({
                 {mbtiDisplayJa(m)}
               </option>
             ))}
-          </select>
+        </FancySelect>
           <details className="mt-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
             <summary className="cursor-pointer select-none text-zinc-600 dark:text-zinc-300">
               4つの指標
@@ -1161,7 +1200,7 @@ export function UserProfileForm({
       <div className="space-y-1">
         <label className="block text-xs text-zinc-600 dark:text-zinc-400">
           恋愛MBTI（恋愛キャラ16タイプ）
-          <select
+          <FancySelect
             value={form.loveMbti ?? ""}
             onChange={(e) => set("loveMbti", e.target.value)}
             className={inputCls}
@@ -1172,7 +1211,7 @@ export function UserProfileForm({
                 {loveMbtiDisplayJa(code)}
               </option>
             ))}
-          </select>
+          </FancySelect>
         </label>
         <details className="text-[11px] text-zinc-500 dark:text-zinc-400">
           <summary className="cursor-pointer select-none text-zinc-600 dark:text-zinc-300">

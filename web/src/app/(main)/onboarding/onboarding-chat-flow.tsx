@@ -12,6 +12,7 @@ import { InterestPicksControl } from "@/components/interest-picks-control";
 import { PrefecturePickWithChips } from "@/components/prefecture-pick-with-chips";
 import { prefetchSchoolSearchCandidates, SchoolSearchFields } from "@/components/school-search-fields";
 import { TimetableEditor } from "@/components/timetable-editor";
+import { FancySelect } from "@/components/fancy-select";
 import { ageYearsFromYmd } from "@/lib/age-from-ymd";
 import { LOVE_MBTI_16, LOVE_MBTI_TEST_URL_JA, isLoveMbtiType, loveMbtiDisplayJa } from "@/lib/love-mbti";
 import {
@@ -108,7 +109,8 @@ function BubbleRow({
 const BLOOD = ["", "A", "B", "O", "AB", "不明"] as const;
 
 function digitsOnly(s: string, maxLen: number) {
-  return s.replace(/\D/g, "").slice(0, maxLen);
+  // Normalize full-width digits (e.g. ２０２６) to ASCII before stripping.
+  return s.normalize("NFKC").replace(/\D/g, "").slice(0, maxLen);
 }
 
 function ymdFromParts(yStr: string, mStr: string, dStr: string): string {
@@ -276,6 +278,9 @@ export function OnboardingChatFlow({
   const [timetablePick, setTimetablePick] = useState("");
   /** 時間割はボトムシートで入力し、チャット欄の高さを確保する */
   const [timetableSheetOpen, setTimetableSheetOpen] = useState(false);
+  const timetableSheetInnerBlurAtRef = useRef<number | null>(null);
+  const timetableSheetInnerInteractAtRef = useRef<number | null>(null);
+  const timetableSheetBackdropDownRef = useRef(false);
   const workLifeSyncKey = useRef("");
   /** ステップ8: AgentPersonaOnboardingWizard の画面位置（親と進捗バーで共有） */
   const [personaWizardIdx, setPersonaWizardIdx] = useState(0);
@@ -854,17 +859,17 @@ export function OnboardingChatFlow({
 
         {step === 2 && (
           <div className="min-w-0 space-y-2">
-            <select
+            <FancySelect
               value={draft.gender ?? ""}
               onChange={(e) => onDraftChange({ gender: e.target.value })}
-              className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+              className="w-full px-3 py-2 text-sm"
             >
               {ONBOARDING_GENDER_OPTIONS.map((o) => (
                 <option key={o.value || "empty"} value={o.value}>
                   {o.label}
                 </option>
               ))}
-            </select>
+            </FancySelect>
             <button type="button" onClick={() => nextFromGender()} className={primaryBtnCls}>
               次へ
             </button>
@@ -873,17 +878,17 @@ export function OnboardingChatFlow({
 
         {step === 3 && (
           <div className="min-w-0 space-y-2">
-            <select
+            <FancySelect
               value={draft.bloodType ?? ""}
               onChange={(e) => onDraftChange({ bloodType: e.target.value })}
-              className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+              className="w-full px-3 py-2 text-sm"
             >
               {BLOOD.map((b) => (
                 <option key={b || "empty"} value={b}>
                   {b || "選ばない"}
                 </option>
               ))}
-            </select>
+            </FancySelect>
             <button type="button" onClick={() => nextFromBloodAfterGender()} className={primaryBtnCls}>
               次へ
             </button>
@@ -892,17 +897,17 @@ export function OnboardingChatFlow({
 
         {step === 4 && workPhase === "role" && (
           <div className="min-w-0 space-y-2">
-            <select
+            <FancySelect
               value={draft.occupationRole ?? ""}
               onChange={(e) => onDraftChange({ occupationRole: e.target.value })}
-              className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+              className="w-full px-3 py-2 text-sm"
             >
               {OCCUPATION_ROLE_OPTIONS.map((o) => (
                 <option key={o.value || "empty"} value={o.value}>
                   {o.label}
                 </option>
               ))}
-            </select>
+            </FancySelect>
             <button type="button" onClick={() => nextFromWorkRole()} className={primaryBtnCls}>
               次へ
             </button>
@@ -962,11 +967,28 @@ export function OnboardingChatFlow({
                         aria-modal="true"
                         aria-labelledby="onboarding-timetable-sheet-title"
                       >
-                        <button
-                          type="button"
+                        <div
                           className="absolute inset-0 bg-black/45 backdrop-blur-[1px]"
                           aria-label="閉じる"
-                          onClick={() => setTimetableSheetOpen(false)}
+                          role="presentation"
+                          onPointerDown={(e) => {
+                            timetableSheetBackdropDownRef.current = e.target === e.currentTarget;
+                          }}
+                          onPointerUp={(e) => {
+                            if (!timetableSheetBackdropDownRef.current) return;
+                            timetableSheetBackdropDownRef.current = false;
+                            if (e.target !== e.currentTarget) return;
+
+                            const now = Date.now();
+                            const lastBlur = timetableSheetInnerBlurAtRef.current;
+                            const lastInteract = timetableSheetInnerInteractAtRef.current;
+                            const recent =
+                              (lastBlur != null && now - lastBlur < 450) ||
+                              (lastInteract != null && now - lastInteract < 450);
+                            if (recent) return;
+
+                            setTimetableSheetOpen(false);
+                          }}
                         />
                         <div className="relative z-10 w-full min-w-0 max-w-lg px-4">
                           <div className="flex max-h-[90dvh] min-h-0 flex-col overflow-hidden rounded-t-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-700 dark:bg-zinc-950">
@@ -986,13 +1008,28 @@ export function OnboardingChatFlow({
                               </button>
                             </div>
                             <div className="min-h-0 flex-1 overflow-auto overscroll-contain px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2">
-                              <TimetableEditor
-                                key={workDetailIdx}
-                                compact
-                                value={timetablePick}
-                                onChange={setTimetablePick}
-                                stLevel={workAnswers.st_level ?? ""}
-                              />
+                              <div
+                                onBlurCapture={() => {
+                                  timetableSheetInnerBlurAtRef.current = Date.now();
+                                }}
+                                onFocusCapture={() => {
+                                  timetableSheetInnerInteractAtRef.current = Date.now();
+                                }}
+                                onKeyDownCapture={() => {
+                                  timetableSheetInnerInteractAtRef.current = Date.now();
+                                }}
+                                onPointerDownCapture={() => {
+                                  timetableSheetInnerInteractAtRef.current = Date.now();
+                                }}
+                              >
+                                <TimetableEditor
+                                  key={workDetailIdx}
+                                  compact
+                                  value={timetablePick}
+                                  onChange={setTimetablePick}
+                                  stLevel={workAnswers.st_level ?? ""}
+                                />
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -1122,17 +1159,17 @@ export function OnboardingChatFlow({
                     inputCls="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
                   />
                 ) : (
-                  <select
+                  <FancySelect
                     value={workDetailPick}
                     onChange={(e) => setWorkDetailPick(e.target.value)}
-                    className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                    className="w-full px-3 py-2 text-sm"
                   >
                     {workQ.options.map((o: WorkLifeOption) => (
                       <option key={o.value || "empty"} value={o.value}>
                         {o.label}
                       </option>
                     ))}
-                  </select>
+                  </FancySelect>
                 )}
               </div>
             )}
@@ -1163,10 +1200,10 @@ export function OnboardingChatFlow({
               </a>
               {ONBOARDING_UI.mbtiHintAfterLink}
             </p>
-            <select
+            <FancySelect
               value={draft.mbti ?? ""}
               onChange={(e) => onDraftChange({ mbti: e.target.value })}
-              className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+              className="w-full px-3 py-2 text-sm"
             >
               <option value="">選ばない</option>
               {MBTI_16.map((m) => (
@@ -1174,7 +1211,7 @@ export function OnboardingChatFlow({
                   {mbtiDisplayJa(m)}
                 </option>
               ))}
-            </select>
+            </FancySelect>
             <button type="button" onClick={() => nextFromMbti()} className={primaryBtnCls}>
               次へ
             </button>
@@ -1195,10 +1232,10 @@ export function OnboardingChatFlow({
               </a>
               {ONBOARDING_UI.mbtiHintAfterLink}
             </p>
-            <select
+            <FancySelect
               value={draft.loveMbti ?? ""}
               onChange={(e) => onDraftChange({ loveMbti: e.target.value })}
-              className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+              className="w-full px-3 py-2 text-sm"
             >
               <option value="">選ばない</option>
               {LOVE_MBTI_16.map((code) => (
@@ -1206,7 +1243,7 @@ export function OnboardingChatFlow({
                   {loveMbtiDisplayJa(code)}
                 </option>
               ))}
-            </select>
+            </FancySelect>
             <button type="button" onClick={() => nextFromLoveMbti()} className={primaryBtnCls}>
               次へ
             </button>

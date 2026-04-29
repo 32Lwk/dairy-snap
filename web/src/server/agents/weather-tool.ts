@@ -2,12 +2,15 @@ import { prisma } from "@/server/db";
 import { fetchOpenMeteoCurrent, fetchOpenMeteoDayAmPm } from "@/server/weather";
 import { resolveWeatherCoordinates } from "@/server/weather-resolve";
 import { weatherLabelForCode } from "@/server/weather";
-import {
-  diffCalendarDaysTokyo,
-  formatOrchestratorWallClockDaylightBlock,
-} from "@/lib/time/entry-temporal-context";
+import { formatOrchestratorWallClockDaylightBlock } from "@/lib/time/entry-temporal-context";
 import { getLocalSolarPhaseForEntryDay, type LocalSolarPhase } from "@/lib/time/local-solar-phase";
-import { formatYmdTokyo } from "@/lib/time/tokyo";
+import {
+  diffCalendarDaysInZone,
+  getEffectiveTodayYmd,
+  resolveDayBoundaryEndTime,
+  resolveUserTimeZone,
+} from "@/lib/time/user-day-boundary";
+import { parseUserSettings } from "@/lib/user-settings";
 import type { WeatherContext, WeatherToolRequest } from "./types";
 
 type AmPmEntry = {
@@ -141,10 +144,18 @@ type WeatherLayerBase = Omit<
   "narrativeHint" | "wallClockDaylightBlockEn" | "entryTodaySolarPhase"
 >;
 
-function attachPromptLayers(base: WeatherLayerBase, req: WeatherToolRequest, lat: number, lon: number): WeatherContext {
+function attachPromptLayers(
+  base: WeatherLayerBase,
+  req: WeatherToolRequest,
+  lat: number,
+  lon: number,
+  userTz: string,
+  dayBoundaryRaw: string | null | undefined,
+): WeatherContext {
   const now = req.now ?? new Date();
-  const todayYmd = formatYmdTokyo(now);
-  const daysDiff = diffCalendarDaysTokyo(req.entryDateYmd, todayYmd);
+  const boundary = resolveDayBoundaryEndTime(dayBoundaryRaw ?? null);
+  const effectiveToday = getEffectiveTodayYmd(now, userTz, boundary);
+  const daysDiff = diffCalendarDaysInZone(req.entryDateYmd, effectiveToday, userTz);
   const solar = daysDiff === 0 ? getLocalSolarPhaseForEntryDay(req.entryDateYmd, now, lat, lon) : null;
   const solarPhase = solar?.phase ?? "unknown";
 
@@ -157,15 +168,27 @@ function attachPromptLayers(base: WeatherLayerBase, req: WeatherToolRequest, lat
       now,
       lat,
       lon,
+      timeZone: userTz,
+      dayBoundaryEndTime: dayBoundaryRaw,
     }),
   };
 }
 
 export async function getWeatherContext(req: WeatherToolRequest): Promise<WeatherContext> {
-  const entry = await prisma.dailyEntry.findUnique({
-    where: { id: req.entryId },
-    select: { weatherJson: true, latitude: true, longitude: true, userId: true },
-  });
+  const [entry, userRow] = await Promise.all([
+    prisma.dailyEntry.findUnique({
+      where: { id: req.entryId },
+      select: { weatherJson: true, latitude: true, longitude: true, userId: true },
+    }),
+    prisma.user.findUnique({
+      where: { id: req.userId },
+      select: { settings: true, timeZone: true },
+    }),
+  ]);
+
+  const s = parseUserSettings(userRow?.settings ?? {});
+  const userTz = resolveUserTimeZone(s.profile?.timeZone, userRow?.timeZone);
+  const dayBoundaryRaw = s.dayBoundaryEndTime ?? null;
 
   const resolved = await resolveWeatherCoordinates(req.userId, {
     latitude: entry?.latitude ?? null,
@@ -183,7 +206,7 @@ export async function getWeatherContext(req: WeatherToolRequest): Promise<Weathe
         pmTempC: wj.pm.temperatureC ?? null,
         source: "db_cached",
       };
-      return attachPromptLayers(base, req, resolved.lat, resolved.lon);
+      return attachPromptLayers(base, req, resolved.lat, resolved.lon, userTz, dayBoundaryRaw);
     }
   }
 
@@ -213,7 +236,7 @@ export async function getWeatherContext(req: WeatherToolRequest): Promise<Weathe
           }
         : undefined,
     };
-    return attachPromptLayers(base, req, resolved.lat, resolved.lon);
+    return attachPromptLayers(base, req, resolved.lat, resolved.lon, userTz, dayBoundaryRaw);
   } catch {
     const now = req.now ?? new Date();
     const base: WeatherLayerBase = {
@@ -227,7 +250,11 @@ export async function getWeatherContext(req: WeatherToolRequest): Promise<Weathe
     return {
       ...base,
       narrativeHint: buildWeatherNarrativeHintJa(base, {
-        daysDiff: diffCalendarDaysTokyo(req.entryDateYmd, formatYmdTokyo(now)),
+        daysDiff: diffCalendarDaysInZone(
+          req.entryDateYmd,
+          getEffectiveTodayYmd(now, userTz, resolveDayBoundaryEndTime(dayBoundaryRaw ?? null)),
+          userTz,
+        ),
         solarPhase: "unknown",
       }),
       wallClockDaylightBlockEn: formatOrchestratorWallClockDaylightBlock({
@@ -235,6 +262,8 @@ export async function getWeatherContext(req: WeatherToolRequest): Promise<Weathe
         now,
         lat: resolved.lat,
         lon: resolved.lon,
+        timeZone: userTz,
+        dayBoundaryEndTime: dayBoundaryRaw,
       }),
     };
   }

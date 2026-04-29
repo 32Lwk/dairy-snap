@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { type CSSProperties, startTransition, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { ResponsiveDialog } from "@/components/responsive-dialog";
+import { emitLocalSettingsSavedFromJson } from "@/lib/settings-sync-client";
 import { isOpeningPendingModel } from "@/lib/opening-pending";
 import { stripAssistantMetaEchoPrefix } from "@/lib/chat-assistant-sanitize";
 import { JournalDraftPanel } from "./journal-draft-panel";
@@ -38,7 +39,42 @@ function useVisualViewportKeyboardMaxHeight(): CSSProperties | undefined {
   return style;
 }
 
-type Msg = { id: string; role: string; content: string; model?: string | null };
+type SettingsChangeTip = {
+  previous: { dayBoundaryEndTime: string | null; timeZone: string | null };
+  next: { dayBoundaryEndTime: string | null; timeZone: string | null };
+};
+
+type Msg = {
+  id: string;
+  role: string;
+  content: string;
+  model?: string | null;
+  /** このアシスタント発話直後にチャットから設定が適用されたとき（セッション中のみ） */
+  settingsChangeTip?: SettingsChangeTip;
+};
+
+function formatBoundaryLabel(v: string | null | undefined): string {
+  if (v == null || v === "") return "既定(00:00)";
+  return v;
+}
+
+function formatTzLabel(v: string | null | undefined): string {
+  if (v == null || v === "") return "既定";
+  return v;
+}
+
+function settingsChangeSummaryLine(tip: SettingsChangeTip): string {
+  const parts: string[] = [];
+  if (String(tip.previous.dayBoundaryEndTime ?? "") !== String(tip.next.dayBoundaryEndTime ?? "")) {
+    parts.push(
+      `区切り ${formatBoundaryLabel(tip.previous.dayBoundaryEndTime)} → ${formatBoundaryLabel(tip.next.dayBoundaryEndTime)}`,
+    );
+  }
+  if (String(tip.previous.timeZone ?? "") !== String(tip.next.timeZone ?? "")) {
+    parts.push(`TZ ${formatTzLabel(tip.previous.timeZone)} → ${formatTzLabel(tip.next.timeZone)}`);
+  }
+  return parts.length > 0 ? parts.join(" ／ ") : "設定を更新しました";
+}
 
 /** デフォルト高さ（`layoutHeight="fill"` のモバイル時のみ max-md: で利用） */
 const DEFAULT_CHAT_PANEL_MOBILE_HEIGHT =
@@ -230,7 +266,21 @@ function UserMessageBubble({
   );
 }
 
-function AssistantBubble({ content, streaming }: { content: string; streaming?: boolean }) {
+function AssistantBubble({
+  content,
+  streaming,
+  settingsChangeTip,
+  onUndoSettings,
+  undoBusy,
+  onDismissSettingsTip,
+}: {
+  content: string;
+  streaming?: boolean;
+  settingsChangeTip?: SettingsChangeTip;
+  onUndoSettings?: () => void;
+  undoBusy?: boolean;
+  onDismissSettingsTip?: () => void;
+}) {
   const shown = stripLightMarkdownForChatDisplay(stripAssistantMetaEchoPrefix(content));
   return (
     <div className="flex flex-col items-start gap-1">
@@ -239,6 +289,32 @@ function AssistantBubble({ content, streaming }: { content: string; streaming?: 
         <p className="whitespace-pre-wrap">{shown}</p>
         {streaming && <span className="ml-0.5 inline-block h-3 w-0.5 animate-pulse bg-emerald-500 align-middle" />}
       </div>
+      {!streaming && settingsChangeTip ? (
+        <div className="max-w-[min(100%,28rem)] rounded-xl border border-emerald-200/90 bg-emerald-50/95 px-3 py-2 text-[11px] leading-snug text-emerald-950 dark:border-emerald-900/50 dark:bg-emerald-950/45 dark:text-emerald-100">
+          <p>
+            <span className="font-semibold">設定を更新: </span>
+            {settingsChangeSummaryLine(settingsChangeTip)}
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={undoBusy}
+              onClick={() => onUndoSettings?.()}
+              className="rounded-lg bg-emerald-700 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-emerald-800 disabled:opacity-50 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+            >
+              {undoBusy ? "戻しています…" : "元に戻す"}
+            </button>
+            <button
+              type="button"
+              disabled={undoBusy}
+              onClick={() => onDismissSettingsTip?.()}
+              className="rounded-lg border border-emerald-300/80 px-2.5 py-1 text-[11px] font-medium text-emerald-900 hover:bg-emerald-100/80 dark:border-emerald-800 dark:text-emerald-100 dark:hover:bg-emerald-900/50"
+            >
+              閉じる
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -284,6 +360,7 @@ export function EntryChat({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [securityBannerDismissed, setSecurityBannerDismissed] = useState(false);
+  const [settingsUndoBusy, setSettingsUndoBusy] = useState(false);
   const [journalDraftAutoKey, setJournalDraftAutoKey] = useState(0);
   const [journalDraftPanelRefreshKey, setJournalDraftPanelRefreshKey] = useState(0);
   const [conversationOpen, setConversationOpen] = useState(!conversationAccordion);
@@ -341,7 +418,16 @@ export function EntryChat({
     const hasRealExchange = initialMessages.some(
       (m) => m.role === "user" || (m.role === "assistant" && m.content.trim().length > 0),
     );
-    if (hasRealExchange || serverHasOpeningPending || entryOpeningInFlight.has(entryId)) return;
+    /** サーバーが既にアシスタント行だけある（開口保留・model 未伝播のプレースホルダ等）とき、開口を重ねない */
+    const hasAssistantRow = initialMessages.some((m) => m.role === "assistant");
+    if (
+      hasRealExchange ||
+      serverHasOpeningPending ||
+      hasAssistantRow ||
+      entryOpeningInFlight.has(entryId)
+    ) {
+      return;
+    }
     entryOpeningInFlight.add(entryId);
 
     void (async () => {
@@ -439,6 +525,43 @@ export function EntryChat({
 
   const panelShellStyle: CSSProperties | undefined = vvShellStyle ? { ...vvShellStyle, minHeight: 0 } : undefined;
 
+  function dismissSettingsTip(messageId: string) {
+    setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, settingsChangeTip: undefined } : m)));
+  }
+
+  async function revertSettingsTip(tip: SettingsChangeTip, messageId: string) {
+    setSettingsUndoBusy(true);
+    setError(null);
+    try {
+      const prev = tip.previous;
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          dayBoundaryEndTime: prev.dayBoundaryEndTime,
+          profile: {
+            timeZone: prev.timeZone === null || prev.timeZone === undefined ? "" : prev.timeZone,
+          },
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(typeof (json as { error?: string }).error === "string" ? (json as { error: string }).error : "設定の取り消しに失敗しました");
+        return;
+      }
+      emitLocalSettingsSavedFromJson(json);
+      dismissSettingsTip(messageId);
+      startTransition(() => {
+        router.refresh();
+      });
+    } catch {
+      setError("通信に失敗しました。接続やログイン状態を確認してください。");
+    } finally {
+      setSettingsUndoBusy(false);
+    }
+  }
+
   async function deleteThread() {
     const id = tid ?? initialThreadId;
     if (!id) return;
@@ -502,6 +625,7 @@ export function EntryChat({
       let doneAssistantMessageId: string | undefined;
       let doneAssistantModel: string | null | undefined;
       let triggerJournalDraft = false;
+      let streamingSettingsUndo: SettingsChangeTip | undefined;
 
       while (true) {
         const { value, done } = await reader.read();
@@ -521,6 +645,8 @@ export function EntryChat({
               assistantMessageId?: string;
               assistantModel?: string | null;
               triggerJournalDraft?: boolean;
+              settingsUndo?: SettingsChangeTip;
+              navigateToEntryYmd?: string;
             };
             if (json.delta) {
               assistant += json.delta;
@@ -534,6 +660,15 @@ export function EntryChat({
               if (typeof json.assistantMessageId === "string") doneAssistantMessageId = json.assistantMessageId;
               if (json.assistantModel !== undefined) doneAssistantModel = json.assistantModel ?? null;
               if (json.triggerJournalDraft === true) triggerJournalDraft = true;
+              if (json.settingsUndo?.previous && json.settingsUndo?.next) {
+                streamingSettingsUndo = json.settingsUndo as SettingsChangeTip;
+              }
+              if (typeof json.navigateToEntryYmd === "string" && /^\d{4}-\d{2}-\d{2}$/.test(json.navigateToEntryYmd)) {
+                // settings apply may shift effective day; navigate after we append assistant
+                window.setTimeout(() => {
+                  router.push(`/entries/${json.navigateToEntryYmd}`);
+                }, 350);
+              }
             }
           } catch {
             /* ignore */
@@ -547,13 +682,15 @@ export function EntryChat({
             ? { ...row, id: doneUserMessageId }
             : row,
         );
+        const aid = doneAssistantMessageId ?? crypto.randomUUID();
         return [
           ...withRealUser,
           {
-            id: doneAssistantMessageId ?? crypto.randomUUID(),
+            id: aid,
             role: "assistant",
             content: assistant,
             model: doneAssistantModel ?? null,
+            ...(streamingSettingsUndo ? { settingsChangeTip: streamingSettingsUndo } : {}),
           },
         ];
       });
@@ -650,6 +787,16 @@ export function EntryChat({
                     : m.content
                 }
                 streaming={isOpeningPendingModel(m.model) && !m.content.trim()}
+                settingsChangeTip={m.settingsChangeTip}
+                undoBusy={settingsUndoBusy}
+                onUndoSettings={
+                  m.settingsChangeTip
+                    ? () => void revertSettingsTip(m.settingsChangeTip!, m.id)
+                    : undefined
+                }
+                onDismissSettingsTip={
+                  m.settingsChangeTip ? () => dismissSettingsTip(m.id) : undefined
+                }
               />
             ),
           )}
@@ -705,7 +852,7 @@ export function EntryChat({
             <div className="min-w-0">
               <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">振り返りチャット</h2>
               <p className="mt-0.5 text-xs text-zinc-500">
-                AI が先に声をかけます。プロフィール・カレンダー（連携時）の文脈を踏まえて深掘りします（ストリーミング / 1日50通まで）
+                プロフィール・カレンダーの文脈を踏まえて深掘りします。
               </p>
             </div>
             <div className="flex flex-wrap items-stretch justify-between gap-3 border-t border-zinc-200/70 pt-3 dark:border-zinc-700/80">
@@ -737,7 +884,7 @@ export function EntryChat({
             <div className="min-w-0 flex-1">
               <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">振り返りチャット</h2>
               <p className="mt-0.5 text-xs text-zinc-500">
-                AI が先に声をかけます。プロフィール・カレンダー（連携時）の文脈を踏まえて深掘りします（ストリーミング / 1日50通まで）
+                プロフィール・カレンダーの文脈を踏まえて深掘りします。
               </p>
             </div>
             {(tid ?? initialThreadId) ? (

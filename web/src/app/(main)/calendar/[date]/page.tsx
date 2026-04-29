@@ -5,7 +5,7 @@ import { getResolvedAuthUser } from "@/lib/server/resolved-auth-user";
 import { fetchAppLocalEventsAsBriefs } from "@/server/app-local-calendar";
 import { prisma } from "@/server/db";
 import { notFound, redirect } from "next/navigation";
-import { formatYmdTokyo } from "@/lib/time/tokyo";
+import { getUserEffectiveDayContext } from "@/lib/server/user-effective-day";
 import { CalendarClient } from "../calendar-client";
 
 function monthRange(ym: string): { from: string; to: string } {
@@ -38,7 +38,8 @@ export default async function CalendarByDatePage({
   }
 
   const ym = date.slice(0, 7);
-  const todayYmd = formatYmdTokyo();
+  const dayCtx = await getUserEffectiveDayContext(r.user.id);
+  const todayYmd = dayCtx.effectiveYmd;
   const { from, to } = monthRange(ym);
   const fromAt = new Date(`${from}T00:00:00+09:00`);
   const toAt = new Date(`${to}T23:59:59.999+09:00`);

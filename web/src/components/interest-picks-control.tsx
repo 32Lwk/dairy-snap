@@ -121,13 +121,16 @@ export function InterestPicksControl({
 
   const category = INTEREST_CATEGORIES.find((c) => c.id === catId) ?? INTEREST_CATEGORIES[0];
 
-  useEffect(() => {
-    // 大分類を変えたら、アクティブ小分類が存在しなければ先頭に寄せる
-    const exists = category.subs.some((s) => s.id === activeSubId);
-    if (!exists) {
-      setActiveSubId("");
-    }
-  }, [catId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const resetDetailPanels = () => {
+    setDetailCustomLine("");
+    setDetailFreePanelOpen(false);
+    setActiveFineId("");
+  };
+
+  const setActiveSubIdAndReset = (next: string) => {
+    setActiveSubId(next);
+    resetDetailPanels();
+  };
 
   const selectedSubsInCategory = useMemo(
     () =>
@@ -141,12 +144,6 @@ export function InterestPicksControl({
     if (activeSubId) return category.subs.find((s) => s.id === activeSubId) ?? null;
     return selectedSubsInCategory[0] ?? null;
   }, [activeSubId, category.subs, selectedSubsInCategory]);
-
-  useEffect(() => {
-    setDetailCustomLine("");
-    setDetailFreePanelOpen(false);
-    setActiveFineId("");
-  }, [activeSub?.id]);
 
   const userFineIdsForActiveSub = useMemo(() => {
     if (!activeSub) return [];
@@ -171,9 +168,7 @@ export function InterestPicksControl({
     return defaultFinesForSub(activeSub).some(interestFineHasNestedExtras);
   }, [activeSub]);
 
-  useEffect(() => {
-    if (!detailSubFocused) setDetailFreePanelOpen(false);
-  }, [detailSubFocused]);
+  const detailFreePanelEffectiveOpen = detailSubFocused ? detailFreePanelOpen : false;
 
   useEffect(() => {
     if (!globalFreePanelOpen) return;
@@ -185,10 +180,10 @@ export function InterestPicksControl({
   }, [globalFreePanelOpen]);
 
   useEffect(() => {
-    if (!detailFreePanelOpen || !detailSubFocused) return;
+    if (!detailFreePanelEffectiveOpen || !detailSubFocused) return;
     const id = window.setTimeout(() => detailCustomRef.current?.focus(), 0);
     return () => window.clearTimeout(id);
-  }, [detailFreePanelOpen, detailSubFocused]);
+  }, [detailFreePanelEffectiveOpen, detailSubFocused]);
 
   function removeSubAndDescendants(subId: string) {
     onChange(value.filter((x) => x !== subId && !x.startsWith(`${subId}:`)));
@@ -198,18 +193,18 @@ export function InterestPicksControl({
     const selected = value.includes(sub.id) || value.some((v) => v.startsWith(`${sub.id}:`));
     // 選択済みをタップ → まずはアクティブ化（詳細表示の対象を切り替える）
     if (selected && activeSubId !== sub.id) {
-      setActiveSubId(sub.id);
+      setActiveSubIdAndReset(sub.id);
       return;
     }
     // 選択済みかつアクティブを再タップ → 解除
     if (selected) {
       removeSubAndDescendants(sub.id);
-      if (activeSubId === sub.id) setActiveSubId("");
+      if (activeSubId === sub.id) setActiveSubIdAndReset("");
       return;
     }
     // 未選択 → 選択
     onChange([...value, sub.id]);
-    setActiveSubId(sub.id);
+    setActiveSubIdAndReset(sub.id);
   }
 
   function toggleFine(sub: InterestSub, fineId: string) {
@@ -328,7 +323,12 @@ export function InterestPicksControl({
                         : `この大分類で${pickCountInCategory}件選択済み（タップで表示）`
                       : undefined
                   }
-                  onClick={() => setCatId(c.id)}
+                  onClick={() => {
+                    setCatId(c.id);
+                    const nextCat = INTEREST_CATEGORIES.find((x) => x.id === c.id) ?? INTEREST_CATEGORIES[0];
+                    const exists = nextCat?.subs?.some((s) => s.id === activeSubId) ?? false;
+                    if (!exists) setActiveSubIdAndReset("");
+                  }}
                   className={`rounded-full font-medium transition ${chipSm} ${chipClass}`}
                 >
                   <span className="inline-flex items-center gap-1">
@@ -507,7 +507,7 @@ export function InterestPicksControl({
               ) : null}
             </div>
           ) : null}
-          {detailFreePanelOpen && (
+          {detailFreePanelEffectiveOpen && (
             <div className="space-y-0.5">
               <p className="text-[11px] text-zinc-500 dark:text-zinc-400">自由入力</p>
               <div className="flex min-w-0 flex-wrap items-center gap-1.5 rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-2 py-1 dark:border-zinc-600 dark:bg-zinc-900/40">

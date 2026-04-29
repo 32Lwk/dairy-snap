@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { ResponsiveDialog } from "@/components/responsive-dialog";
+import { FancySelect } from "@/components/fancy-select";
 import { isAppLocalCalendarId } from "@/lib/app-local-calendar-id";
 
 export type CalendarEventEditSource = {
@@ -194,16 +195,14 @@ export function CalendarEventEditDialog(props: {
     }
   }
 
-  if (!open) return null;
-  if (mode === "edit" && !event) return null;
-
   const titleLabel = mode === "create" ? "予定を追加" : "予定を編集";
   const noCalendars = mode === "create" && (!createContext?.calendars?.length || createContext.calendars.length === 0);
 
-  const needsGoogleWrite = useMemo(() => {
-    const cid = mode === "create" ? calendarId : (event?.calendarId ?? "");
-    return cid.length > 0 && !isAppLocalCalendarId(cid);
-  }, [mode, calendarId, event?.calendarId]);
+  const cidForPermission = mode === "create" ? calendarId : (event?.calendarId ?? "");
+  const needsGoogleWrite = cidForPermission.length > 0 && !isAppLocalCalendarId(cidForPermission);
+
+  if (!open) return null;
+  if (mode === "edit" && !event) return null;
 
   return (
     <ResponsiveDialog
@@ -255,19 +254,19 @@ export function CalendarEventEditDialog(props: {
           {mode === "create" && createContext && !noCalendars ? (
             <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-300">
               保存先カレンダー
-              <select
+              <FancySelect
                 value={calendarId}
                 onChange={(e) => setCalendarId(e.target.value)}
                 required
                 disabled={(needsGoogleWrite && !canWriteGoogle) || busy}
-                className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm text-zinc-900 outline-none ring-zinc-400 focus-visible:ring-2 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:focus-visible:ring-zinc-500"
+                className="mt-1 w-full px-2 py-1.5 text-sm text-zinc-900 dark:text-zinc-100"
               >
                 {createContext.calendars.map((c) => (
                   <option key={c.calendarId} value={c.calendarId}>
                     {c.calendarName}
                   </option>
                 ))}
-              </select>
+              </FancySelect>
             </label>
           ) : null}
 

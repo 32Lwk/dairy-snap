@@ -2,8 +2,8 @@
 
 本リポジトリの変更を **日付（AuthorDate）** 単位で整理したドキュメントです。README とは別ファイルとして保守します。
 
-**最終更新**: 2026-04-28  
-**対象期間**: 2026-04-02（初期コミット）〜 2026-04-28（`main` 先端＋同日の作業ツリー追記）
+**最終更新**: 2026-04-30  
+**対象期間**: 2026-04-02（初期コミット）〜 2026-04-30（作業ツリー追記を含む）
 
 ---
 
@@ -44,6 +44,7 @@ git log -1 --oneline origin/main
 | 2026-04-20 | あり | [§ 04-20](#2026-04-20月) |
 | 2026-04-21〜27 | なし | [§ 04-21〜27](#2026-04-21火-2026-04-27月) |
 | 2026-04-28 | あり | [§ 04-28](#2026-04-28火) |
+| 2026-04-30 | （作業ツリー） | [§ 04-30](#2026-04-30木) |
 
 ---
 
@@ -796,6 +797,30 @@ git log -1 --oneline origin/main
 
 ---
 
+## 2026-04-30（木）
+
+### 概要（本日の変更の全体像）
+
+1. **チャット経由の設定変更（提案→同意→適用）** — オーケストレーターに `propose_settings_change` ツールを追加し、今ターンは「提案の保留」を保存するだけに限定。次ターンでユーザーが肯定した場合のみ、サーバー側で **設定を適用**する二段階フローにした。
+2. **日付境界（深夜を前日扱い）とタイムゾーン基盤** — `user-day-boundary` を新設し、IANA TZ 検証、ローカル日付計算、区切り時刻（最大 03:00）を含む「アプリ上の今日」を統一的に解決できるようにした。
+3. **監査・レート制限・可観測性** — 設定自動適用は 24h あたり 5 回に制限し、拒否理由（rate_limit/validation/persist_failed）を `audit_logs` に記録。成功時は AI 生成物として `AIArtifact(kind=SETTINGS_PATCH)` を保存する。
+4. **Usage カウンタの拡張** — `usage_counters.settingsChanges`（日次）を追加し、チャット経由の設定適用成功時にインクリメントする。
+5. **設定 UI / UX の補強** — 設定画面にタイムゾーン・日付境界を扱う UI を追加し、ブラウザのタイムゾーンを **1 回だけサイレント反映**する `TimeZoneBootstrap` を導入。選択 UI として `FancySelect`、アイコン操作用に `SettingsActionIconButton` を追加した。
+
+### データベース（Prisma / マイグレーション）
+
+- `ArtifactKind` に **`SETTINGS_PATCH`** を追加（`20260430120000_artifact_kind_settings_patch`）。
+- `UsageCounter` に **`settingsChanges`** を追加（`20260430140000_usage_counter_settings_changes`）。
+
+### サーバー / API（要点）
+
+- **設定の提案**: `server/agents/settings-agent.ts` が `propose_settings_change` を実装し、`conversationNotes.pendingSettingsChange` に保留パッチ（`dayBoundaryEndTime` / `timeZone` など）を保存。
+- **設定の適用**: `lib/server/apply-settings-from-chat.ts` が、ユーザーの肯定文を検知した場合にのみ保留パッチを検証して適用。成功/失敗を AuditLog と UsageCounter に反映。
+- **日付文脈**: `lib/server/user-effective-day.ts` により、ユーザー設定（TZ/日付境界）を踏まえた `effectiveYmd` / `calendarYmd` / `resetAtIso` を提供し、オーケストレーターや画面側の「今日」を合わせやすくした。
+- **オーケストレーター**: `opening` 側で「日付がズレていそう」なときに `propose_settings_change` を候補に含めるガイドを追加。
+
+---
+
 ## サマリー表（期間全体）
 
 | 日付 | コミット数（目安） | 主テーマ |
@@ -815,6 +840,7 @@ git log -1 --oneline origin/main
 | 04-20 | 複数 | セキュリティレビュー、Plutchik、ローカル GCal、Photos、日記 UI、および同日の CHANGELOG 反復更新 |
 | 04-21〜27 | 0 | — |
 | 04-28 | あり | 公開 LP／法務／PWA、開口設定モーダル・倍率プリセット、`ResponsiveDialog` 下寄せ、`scoreOpeningTopic` デバッグ、時間割 `st_level` 連携 |
+| 04-30 | （作業ツリー） | チャット経由の設定提案→同意→適用、日付境界/TZ基盤、監査・レート制限、Usage カウンタ拡張、設定 UI（`FancySelect`/`TimeZoneBootstrap`） |
 
 ---
 

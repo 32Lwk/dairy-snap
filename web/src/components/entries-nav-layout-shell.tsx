@@ -41,14 +41,11 @@ export function EntriesNavLayoutShell({
   children: ReactNode;
 }) {
   const pathname = usePathname();
-  const [open, setOpen] = useState(false);
+  const [openForPath, setOpenForPath] = useState<string | null>(null);
+  const open = openForPath === pathname;
 
-  const openNav = useCallback(() => setOpen(true), []);
-  const closeNav = useCallback(() => setOpen(false), []);
-
-  useEffect(() => {
-    closeNav();
-  }, [pathname, closeNav]);
+  const openNav = useCallback(() => setOpenForPath(pathname), [pathname]);
+  const closeNav = useCallback(() => setOpenForPath(null), []);
 
   useEffect(() => {
     if (!open) return;

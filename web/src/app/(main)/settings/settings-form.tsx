@@ -4,7 +4,9 @@ import { CalendarOpeningPriorityEditor } from "@/components/calendar-opening-pri
 import { PlaceCoordsLine } from "@/components/place-coords-line";
 import { ResponsiveDialog } from "@/components/responsive-dialog";
 import { SettingsAccountActions } from "@/components/settings-account-actions";
+import { SettingsActionIconButton } from "@/components/settings-action-icon-button";
 import { SettingsMemoryPanel } from "@/components/settings-memory-panel";
+import { FancySelect } from "@/components/fancy-select";
 import { UserProfileForm, type UserProfilePayload } from "@/components/user-profile-form";
 import type {
   CalendarOpeningCategory,
@@ -24,6 +26,7 @@ import {
   REMOTE_SETTINGS_UPDATED_EVENT,
 } from "@/lib/settings-sync-client";
 import { reverseGeocodeClient } from "@/lib/reverse-geocode-client";
+import { resolveDayBoundaryEndTime } from "@/lib/time/user-day-boundary";
 import { OnboardingChatFlow } from "@/app/(main)/onboarding/onboarding-chat-flow";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -44,6 +47,22 @@ const WeatherLocationMapPicker = dynamic(
   },
 );
 
+/** 表示は日本語、値は IANA（API・保存用） */
+const TIME_ZONE_PRESETS: { value: string; labelJa: string }[] = [
+  { value: "Asia/Tokyo", labelJa: "日本（東京）" },
+  { value: "Asia/Seoul", labelJa: "韓国（ソウル）" },
+  { value: "Asia/Shanghai", labelJa: "中国（上海）" },
+  { value: "Asia/Singapore", labelJa: "シンガポール" },
+  { value: "Asia/Dubai", labelJa: "ドバイ" },
+  { value: "Europe/London", labelJa: "イギリス（ロンドン）" },
+  { value: "Europe/Paris", labelJa: "フランス（パリ）" },
+  { value: "America/New_York", labelJa: "アメリカ東部（ニューヨーク）" },
+  { value: "America/Chicago", labelJa: "アメリカ中部（シカゴ）" },
+  { value: "America/Los_Angeles", labelJa: "アメリカ西部（ロサンゼルス）" },
+  { value: "Australia/Sydney", labelJa: "オーストラリア（シドニー）" },
+  { value: "UTC", labelJa: "協定世界時（UTC）" },
+];
+
 type SettingsPayload = {
   email?: string;
   encryptionMode: "STANDARD" | "EXPERIMENTAL_E2EE";
@@ -52,6 +71,8 @@ type SettingsPayload = {
     longitude: number;
     label?: string;
   } | null;
+  /** 1日の区切り（前の日の終了時刻）。未設定は null */
+  dayBoundaryEndTime: string | null;
   profile: UserProfilePayload;
   limits: {
     CHAT_PER_DAY: number;
@@ -62,6 +83,7 @@ type SettingsPayload = {
     chatMessages: number;
     imageGenerations: number;
     dailySummaries: number;
+    settingsChanges?: number;
   };
   promptVersions: Record<string, string>;
   serverSyncToken?: string;
@@ -74,6 +96,8 @@ export function SettingsForm({ userId }: { userId: string }) {
   const [latIn, setLatIn] = useState("");
   const [lonIn, setLonIn] = useState("");
   const [labelIn, setLabelIn] = useState("");
+  const [dayBoundaryEndIn, setDayBoundaryEndIn] = useState("");
+  const [timeZoneIn, setTimeZoneIn] = useState("");
   const [placeLine, setPlaceLine] = useState<string | null>(null);
   const [geoBusy, setGeoBusy] = useState(false);
   const [opening, setOpening] = useState<CalendarOpeningSettings | null>(null);
@@ -108,6 +132,9 @@ export function SettingsForm({ userId }: { userId: string }) {
       setPlaceLine(null);
     }
     setOpening((json.profile as UserProfilePayload | undefined)?.calendarOpening ?? null);
+    setDayBoundaryEndIn(resolveDayBoundaryEndTime(json.dayBoundaryEndTime));
+    const profTz = (json.profile as { timeZone?: string } | undefined)?.timeZone;
+    setTimeZoneIn(typeof profTz === "string" ? profTz : "");
   }, []);
 
   const reloadSettingsFromServer = useCallback(async () => {
@@ -330,6 +357,74 @@ export function SettingsForm({ userId }: { userId: string }) {
     );
   }
 
+  async function saveDayBoundaryEndTime() {
+    const raw = (dayBoundaryEndIn ?? "").trim();
+    if (raw && !/^\d{2}:\d{2}$/.test(raw)) {
+      setError("時刻は HH:mm（例: 02:00）で入力してください");
+      return;
+    }
+    if (raw) {
+      const [hhRaw, mmRaw] = raw.split(":");
+      const hh = Number(hhRaw);
+      const mm = Number(mmRaw);
+      const mins = hh * 60 + mm;
+      if (!Number.isFinite(mins) || mins > 6 * 60) {
+        setError("区切り時刻は 00:00〜06:00 です（未設定で既定は 00:00）");
+        return;
+      }
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dayBoundaryEndTime: raw ? raw : null,
+        }),
+        credentials: "same-origin",
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(typeof json.error === "string" ? json.error : "保存に失敗しました");
+        return;
+      }
+      emitLocalSettingsSavedFromJson(json);
+      await reloadSettingsFromServer();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function applyBrowserTimeZone() {
+    const z = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (z) setTimeZoneIn(z);
+    else setError("この環境ではタイムゾーンを取得できませんでした");
+  }
+
+  async function saveTimeZone() {
+    const raw = timeZoneIn.trim();
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profile: { timeZone: raw } }),
+        credentials: "same-origin",
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(typeof json.error === "string" ? json.error : "保存に失敗しました");
+        return;
+      }
+      emitLocalSettingsSavedFromJson(json);
+      await reloadSettingsFromServer();
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function saveMode(mode: "STANDARD" | "EXPERIMENTAL_E2EE") {
     setSaving(true);
     setError(null);
@@ -377,10 +472,10 @@ export function SettingsForm({ userId }: { userId: string }) {
   }
 
   if (!data && !error) {
-    return <p className="mt-6 text-sm text-zinc-500">読み込み中…</p>;
+    return <p className="mt-3 text-sm text-zinc-500">読み込み中…</p>;
   }
   if (error && !data) {
-    return <p className="mt-6 text-sm text-red-600">{error}</p>;
+    return <p className="mt-3 text-sm text-red-600">{error}</p>;
   }
   if (!data) return null;
 
@@ -400,12 +495,7 @@ export function SettingsForm({ userId }: { userId: string }) {
 
   return (
     <>
-      <div className="mt-6 w-full min-w-0 space-y-6">
-      {data.email && (
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          ログイン中: <span className="font-medium">{data.email}</span>
-        </p>
-      )}
+      <div className="mt-3 w-full min-w-0 space-y-3">
       {!data.profile?.onboardingCompletedAt && (
         <div className="rounded-xl border border-amber-200 bg-amber-50/90 px-4 py-3 text-sm text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100">
           <p className="font-medium">初回の「はじめに」が未完了です</p>
@@ -451,6 +541,122 @@ export function SettingsForm({ userId }: { userId: string }) {
           >
             実験（E2EE）
           </button>
+        </div>
+      </section>
+
+      <section className="w-full min-w-0 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
+        <h2 className="font-medium text-zinc-900 dark:text-zinc-50">日付の区切りとタイムゾーン</h2>
+        <p className="mt-1 max-w-3xl text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+          <strong className="font-medium text-zinc-700 dark:text-zinc-300">タイムゾーン</strong>
+          は、日付表示や1日の利用上限の切り替えに使います。
+          <span className="mx-1 text-zinc-400">/</span>
+          <strong className="font-medium text-zinc-700 dark:text-zinc-300">日付の区切り</strong>
+          は、深夜でも前日扱いにする「終了時刻」です（
+          <strong className="font-medium text-zinc-700 dark:text-zinc-300">0:00 起点</strong>・0:00〜6:00）。未設定は 0:00 です。
+        </p>
+
+        <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
+        <div className="min-w-0 rounded-lg border border-zinc-100 bg-zinc-50/80 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+          <p className="text-xs font-medium text-zinc-800 dark:text-zinc-200">タイムゾーン</p>
+          <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
+            <label className="flex min-w-0 flex-1 flex-col gap-1 sm:min-w-[12rem]">
+              <span className="text-xs font-medium text-zinc-700 dark:text-zinc-200">地域</span>
+              <FancySelect
+                value={timeZoneIn}
+                disabled={saving}
+                onChange={(e) => setTimeZoneIn(e.target.value)}
+                className="h-8 min-h-8 rounded-xl border border-zinc-200 bg-white px-2.5 py-0 text-xs leading-none shadow-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200/60 dark:border-zinc-700 dark:bg-zinc-950 dark:focus:border-emerald-500 dark:focus:ring-emerald-500/20 !py-0 !text-xs"
+                aria-label="タイムゾーン候補"
+              >
+                <option value="">一覧から選ぶ</option>
+                {timeZoneIn && !TIME_ZONE_PRESETS.some((p) => p.value === timeZoneIn) ? (
+                  <option value={timeZoneIn}>{timeZoneIn}（一覧外・保存中）</option>
+                ) : null}
+                {TIME_ZONE_PRESETS.map((z) => (
+                  <option key={z.value} value={z.value}>
+                    {z.labelJa}
+                  </option>
+                ))}
+              </FancySelect>
+            </label>
+            <div className="flex shrink-0 flex-row flex-wrap items-center gap-2">
+              <SettingsActionIconButton
+                variant="outline"
+                label="この端末のタイムゾーンを使う"
+                disabled={saving}
+                onClick={() => applyBrowserTimeZone()}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+                </svg>
+              </SettingsActionIconButton>
+              <SettingsActionIconButton
+                variant="primary"
+                label="タイムゾーンを保存"
+                disabled={saving}
+                onClick={() => void saveTimeZone()}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                  <polyline points="17 21 17 13 7 13 7 21" />
+                  <polyline points="7 3 7 8 15 8" />
+                </svg>
+              </SettingsActionIconButton>
+            </div>
+          </div>
+        </div>
+
+        <div className="min-w-0 rounded-lg border border-zinc-100 bg-zinc-50/80 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+          <p className="text-xs font-medium text-zinc-800 dark:text-zinc-200">前の日が終わる時刻</p>
+          <p className="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+            下の時刻は「前日がここで終わる」＝その分だけ深夜も前日のエントリに含めます。入力欄は 0:00 起点です（未入力で保存すると既定 0:00 が使われます）。
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {(["00:00", "01:00", "02:00", "03:00", "04:00", "05:00", "06:00"] as const).map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                disabled={saving}
+                onClick={() => setDayBoundaryEndIn(preset)}
+                className="inline-flex h-8 items-center justify-center rounded-lg border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-800 shadow-sm hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
+              >
+                {preset}
+              </button>
+            ))}
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1.5">
+            <span className="w-full text-xs font-medium text-zinc-700 sm:w-auto dark:text-zinc-200">
+              時刻（0:00〜6:00）
+            </span>
+            <input
+              type="time"
+              min="00:00"
+              max="06:00"
+              step={60}
+              value={dayBoundaryEndIn}
+              disabled={saving}
+              onChange={(e) => setDayBoundaryEndIn(e.target.value)}
+              className="h-8 w-[7.25rem] shrink-0 rounded-lg border border-zinc-200 bg-white px-2 py-0 text-xs font-medium tabular-nums shadow-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200/60 dark:border-zinc-600 dark:bg-zinc-950 dark:focus:border-emerald-500 dark:focus:ring-emerald-500/20"
+              aria-label="前の日の終了時刻"
+            />
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => void saveDayBoundaryEndTime()}
+              className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg bg-zinc-900 px-2.5 text-xs font-medium text-white shadow-sm hover:bg-zinc-800 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+            >
+              区切りを保存
+            </button>
+          </div>
+          <p className="mt-2 text-xs font-medium text-zinc-600 dark:text-zinc-300" aria-live="polite">
+            {data.dayBoundaryEndTime
+              ? data.dayBoundaryEndTime === "00:00"
+                ? "保存済み: 00:00（カレンダーの日付どおり・深夜の前日繰り越しなし）"
+                : `保存済み: ${data.dayBoundaryEndTime} まで前日扱い`
+              : "保存なし → アプリ既定の 00:00（カレンダーの日付どおり）"}
+          </p>
+        </div>
         </div>
       </section>
 
@@ -1225,11 +1431,11 @@ function RuleRow({
   const kind = rule.kind;
   const valueInput =
     kind === "calendarId" ? (
-      <select
+      <FancySelect
         value={rule.value}
         disabled={disabled}
         onChange={(e) => onChange({ ...rule, value: e.target.value })}
-        className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+        className="w-full px-2 py-1 text-sm"
       >
         <option value="">（選ぶ）</option>
         {calendars.map((c) => (
@@ -1237,13 +1443,13 @@ function RuleRow({
             {c.calendarName} ({c.calendarId})
           </option>
         ))}
-      </select>
+      </FancySelect>
     ) : kind === "colorId" ? (
-      <select
+      <FancySelect
         value={rule.value}
         disabled={disabled}
         onChange={(e) => onChange({ ...rule, value: e.target.value })}
-        className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+        className="w-full px-2 py-1 text-sm"
       >
         <option value="">（選ぶ）</option>
         {colorIds.map((c) => (
@@ -1251,7 +1457,7 @@ function RuleRow({
             {c}
           </option>
         ))}
-      </select>
+      </FancySelect>
     ) : (
       <input
         value={rule.value}
@@ -1264,31 +1470,31 @@ function RuleRow({
 
   return (
     <div className="grid grid-cols-1 gap-2 rounded-xl border border-zinc-200 p-2 dark:border-zinc-800 sm:grid-cols-12 sm:items-center">
-      <select
+      <FancySelect
         value={rule.kind}
         disabled={disabled}
         onChange={(e) => onChange({ ...rule, kind: e.target.value as CalendarOpeningRule["kind"], value: "" })}
-        className="rounded-lg border border-zinc-200 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950 sm:col-span-3"
+        className="px-2 py-1 text-sm sm:col-span-3"
       >
         <option value="keyword">キーワード</option>
         <option value="calendarId">カレンダー</option>
         <option value="colorId">色</option>
         <option value="location">場所</option>
         <option value="description">メモ</option>
-      </select>
+      </FancySelect>
       <div className="sm:col-span-4">{valueInput}</div>
-      <select
+      <FancySelect
         value={rule.category}
         disabled={disabled}
         onChange={(e) => onChange({ ...rule, category: e.target.value as CalendarOpeningCategory })}
-        className="rounded-lg border border-zinc-200 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950 sm:col-span-3"
+        className="px-2 py-1 text-sm sm:col-span-3"
       >
         {cats.map((c) => (
           <option key={c.id} value={c.id}>
             {c.label}
           </option>
         ))}
-      </select>
+      </FancySelect>
       <input
         value={rule.weight ?? 5}
         disabled={disabled}

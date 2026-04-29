@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 const DETERMINISTIC_16 = (): number[] => Array.from({ length: 16 }, () => 0);
 
@@ -11,12 +11,6 @@ export default function Bb84Page() {
   const [bits, setBits] = useState<number[]>(DETERMINISTIC_16);
   const [basesA, setBasesA] = useState<number[]>(DETERMINISTIC_16);
   const [basesB, setBasesB] = useState<number[]>(DETERMINISTIC_16);
-
-  useEffect(() => {
-    setBits(randomBits(16));
-    setBasesA(randomBases(16));
-    setBasesB(randomBases(16));
-  }, []);
 
   const sifted = useMemo(() => {
     return bits.map((b, i) => (basesA[i] === basesB[i] ? b : null));

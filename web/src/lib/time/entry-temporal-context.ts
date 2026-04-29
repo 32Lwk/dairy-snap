@@ -1,3 +1,12 @@
+import {
+  diffCalendarDaysInZone,
+  formatHmInTimeZone,
+  formatYmdInTimeZone,
+  getEffectiveTodayYmd,
+  hmToMinutes,
+  isValidIanaTimeZone,
+  resolveDayBoundaryEndTime,
+} from "@/lib/time/user-day-boundary";
 import { formatHmTokyo, formatYmdTokyo } from "@/lib/time/tokyo";
 import { getLocalSolarPhaseForEntryDay } from "@/lib/time/local-solar-phase";
 
@@ -48,13 +57,25 @@ function linesEn(...parts: string[]): string {
   return parts.join("\n");
 }
 
+export type EntryTemporalOpts = {
+  timeZone?: string;
+  dayBoundaryEndTime?: string | null;
+};
+
 /**
- * Temporal framing for reflective chat and AI diary (entry date vs "today" in Tokyo).
+ * Temporal framing for reflective chat and AI diary (entry date vs effective "today" in user TZ).
  * Instructions are in English to avoid tooling encoding issues; model replies stay Japanese.
  */
-export function getEntryTemporalContext(entryDateYmd: string, now: Date = new Date()): EntryTemporalContext {
-  const todayYmd = formatYmdTokyo(now);
-  const daysDiff = diffCalendarDaysTokyo(entryDateYmd, todayYmd);
+export function getEntryTemporalContext(
+  entryDateYmd: string,
+  now: Date = new Date(),
+  opts?: EntryTemporalOpts,
+): EntryTemporalContext {
+  const tz =
+    opts?.timeZone && isValidIanaTimeZone(opts.timeZone) ? opts.timeZone : "Asia/Tokyo";
+  const boundary = resolveDayBoundaryEndTime(opts?.dayBoundaryEndTime ?? null);
+  const todayYmd = getEffectiveTodayYmd(now, tz, boundary);
+  const daysDiff = diffCalendarDaysInZone(entryDateYmd, todayYmd, tz);
   const kind = classifyKind(daysDiff);
 
   if (kind === "future") {
@@ -64,7 +85,7 @@ export function getEntryTemporalContext(entryDateYmd: string, now: Date = new Da
       todayYmd,
       summaryJa: `対象日 ${entryDateYmd} は今日（${todayYmd}）より未来です。`,
       orchestratorInstructions: linesEn(
-        `Entry date ${entryDateYmd} is AFTER today (${todayYmd}) in Asia/Tokyo.`,
+        `Entry date ${entryDateYmd} is AFTER generator "today" (${todayYmd}) in ${tz}.`,
         "Treat as possible planned day / typo / future schedule. Do not narrate as if the day already happened as fixed fact.",
         "Use wording like plans, expectations, or gently confirm the date if needed.",
         "If the user clearly speaks in past tense about that date, follow them and switch to retrospective tone.",
@@ -85,7 +106,7 @@ export function getEntryTemporalContext(entryDateYmd: string, now: Date = new Da
       todayYmd,
       summaryJa: `対象日 ${entryDateYmd} は今日（${todayYmd}）と同じです。`,
       orchestratorInstructions: linesEn(
-        `This thread is for TODAY (${entryDateYmd}) in Asia/Tokyo.`,
+        `This thread is for TODAY (${entryDateYmd}) (generator "today" ${todayYmd} in ${tz}).`,
         "You may use \"today\" / 今日 naturally for that calendar day.",
         "Even just after local midnight, if the entry date is still \"today\", keep same-day framing.",
       ),
@@ -104,7 +125,7 @@ export function getEntryTemporalContext(entryDateYmd: string, now: Date = new Da
       todayYmd,
       summaryJa: `対象日 ${entryDateYmd} は昨日（1 日前）です。`,
       orchestratorInstructions: linesEn(
-        `This thread recalls YESTERDAY: ${entryDateYmd} (exactly 1 calendar day before ${todayYmd} in Tokyo).`,
+        `This thread recalls YESTERDAY: ${entryDateYmd} (exactly 1 calendar day before ${todayYmd} in ${tz}).`,
         "Never use 今日は to mean that entry day. Use 昨日は / きのう / あの日は — past day only.",
         "Weather and calendar tools refer to THAT past day, not the current wall-clock \"today\".",
         "Assume the user may be backfilling the diary; tone stays retrospective past.",
@@ -126,7 +147,7 @@ export function getEntryTemporalContext(entryDateYmd: string, now: Date = new Da
       todayYmd,
       summaryJa: `対象日 ${entryDateYmd} は ${daysDiff} 日前です。`,
       orchestratorInstructions: linesEn(
-        `Entry day ${entryDateYmd} is ${daysDiff} calendar days before today (${todayYmd}) in Tokyo.`,
+        `Entry day ${entryDateYmd} is ${daysDiff} calendar days before generator today (${todayYmd}) in ${tz}.`,
         "Do not use 今日は for that entry day. Frame as a specific past day (数日前 / その日は).",
         "Memory may be fuzzy — prefer gentle check-ins over hard assertions.",
         "Conversation should support a past-tense diary for THAT day.",
@@ -261,8 +282,12 @@ export function formatOrchestratorConversationScopeBlock(): string {
 }
 
 /** Orchestrator system prompt block */
-export function formatOrchestratorTemporalBlock(entryDateYmd: string, now?: Date): string {
-  const ctx = getEntryTemporalContext(entryDateYmd, now);
+export function formatOrchestratorTemporalBlock(
+  entryDateYmd: string,
+  now?: Date,
+  opts?: EntryTemporalOpts,
+): string {
+  const ctx = getEntryTemporalContext(entryDateYmd, now ?? new Date(), opts);
   return ["## Date framing for this thread (must follow)", ctx.summaryJa, "", ctx.orchestratorInstructions].join("\n");
 }
 
@@ -275,21 +300,27 @@ export function formatOrchestratorWallClockDaylightBlock(params: {
   now: Date;
   lat: number;
   lon: number;
+  timeZone?: string;
+  dayBoundaryEndTime?: string | null;
 }): string {
   const { entryDateYmd, now, lat, lon } = params;
-  const todayYmd = formatYmdTokyo(now);
-  const hm = formatHmTokyo(now);
-  const daysDiff = diffCalendarDaysTokyo(entryDateYmd, todayYmd);
+  const tz =
+    params.timeZone && isValidIanaTimeZone(params.timeZone) ? params.timeZone : "Asia/Tokyo";
+  const boundary = resolveDayBoundaryEndTime(params.dayBoundaryEndTime ?? null);
+  const todayYmd = getEffectiveTodayYmd(now, tz, boundary);
+  const calYmd = formatYmdInTimeZone(now, tz);
+  const hm = formatHmInTimeZone(now, tz);
+  const daysDiff = diffCalendarDaysInZone(entryDateYmd, todayYmd, tz);
 
   const lines: string[] = [
     "## Wall clock & daylight (tone; must follow)",
-    `- Generator wall time (Asia/Tokyo): **${hm}** on calendar date **${todayYmd}**.`,
-    `- Diary entry date (Tokyo calendar): **${entryDateYmd}** (${
+    `- Generator wall time (${tz}): **${hm}** on calendar date **${calYmd}**; effective \"app today\" **${todayYmd}** (day-boundary aware).`,
+    `- Diary entry date: **${entryDateYmd}** (${
       daysDiff === 0
-        ? 'same as Tokyo "today"'
+        ? 'same as effective "today"'
         : daysDiff > 0
-          ? `${daysDiff} calendar day(s) before Tokyo "today"`
-          : `${-daysDiff} calendar day(s) after Tokyo "today" (future entry)`
+          ? `${daysDiff} calendar day(s) before effective "today"`
+          : `${-daysDiff} calendar day(s) after effective "today" (future entry)`
     }).`,
   ];
 
@@ -297,13 +328,13 @@ export function formatOrchestratorWallClockDaylightBlock(params: {
     const sol = getLocalSolarPhaseForEntryDay(entryDateYmd, now, lat, lon);
     if (sol.phase === "unknown") {
       lines.push(
-        `- Local solar phase at user coordinates: **unknown** (polar night/day edge, invalid geometry, or library limits). **Do not** claim exact sunrise/sunset times, whether it is still dark outside, or 「まだ夜明け前」 / 「もう昼」 as fact. Use only the **Asia/Tokyo wall clock** above for "now"; keep weather/outdoor wording **tentative** (e.g. 予報では / かもしれない). If unsure, ask a neutral question instead of asserting light conditions.`,
+        `- Local solar phase at user coordinates: **unknown** (polar night/day edge, invalid geometry, or library limits). **Do not** claim exact sunrise/sunset times, whether it is still dark outside, or 「まだ夜明け前」 / 「もう昼」 as fact. Use only the **wall clock (${tz})** above for "now"; keep weather/outdoor wording **tentative** (e.g. 予報では / かもしれない). If unsure, ask a neutral question instead of asserting light conditions.`,
       );
     } else {
-      const sr = sol.sunrise ? formatHmTokyo(sol.sunrise) : "?";
-      const ss = sol.sunset ? formatHmTokyo(sol.sunset) : "?";
+      const sr = sol.sunrise ? formatHmInTimeZone(sol.sunrise, tz) : "?";
+      const ss = sol.sunset ? formatHmInTimeZone(sol.sunset, tz) : "?";
       lines.push(
-        `- For this entry day at user coordinates, versus **now**: **${sol.phase}** (approx. sunrise **${sr}** / sunset **${ss}**, clock shown in Asia/Tokyo for those instants).`,
+        `- For this entry day at user coordinates, versus **now**: **${sol.phase}** (approx. sunrise **${sr}** / sunset **${ss}**, clock shown in ${tz} for those instants).`,
       );
       if (sol.phase === "before_sunrise") {
         lines.push(
@@ -321,16 +352,57 @@ export function formatOrchestratorWallClockDaylightBlock(params: {
     }
   } else {
     lines.push(
-      `- Entry is not Tokyo-"today"; the opening reflects **that entry day**. Wall time above is the user's **current** moment — avoid a tone that ignores it (e.g. midday small-talk at 04:30).`,
+      `- Entry is not effective-"today"; the opening reflects **that entry day**. Wall time above is the user's **current** moment — avoid a tone that ignores it (e.g. midday small-talk at 04:30).`,
     );
   }
 
   return lines.join("\n");
 }
 
+/**
+ * "Late-night boundary" handling for users who want to treat after-midnight as "still yesterday".
+ * This does NOT change the thread's entry date; it only guides tone and optional suggestion.
+ */
+export function formatOrchestratorDayBoundaryBlock(params: {
+  entryDateYmd: string;
+  now: Date;
+  dayBoundaryEndTime?: string | null;
+  timeZone?: string;
+}): string {
+  const { entryDateYmd, now, dayBoundaryEndTime } = params;
+  const tz =
+    params.timeZone && isValidIanaTimeZone(params.timeZone) ? params.timeZone : "Asia/Tokyo";
+  const boundary = resolveDayBoundaryEndTime(dayBoundaryEndTime ?? null);
+  const boundaryMin = hmToMinutes(boundary);
+  if (boundaryMin == null) return "";
+
+  const nowHm = formatHmInTimeZone(now, tz);
+  const nowMin = hmToMinutes(nowHm) ?? 0;
+  const effectiveToday = getEffectiveTodayYmd(now, tz, boundary);
+
+  const inWindow = entryDateYmd === effectiveToday && nowMin >= 0 && nowMin < boundaryMin;
+  if (!inWindow) return "";
+
+  return [
+    "## Day boundary preference (late-night; must follow)",
+    `- User-defined day boundary end time: **${boundary}** (${tz}).`,
+    `- Wall time now: **${nowHm}**; this is within the \"still yesterday\" window (00:00–${boundary}).`,
+    "Guidance:",
+    "- The thread's entry date is still the calendar day shown under 「対象日」. Do not rewrite dates as if the system changed the entry day.",
+    "- However, it is appropriate to frame the moment as \"late night\" / 夜更かし / まだ前日の続きの感覚, and to gently offer the user a choice:",
+    "  - Option A: reflect on the previous day (yesterday / きのう) first, because it still feels ongoing.",
+    "  - Option B: start the new day (today) planning / intentions.",
+    "- Keep it short (2–4 sentences) with at most one question sentence. Avoid asserting what the user did; invite them to choose.",
+  ].join("\n");
+}
+
 /** Prefixed to journal composer user message */
-export function formatJournalComposerTemporalPreamble(entryDateYmd: string, now?: Date): string {
-  const ctx = getEntryTemporalContext(entryDateYmd, now);
+export function formatJournalComposerTemporalPreamble(
+  entryDateYmd: string,
+  now?: Date,
+  opts?: EntryTemporalOpts,
+): string {
+  const ctx = getEntryTemporalContext(entryDateYmd, now, opts);
   const elapsed =
     ctx.daysDiff < 0 ? `future by ${-ctx.daysDiff}d` : ctx.daysDiff === 0 ? "same day" : `${ctx.daysDiff}d ago`;
   return [
@@ -356,8 +428,9 @@ export function buildReflectiveOpeningSystemInstruction(
   entryDateYmd: string,
   now?: Date,
   opening?: ReflectiveOpeningContext,
+  opts?: EntryTemporalOpts,
 ): string {
-  const ctx = getEntryTemporalContext(entryDateYmd, now);
+  const ctx = getEntryTemporalContext(entryDateYmd, now ?? new Date(), opts);
   const task =
     ctx.kind === "today"
       ? "The user has not spoken yet. Send 2–4 short sentences in natural Japanese as the first reflective line for TODAY."

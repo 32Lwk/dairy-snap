@@ -29,6 +29,33 @@ export function GooglePhotosImportDialog({
   title?: string;
   instanceId?: string;
 }) {
+  if (!open) return null;
+  // open/close のたびに状態を初期化（react-hooks/set-state-in-effect を避ける）
+  return (
+    <GooglePhotosImportDialogInner
+      key={`${entryId}:${entryDateYmd}:${instanceId}`}
+      onClose={onClose}
+      entryDateYmd={entryDateYmd}
+      entryId={entryId}
+      title={title}
+      instanceId={instanceId}
+    />
+  );
+}
+
+function GooglePhotosImportDialogInner({
+  onClose,
+  entryDateYmd,
+  entryId,
+  title,
+  instanceId,
+}: {
+  onClose: () => void;
+  entryDateYmd: string;
+  entryId: string;
+  title: string;
+  instanceId: string;
+}) {
   const router = useRouter();
   const [phase, setPhase] = useState<Phase>("intro");
   const [resultMsg, setResultMsg] = useState<string | null>(null);
@@ -37,22 +64,12 @@ export function GooglePhotosImportDialog({
   const [prefetchErr, setPrefetchErr] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!open) {
-      // lint ルール（react-hooks/set-state-in-effect）回避のため、effect 直下ではなく非同期キューでリセットする
-      queueMicrotask(() => {
-        setPhase("intro");
-        setResultMsg(null);
-        setErrMsg(null);
-        setPrefetchedSession(null);
-        setPrefetchErr(null);
-      });
-      return;
-    }
     // 体感速度改善: ダイアログを開いた時点で Picker セッションを先読みする（失敗しても start 時に再試行する）
     let cancelled = false;
-    setPrefetchErr(null);
     void (async () => {
       try {
+        const prevErr = prefetchErr;
+        if (prevErr) setPrefetchErr(null);
         const s = await startGooglePhotosPickerSession({ entryDateYmd, entryId });
         if (!cancelled) setPrefetchedSession(s);
       } catch (e) {
@@ -62,7 +79,8 @@ export function GooglePhotosImportDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, entryDateYmd, entryId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entryDateYmd, entryId]);
 
   const start = useCallback(async () => {
     setErrMsg(null);
@@ -94,7 +112,7 @@ export function GooglePhotosImportDialog({
 
   return (
     <ResponsiveDialog
-      open={open}
+      open={true}
       onClose={onClose}
       labelledBy={`google-photos-import-title-${idSuffix}`}
       dialogId={`google-photos-import-dialog-${idSuffix}`}

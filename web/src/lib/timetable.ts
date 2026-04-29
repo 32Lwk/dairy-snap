@@ -133,6 +133,8 @@ function columnMatchesWeekdayLabel(colLabel: string, weekdayJa: string): boolean
 }
 
 function isYmdInTimetableValidity(ymd: string, b: TimetableBundle): boolean {
+  // If the stored validity range is inverted (from > to), treat it as unset to avoid confusing behavior.
+  if (b.validFrom && b.validTo && b.validFrom > b.validTo) return true;
   if (b.validFrom && ymd < b.validFrom) return false;
   if (b.validTo && ymd > b.validTo) return false;
   return true;
@@ -504,10 +506,11 @@ export function formatTimetableForPromptDaySlice(
     chunks.push(`有効期間: ${validity}`);
   }
 
-  if (!isYmdInTimetableValidity(ymd, b)) {
-    chunks.push("※この日付は登録された時間割の有効期間外です。その日の科目を推測・断定しないでください。");
-    const out = chunks.join("\n");
-    return out.length > maxChars ? `${out.slice(0, maxChars)}…` : out;
+  const inValidity = isYmdInTimetableValidity(ymd, b);
+  if (!inValidity) {
+    chunks.push(
+      "※この日付は登録された時間割の有効期間外です。以下の科目は**参考**（古い可能性あり）。断定せず「今日は講義ある日？」「何限から？」など自然に確認してください。",
+    );
   }
 
   const anchor = b.patterns[b.activePatternIndex] ?? b.patterns[0];
@@ -601,7 +604,7 @@ export function formatTimetableNextFocusForOpeningJa(
   if (!ISO_DATE_RE.test(ymd)) return "";
   const weekdayJa = weekdayJaFromYmdTokyo(ymd);
   if (!weekdayJa) return "";
-  if (!isYmdInTimetableValidity(ymd, b)) return "";
+  const inValidity = isYmdInTimetableValidity(ymd, b);
 
   type Slot = { startMs: number; endMs: number; period: number; title: string; patternLabel: string };
   const slots: Slot[] = [];
@@ -637,6 +640,9 @@ export function formatTimetableNextFocusForOpeningJa(
   const lines: string[] = [
     "※ 講義は Google カレンダーに無いことが多い。**開口では直近の講義コマを、遠い時刻のカレンダー予定だけに差し置かないこと。**",
   ];
+  if (!inValidity) {
+    lines.push("※ 注意: この日付は時間割の有効期間外。以下は参考（古い可能性あり）。断定せず確認すること。");
+  }
   const head = relevant.slice(0, 5);
   const hmFmt = new Intl.DateTimeFormat("ja-JP", {
     timeZone: "Asia/Tokyo",

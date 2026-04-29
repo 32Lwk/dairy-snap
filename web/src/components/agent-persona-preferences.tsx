@@ -15,6 +15,7 @@ import {
   AI_MEMORY_NAME_POLICY_OPTIONS,
   AI_MEMORY_RECALL_STYLE_OPTIONS,
 } from "@/lib/agent-persona-preferences";
+import { FancySelect } from "@/components/fancy-select";
 
 type AgentPersonaForm = UserProfileSettings & { onboardingWorkLifeAnswers?: Record<string, string> };
 
@@ -76,45 +77,45 @@ export function AgentPersonaPreferences({ form, patchForm }: Props) {
         <p className="text-[11px] font-medium text-zinc-800 dark:text-zinc-200">1. 呼び方・トーン・掘り下げ</p>
         <label className="block text-[11px] text-zinc-600 dark:text-zinc-400">
           呼び方
-          <select
+          <FancySelect
             value={form.aiAddressStyle ?? ""}
             onChange={(e) => patchForm({ ...form, aiAddressStyle: e.target.value })}
-            className="mt-0.5 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+            className="mt-0.5 w-full px-2 py-1.5 text-sm"
           >
             {AI_ADDRESS_STYLE_OPTIONS.map((o) => (
               <option key={o.value || "empty"} value={o.value}>
                 {o.label}
               </option>
             ))}
-          </select>
+          </FancySelect>
         </label>
         <label className="block text-[11px] text-zinc-600 dark:text-zinc-400">
           AI の話し方
-          <select
+          <FancySelect
             value={form.aiChatTone ?? ""}
             onChange={(e) => patchForm({ ...form, aiChatTone: e.target.value })}
-            className="mt-0.5 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+            className="mt-0.5 w-full px-2 py-1.5 text-sm"
           >
             {AI_CHAT_TONE_OPTIONS.map((o) => (
               <option key={o.value || "empty"} value={o.value}>
                 {o.label}
               </option>
             ))}
-          </select>
+          </FancySelect>
         </label>
         <label className="block text-[11px] text-zinc-600 dark:text-zinc-400">
           掘り下げの深さ（境界）
-          <select
+          <FancySelect
             value={form.aiDepthLevel ?? ""}
             onChange={(e) => patchForm({ ...form, aiDepthLevel: e.target.value })}
-            className="mt-0.5 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+            className="mt-0.5 w-full px-2 py-1.5 text-sm"
           >
             {AI_DEPTH_LEVEL_OPTIONS.map((o) => (
               <option key={o.value || "empty"} value={o.value}>
                 {o.label}
               </option>
             ))}
-          </select>
+          </FancySelect>
         </label>
       </section>
 
@@ -132,17 +133,17 @@ export function AgentPersonaPreferences({ form, patchForm }: Props) {
         ) : null}
         <label className="block text-[11px] text-zinc-600 dark:text-zinc-400">
           いちばん元気な時間帯
-          <select
+          <FancySelect
             value={form.aiEnergyPeak ?? ""}
             onChange={(e) => patchForm({ ...form, aiEnergyPeak: e.target.value })}
-            className="mt-0.5 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+            className="mt-0.5 w-full px-2 py-1.5 text-sm"
           >
             {AI_ENERGY_PEAK_OPTIONS.map((o) => (
               <option key={o.value || "empty"} value={o.value}>
                 {o.label}
               </option>
             ))}
-          </select>
+          </FancySelect>
         </label>
         <div>
           <p className="text-[11px] text-zinc-600 dark:text-zinc-400">忙しめの時間帯（複数可）</p>
@@ -233,45 +234,45 @@ export function AgentPersonaPreferences({ form, patchForm }: Props) {
         </p>
         <label className="block text-[11px] text-zinc-600 dark:text-zinc-400">
           {"\u8a18\u61b6\u306e\u53c2\u7167\u30fb\u6d3b\u7528"}
-          <select
+          <FancySelect
             value={form.aiMemoryRecallStyle ?? ""}
             onChange={(e) => patchForm({ ...form, aiMemoryRecallStyle: e.target.value })}
-            className="mt-0.5 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+            className="mt-0.5 w-full px-2 py-1.5 text-sm"
           >
             {AI_MEMORY_RECALL_STYLE_OPTIONS.map((o) => (
               <option key={o.value || "empty"} value={o.value}>
                 {o.label}
               </option>
             ))}
-          </select>
+          </FancySelect>
         </label>
         <label className="block text-[11px] text-zinc-600 dark:text-zinc-400">
           {"\u56fa\u6709\u540d\u8a5e\u306e\u8a18\u61b6"}
-          <select
+          <FancySelect
             value={form.aiMemoryNamePolicy ?? ""}
             onChange={(e) => patchForm({ ...form, aiMemoryNamePolicy: e.target.value })}
-            className="mt-0.5 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+            className="mt-0.5 w-full px-2 py-1.5 text-sm"
           >
             {AI_MEMORY_NAME_POLICY_OPTIONS.map((o) => (
               <option key={o.value || "empty"} value={o.value}>
                 {o.label}
               </option>
             ))}
-          </select>
+          </FancySelect>
         </label>
         <label className="block text-[11px] text-zinc-600 dark:text-zinc-400">
           {"\u53e4\u3044\u63a8\u6e2c\u30fb\u77db\u76fe\u306e\u6574\u7406"}
-          <select
+          <FancySelect
             value={form.aiMemoryForgetBias ?? ""}
             onChange={(e) => patchForm({ ...form, aiMemoryForgetBias: e.target.value })}
-            className="mt-0.5 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+            className="mt-0.5 w-full px-2 py-1.5 text-sm"
           >
             {AI_MEMORY_FORGET_BIAS_OPTIONS.map((o) => (
               <option key={o.value || "empty"} value={o.value}>
                 {o.label}
               </option>
             ))}
-          </select>
+          </FancySelect>
         </label>
       </section>
 
@@ -283,17 +284,17 @@ export function AgentPersonaPreferences({ form, patchForm }: Props) {
         </p>
         <label className="block text-[11px] text-zinc-600 dark:text-zinc-400">
           健康の話題の扱い
-          <select
+          <FancySelect
             value={form.aiHealthComfort ?? ""}
             onChange={(e) => patchForm({ ...form, aiHealthComfort: e.target.value })}
-            className="mt-0.5 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+            className="mt-0.5 w-full px-2 py-1.5 text-sm"
           >
             {AI_HEALTH_COMFORT_OPTIONS.map((o) => (
               <option key={o.value || "empty"} value={o.value}>
                 {o.label}
               </option>
             ))}
-          </select>
+          </FancySelect>
         </label>
         {healthNone ? (
           <p className="rounded-md bg-white/80 px-2 py-1 text-[10px] text-zinc-600 dark:bg-zinc-900/60 dark:text-zinc-400">
@@ -302,17 +303,17 @@ export function AgentPersonaPreferences({ form, patchForm }: Props) {
         ) : null}
         <label className="block text-[11px] text-zinc-600 dark:text-zinc-400">
           暮らしのざっくり
-          <select
+          <FancySelect
             value={form.aiHousehold ?? ""}
             onChange={(e) => patchForm({ ...form, aiHousehold: e.target.value })}
-            className="mt-0.5 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+            className="mt-0.5 w-full px-2 py-1.5 text-sm"
           >
             {AI_HOUSEHOLD_OPTIONS.map((o) => (
               <option key={o.value || "empty"} value={o.value}>
                 {o.label}
               </option>
             ))}
-          </select>
+          </FancySelect>
         </label>
         {household === "kids" || household === "parents" || household === "mixed" ? (
           <p className="text-[10px] leading-snug text-zinc-500 dark:text-zinc-400">

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import { FancySelect } from "@/components/fancy-select";
 import {
   addCustomColumn,
   appendMissingStdWeekdays,
@@ -54,29 +55,65 @@ function isValidCalendarYmd(y: number, m: number, d: number): boolean {
 }
 
 function digitsToYmdMasked(raw: string): string {
-  const t = raw.trim();
-  let digits: string;
-  if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(t)) {
-    const [y, m, d] = t.split("-");
-    digits = `${y}${m.padStart(2, "0")}${d.padStart(2, "0")}`.slice(0, 8);
-  } else {
-    digits = t.replace(/\D/g, "").slice(0, 8);
+  // Japanese IME / mobile keyboards may produce full-width digits. Normalize to ASCII.
+  const t = raw.normalize("NFKC").trim();
+
+  const packDigits = (digitsRaw: string): string => {
+    const digits = digitsRaw.replace(/\D/g, "").slice(0, 8);
+    if (digits.length <= 4) return digits;
+    if (digits.length <= 6) return `${digits.slice(0, 4)}-${digits.slice(4)}`;
+    // Special case: YYYY + MDD (7 digits). Users often type 810 meaning 08/10 after the year.
+    // Interpret as YYYY-0M-DD instead of YYYY-MD-D (which would become 81-0).
+    if (digits.length === 7) {
+      const y = digits.slice(0, 4);
+      const rest = digits.slice(4); // 3 digits
+      const m1 = rest[0] ?? "";
+      const dd = rest.slice(1);
+      if (/^[1-9]$/.test(m1) && /^\d{2}$/.test(dd)) {
+        return `${y}-0${m1}-${dd}`;
+      }
+    }
+    return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6)}`;
+  };
+
+  // If the user is editing an ISO-like string, mask per segment so month/day don't "shift" into year.
+  // This keeps the UX stable when deleting year digits.
+  if (t.includes("-")) {
+    const cleaned = t.replace(/[^\d-]/g, "");
+    const hyphenCount = (cleaned.match(/-/g) ?? []).length;
+    // With 0–1 hyphens, users often type continuous digits and let the mask insert separators.
+    // Segment-masking too early would truncate month to 2 digits and prevent entering day (last 2 digits).
+    if (hyphenCount < 2) {
+      return packDigits(cleaned);
+    }
+
+    const [yRaw = "", mRaw = "", dRaw = ""] = cleaned.split("-", 3);
+    const y = yRaw.replace(/\D/g, "").slice(0, 4);
+    const m = mRaw.replace(/\D/g, "").slice(0, 2);
+    const d = dRaw.replace(/\D/g, "").slice(0, 2);
+    // If year is empty (e.g. the user starts by editing month/day), fall back to digit-pack mode.
+    // Otherwise we may produce a leading "-" which feels broken and can block "day" edits.
+    if (!y) {
+      return packDigits(cleaned);
+    }
+    if (!m && !d) return y;
+    if (!d) return `${y}${m ? `-${m}` : ""}`;
+    return `${y}${m ? `-${m}` : ""}-${d}`;
   }
-  if (digits.length <= 4) return digits;
-  if (digits.length <= 6) return `${digits.slice(0, 4)}-${digits.slice(4)}`;
-  return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6)}`;
+
+  return packDigits(t);
 }
 
 function parseCompleteIsoFromMasked(display: string): string | undefined {
-  const t = display.trim();
+  const t = display.normalize("NFKC").trim();
   if (!t) return undefined;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return undefined;
-  const [ys, ms, ds] = t.split("-");
-  const y = Number(ys);
-  const m = Number(ms);
-  const d = Number(ds);
+  const mIso = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(t);
+  if (!mIso) return undefined;
+  const y = Number(mIso[1]);
+  const m = Number(mIso[2]);
+  const d = Number(mIso[3]);
   if (!isValidCalendarYmd(y, m, d)) return undefined;
-  return t;
+  return `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
 function TimetableIsoDateField({
@@ -90,10 +127,8 @@ function TimetableIsoDateField({
   className?: string;
 }) {
   const [text, setText] = useState(() => value?.trim() ?? "");
-
-  useEffect(() => {
-    setText(value?.trim() ?? "");
-  }, [value]);
+  const [focused, setFocused] = useState(false);
+  const displayText = focused ? text : (value?.trim() ?? "");
 
   return (
     <input
@@ -102,7 +137,33 @@ function TimetableIsoDateField({
       autoComplete="off"
       placeholder="YYYY-MM-DD"
       title="数字のみ（最大8桁）。年は4桁で自動で区切ります。"
-      value={text}
+      value={displayText}
+      onFocus={() => {
+        setFocused(true);
+        setText(value?.trim() ?? "");
+      }}
+      onKeyDown={(e) => {
+        // Prevent parent <form> submit / default button activation which may close the modal.
+        if (e.key === "Enter") {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+        // Some parents attach key handlers (e.g. Escape to close). Keep date editing isolated.
+        e.stopPropagation();
+        if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          setText(value?.trim() ?? "");
+          (e.currentTarget as HTMLInputElement).blur();
+        }
+      }}
+      onKeyUp={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }}
       onChange={(e) => {
         const masked = digitsToYmdMasked(e.target.value);
         setText(masked);
@@ -110,17 +171,32 @@ function TimetableIsoDateField({
           onCommit(undefined);
           return;
         }
-        const iso = parseCompleteIsoFromMasked(masked);
-        if (iso) onCommit(iso);
+        // While typing, only treat as "complete" when month/day are already 2-digit (YYYY-MM-DD).
+        // Otherwise, early zero-padding (e.g. 2026-11-1 → 2026-11-01) prevents entering 10–31.
+        if (/^\d{4}-\d{2}-\d{2}$/.test(masked)) {
+          const iso = parseCompleteIsoFromMasked(masked);
+          if (iso) {
+            setText(iso);
+            onCommit(iso);
+          }
+        }
       }}
       onBlur={() => {
-        if (!text.trim()) {
+        setFocused(false);
+        const t = displayText.trim();
+        if (!t) {
           onCommit(undefined);
           return;
         }
-        const iso = parseCompleteIsoFromMasked(text);
-        if (iso) onCommit(iso);
-        else setText(value?.trim() ?? "");
+        const iso = parseCompleteIsoFromMasked(t);
+        if (iso) {
+          setText(iso);
+          onCommit(iso);
+        } else {
+          // Keep the user's partial input instead of snapping back to the last committed value.
+          // Mobile keyboards may blur between edits; reverting here makes it feel like "day won't enter".
+          setText(digitsToYmdMasked(t));
+        }
       }}
       className={className}
     />
@@ -378,13 +454,8 @@ function PeriodModalInner({
   onClose: () => void;
   onSave: (start: string, durationRaw: string) => void;
 }) {
-  const [s, setS] = useState(start);
-  const [d, setD] = useState(durationDisplay);
-
-  useEffect(() => {
-    setS(start);
-    setD(durationDisplay);
-  }, [start, durationDisplay, periodIndex]);
+  const [s, setS] = useState(() => start);
+  const [d, setD] = useState(() => durationDisplay);
 
   const modal = (
     <div
@@ -469,10 +540,7 @@ export function TimetableEditor({
 }: Props) {
   const hsPalette = useHighSchoolSubjectPalette(stLevel);
 
-  const [bundle, setBundle] = useState<TimetableBundle>(() => {
-    const p = parseTimetableStored(value);
-    return p ?? emptyTimetable();
-  });
+  const bundle: TimetableBundle = useMemo(() => parseTimetableStored(value) ?? emptyTimetable(), [value]);
 
   /** readOnly 時はパターン切替だけローカル（保存文字列は変えない） */
   const [browsePatternIdx, setBrowsePatternIdx] = useState(0);
@@ -485,23 +553,12 @@ export function TimetableEditor({
   const [lastCell, setLastCell] = useState<{ colId: string; period: number } | null>(null);
   const [newPatternName, setNewPatternName] = useState("");
 
-  useEffect(() => {
-    const p = parseTimetableStored(value);
-    setBundle(p ?? emptyTimetable());
-    if (readOnly && p) {
-      setBrowsePatternIdx(
-        Math.min(p.activePatternIndex, Math.max(0, p.patterns.length - 1)),
-      );
-    }
-  }, [value, readOnly]);
-
   const patternIndexForView = readOnly ? browsePatternIdx : bundle.activePatternIndex;
   const data = bundle.patterns[patternIndexForView] ?? bundle.patterns[0];
 
   const commit = useCallback(
     (next: TimetableBundle) => {
       if (readOnly) return;
-      setBundle(next);
       onChange(serializeTimetable(next));
     },
     [onChange, readOnly],
@@ -509,13 +566,10 @@ export function TimetableEditor({
 
   const setValidityRange = useCallback(
     (patch: { validFrom?: string; validTo?: string }) => {
-      let from = patch.validFrom !== undefined ? patch.validFrom || undefined : bundle.validFrom;
-      let to = patch.validTo !== undefined ? patch.validTo || undefined : bundle.validTo;
-      if (from && to && from > to) {
-        const t = from;
-        from = to;
-        to = t;
-      }
+      const from = patch.validFrom !== undefined ? patch.validFrom || undefined : bundle.validFrom;
+      const to = patch.validTo !== undefined ? patch.validTo || undefined : bundle.validTo;
+      // Do not auto-swap. Swapping while the user edits one side feels like the UI "resets".
+      // If the range becomes inverted, keep as-is; downstream validity checks will treat it as "no constraint".
       commit({ ...bundle, validFrom: from, validTo: to });
     },
     [bundle, commit],
@@ -768,21 +822,21 @@ export function TimetableEditor({
       {bundle.patterns.length > 1 ? (
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[10px] text-zinc-500 dark:text-zinc-400">別パターンに切り替え</span>
-          <select
+          <FancySelect
             value={patternIndexForView}
             onChange={(e) => {
               const i = Number.parseInt(e.target.value, 10) || 0;
               if (readOnly) setBrowsePatternIdx(i);
               else commit({ ...bundle, activePatternIndex: i });
             }}
-            className="max-w-[12rem] rounded-md border border-zinc-200 bg-white px-2 py-1 text-[calc(11px-2pt)] dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+            className="max-w-[12rem] px-2 py-1 text-[calc(11px-2pt)] dark:text-zinc-100"
           >
             {bundle.patterns.map((p, i) => (
               <option key={p.id} value={i}>
                 {p.label.trim() || `パターン${i + 1}`}
               </option>
             ))}
-          </select>
+          </FancySelect>
           {!readOnly ? (
             <button type="button" className={btnSm} onClick={removePattern}>
               このパターンを削除
@@ -994,6 +1048,7 @@ export function TimetableEditor({
 
       {periodModal !== null && !readOnly && (
         <PeriodModalInner
+          key={periodModal}
           periodIndex={periodModal}
           start={data.periodMeta[periodModal]?.start ?? ""}
           durationDisplay={modalDurationDisplay}

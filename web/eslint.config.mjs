@@ -13,6 +13,21 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
   ]),
+  {
+    files: ["src/**/*.{js,jsx,ts,tsx}"],
+    rules: {
+      // Native <select> renders OS/browser dropdown UI (hard to style).
+      // Enforce FancySelect to keep consistent UI.
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "JSXOpeningElement[name.name='select']",
+          message:
+            "ネイティブの<select>は禁止です。統一UIのため @/components/fancy-select の FancySelect を使ってください。",
+        },
+      ],
+    },
+  },
 ]);
 
 export default eslintConfig;

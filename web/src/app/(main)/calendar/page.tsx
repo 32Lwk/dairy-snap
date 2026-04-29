@@ -1,4 +1,5 @@
-import { formatYmdTokyo } from "@/lib/time/tokyo";
+import { getUserEffectiveDayContext } from "@/lib/server/user-effective-day";
+import { getResolvedAuthUser } from "@/lib/server/resolved-auth-user";
 import { redirect } from "next/navigation";
 
 /**
@@ -10,8 +11,13 @@ export default async function CalendarPage({
 }: {
   searchParams: Promise<{ ym?: string }>;
 }) {
+  const r = await getResolvedAuthUser();
+  if (r.status === "unauthenticated") redirect("/login");
+  if (r.status === "session_mismatch") redirect("/login?error=session_mismatch");
+
   const sp = await searchParams;
-  const today = formatYmdTokyo();
+  const { effectiveYmd } = await getUserEffectiveDayContext(r.user.id);
+  const today = effectiveYmd;
 
   if (sp.ym && /^\d{4}-\d{2}$/.test(sp.ym)) {
     const target = today.startsWith(sp.ym) ? today : `${sp.ym}-01`;

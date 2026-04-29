@@ -2,6 +2,7 @@
 
 import { useLayoutEffect, useMemo, useState } from "react";
 import { PREFECTURE_OPTIONS } from "@/lib/onboarding-work-life";
+import { FancySelect } from "@/components/fancy-select";
 
 /** オンボーディングの先読みと UI で共通（`st_level` → 学校種別コード） */
 export function schoolKindsFromStLevel(stLevel: string): string[] {
@@ -59,20 +60,22 @@ export function SchoolSearchFields({
   const [schoolHits, setSchoolHits] = useState<SchoolSearchHit[]>([]);
 
   const schoolKinds = useMemo(() => schoolKindsFromStLevel(stLevel), [stLevel]);
+  const searchIntent = useMemo(() => {
+    const pref = schoolPref.trim();
+    const q = schoolQuery.trim();
+    const nationalBrowse = !pref && !q && schoolKinds.length === 1;
+    const nationalOneCharOk = !pref && q.length === 1 && schoolKinds.length === 1;
+    const shouldSearch = !(!pref && q.length < 2 && !nationalBrowse && !nationalOneCharOk);
+    return { pref, q, nationalBrowse, nationalOneCharOk, shouldSearch };
+  }, [schoolPref, schoolQuery, schoolKinds]);
   const prefectureSelectOptions = useMemo(
     () => PREFECTURE_OPTIONS.filter((o) => o.value && o.value !== "国外"),
     [],
   );
 
   useLayoutEffect(() => {
-    const pref = schoolPref.trim();
-    const q = schoolQuery.trim();
-    const nationalBrowse = !pref && !q && schoolKinds.length === 1;
-    const nationalOneCharOk = !pref && q.length === 1 && schoolKinds.length === 1;
-    if (!pref && q.length < 2 && !nationalBrowse && !nationalOneCharOk) {
-      setSchoolHits([]);
-      return;
-    }
+    const { pref, q, nationalBrowse, shouldSearch } = searchIntent;
+    if (!shouldSearch) return;
 
     const ac = new AbortController();
     const params = new URLSearchParams();
@@ -106,7 +109,7 @@ export function SchoolSearchFields({
       window.clearTimeout(tid);
       ac.abort();
     };
-  }, [schoolQuery, schoolPref, schoolKinds]);
+  }, [searchIntent, schoolKinds]);
 
   const rowWrap = compact
     ? "rounded-md border border-zinc-200 bg-zinc-50/90 px-1.5 py-1.5 dark:border-zinc-800 dark:bg-zinc-900/50"
@@ -123,8 +126,9 @@ export function SchoolSearchFields({
     ? "text-[10px] leading-none text-zinc-500 dark:text-zinc-400"
     : "text-xs text-zinc-600 dark:text-zinc-400";
 
-  const showHits = schoolHits.length > 0 && !selected;
+  const showHits = searchIntent.shouldSearch && schoolHits.length > 0 && !selected;
   const showNoHit =
+    searchIntent.shouldSearch &&
     schoolQuery.trim().length > 0 &&
     schoolHits.length === 0 &&
     (schoolPref || schoolKinds.length === 1 || schoolQuery.trim().length >= 2);
@@ -147,10 +151,11 @@ export function SchoolSearchFields({
             }
           >
             <span className={labelSpan}>都道府県</span>
-            <select
+            <FancySelect
               value={schoolPref}
               onChange={(e) => {
                 setSchoolPref(e.target.value);
+                setSchoolHits([]);
                 onSelectedChange(null);
               }}
               className={selectCls}
@@ -161,7 +166,7 @@ export function SchoolSearchFields({
                   {o.label}
                 </option>
               ))}
-            </select>
+            </FancySelect>
           </label>
           <label
             className={
@@ -175,6 +180,7 @@ export function SchoolSearchFields({
               value={schoolQuery}
               onChange={(e) => {
                 setSchoolQuery(e.target.value);
+                setSchoolHits([]);
                 onSelectedChange(null);
               }}
               placeholder={

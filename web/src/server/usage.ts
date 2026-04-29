@@ -1,14 +1,21 @@
-import { formatYmdTokyo } from "@/lib/time/tokyo";
+import { getUserEffectiveDayContext } from "@/lib/server/user-effective-day";
 import { prisma } from "@/server/db";
 
 export const LIMITS = {
   CHAT_PER_DAY: 50,
   IMAGE_GEN_PER_DAY: 3,
   DAILY_SUMMARY_PER_DAY: 5,
+  /** チャットからの設定自動適用（24h あたり、AuditLog ベースで別途上限） */
+  SETTINGS_APPLY_PER_24H: 5,
 } as const;
 
+async function effectiveUsageDateYmd(userId: string): Promise<string> {
+  const ctx = await getUserEffectiveDayContext(userId);
+  return ctx.effectiveYmd;
+}
+
 export async function getTodayCounter(userId: string) {
-  const dateYmd = formatYmdTokyo();
+  const dateYmd = await effectiveUsageDateYmd(userId);
   return prisma.usageCounter.upsert({
     where: { userId_dateYmd: { userId, dateYmd } },
     create: { userId, dateYmd },
@@ -17,7 +24,7 @@ export async function getTodayCounter(userId: string) {
 }
 
 export async function incrementChat(userId: string) {
-  const dateYmd = formatYmdTokyo();
+  const dateYmd = await effectiveUsageDateYmd(userId);
   return prisma.usageCounter.upsert({
     where: { userId_dateYmd: { userId, dateYmd } },
     create: { userId, dateYmd, chatMessages: 1 },
@@ -26,7 +33,7 @@ export async function incrementChat(userId: string) {
 }
 
 export async function incrementImageGen(userId: string) {
-  const dateYmd = formatYmdTokyo();
+  const dateYmd = await effectiveUsageDateYmd(userId);
   return prisma.usageCounter.upsert({
     where: { userId_dateYmd: { userId, dateYmd } },
     create: { userId, dateYmd, imageGenerations: 1 },
@@ -35,7 +42,7 @@ export async function incrementImageGen(userId: string) {
 }
 
 export async function incrementDailySummary(userId: string) {
-  const dateYmd = formatYmdTokyo();
+  const dateYmd = await effectiveUsageDateYmd(userId);
   return prisma.usageCounter.upsert({
     where: { userId_dateYmd: { userId, dateYmd } },
     create: { userId, dateYmd, dailySummaries: 1 },
@@ -44,7 +51,7 @@ export async function incrementDailySummary(userId: string) {
 }
 
 export async function incrementOrchestratorCalls(userId: string) {
-  const dateYmd = formatYmdTokyo();
+  const dateYmd = await effectiveUsageDateYmd(userId);
   return prisma.usageCounter.upsert({
     where: { userId_dateYmd: { userId, dateYmd } },
     create: { userId, dateYmd, orchestratorCalls: 1 },
@@ -54,10 +61,20 @@ export async function incrementOrchestratorCalls(userId: string) {
 
 /** 記憶サブエージェント 1 回あたり（将来の日次上限に使用） */
 export async function incrementMemorySubAgentCalls(userId: string) {
-  const dateYmd = formatYmdTokyo();
+  const dateYmd = await effectiveUsageDateYmd(userId);
   return prisma.usageCounter.upsert({
     where: { userId_dateYmd: { userId, dateYmd } },
     create: { userId, dateYmd, memorySubAgentCalls: 1 },
     update: { memorySubAgentCalls: { increment: 1 } },
+  });
+}
+
+/** チャット経由で設定が成功適用されたとき（可視化・日次集計用） */
+export async function incrementSettingsChange(userId: string) {
+  const dateYmd = await effectiveUsageDateYmd(userId);
+  return prisma.usageCounter.upsert({
+    where: { userId_dateYmd: { userId, dateYmd } },
+    create: { userId, dateYmd, settingsChanges: 1 },
+    update: { settingsChanges: { increment: 1 } },
   });
 }

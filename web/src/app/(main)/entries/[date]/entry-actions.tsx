@@ -108,7 +108,7 @@ export function EntryActions({
     setMsg(null);
   }, [draftLat, draftLon]);
 
-  function useDraftGeolocation() {
+  function requestDraftGeolocation() {
     if (!navigator.geolocation) {
       setMsg("この環境では位置情報が使えません");
       return;
@@ -174,7 +174,7 @@ export function EntryActions({
     }
   }
 
-  async function useGeolocation() {
+  async function requestGeolocation() {
     if (!navigator.geolocation) {
       setMsg("この環境では位置情報が使えません");
       return;
@@ -312,7 +312,7 @@ export function EntryActions({
           <button
             type="button"
             disabled={busy !== null}
-            onClick={() => void useGeolocation()}
+            onClick={() => void requestGeolocation()}
             className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm dark:border-zinc-700"
           >
             {busy === "geo" ? "…" : "現在地"}
@@ -366,7 +366,7 @@ export function EntryActions({
             <button
               type="button"
               disabled={draftGeoBusy}
-              onClick={() => useDraftGeolocation()}
+              onClick={() => requestDraftGeolocation()}
               className="rounded-lg border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700"
             >
               {draftGeoBusy ? "…" : "現在地"}

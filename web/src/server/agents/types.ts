@@ -108,7 +108,8 @@ export type ToolName =
   | "query_calendar_work"
   | "query_calendar_social"
   | "query_hobby"
-  | "query_romance";
+  | "query_romance"
+  | "propose_settings_change";
 
 export const AGENT_TOOL_NAMES: ToolName[] = [
   "query_weather",
@@ -118,6 +119,7 @@ export const AGENT_TOOL_NAMES: ToolName[] = [
   "query_calendar_social",
   "query_hobby",
   "query_romance",
+  "propose_settings_change",
 ];
 
 /** OpenAI Chat Completions API の tools パラメータ用定義 */
@@ -227,6 +229,32 @@ export const ORCHESTRATOR_TOOLS = [
           focus: {
             type: "string",
             description: "恋愛・関係性に関する具体的なキーワード（任意）",
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "propose_settings_change",
+      description:
+        "日付の区切り（前の日の終了時刻・00:00〜03:00）またはタイムゾーン（IANA）の変更を**提案するだけ**。DBには適用せず、ユーザーが次のターンで肯定したときだけサーバーが適用する。深夜の文脈やユーザー依頼があるときのみ。",
+      parameters: {
+        type: "object",
+        properties: {
+          dayBoundaryEndTime: {
+            type: ["string", "null"],
+            description: 'HH:mm（例 "02:00"）。null で既定（00:00 相当）に戻す提案。',
+          },
+          timeZone: {
+            type: "string",
+            description: "IANA タイムゾーン（例 Asia/Tokyo）。",
+          },
+          reasonJa: {
+            type: "string",
+            description: "提案理由（短く、200文字以内）",
           },
         },
         required: [],

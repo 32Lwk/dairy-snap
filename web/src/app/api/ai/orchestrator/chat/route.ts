@@ -1,3 +1,4 @@
+import type { Prisma } from "@/generated/prisma/client";
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { requireSession } from "@/lib/api/require-session";
@@ -18,6 +19,12 @@ import {
 } from "@/lib/reflective-chat-diary-nudge-rules";
 import { parseUserSettings } from "@/lib/user-settings";
 import { resolveOrchestratorClockNow } from "@/lib/time/client-clock";
+import { getUserEffectiveDayContext } from "@/lib/server/user-effective-day";
+import {
+  applySettingsPatchFromChat,
+  isAffirmativeJaMessage,
+} from "@/lib/server/apply-settings-from-chat";
+import { previousCalendarYmdInZone } from "@/lib/time/user-day-boundary";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -27,6 +34,16 @@ const bodySchema = z.object({
   message: z.string().min(1).max(16000),
   clientNow: z.string().max(40).optional(),
 });
+
+function isYesterdayReflectionRequestJa(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  // なるべく「昨日」+「振り返り」系の明示要望にだけ反応する（誤爆を避ける）
+  if (!t.includes("昨日")) return false;
+  if (/(振り返|ふりかえ|振返)/.test(t)) return true;
+  if (/昨日.*(話|書|記録|日記)/.test(t)) return true;
+  return false;
+}
 
 export async function POST(req: NextRequest) {
   const session = await requireSession();
@@ -42,7 +59,7 @@ export async function POST(req: NextRequest) {
     return new Response(JSON.stringify({ error: "OPENAI_API_KEY が未設定です" }), { status: 503 });
   }
 
-  const [entry, userRow] = await Promise.all([
+  const [entryRaw, userRow] = await Promise.all([
     prisma.dailyEntry.findFirst({
       where: { id: parsed.data.entryId, userId: session.user.id },
     }),
@@ -51,14 +68,36 @@ export async function POST(req: NextRequest) {
       select: { settings: true },
     }),
   ]);
-  if (!entry) {
+  if (!entryRaw) {
     return new Response(JSON.stringify({ error: "見つかりません" }), { status: 404 });
   }
+  let entry = entryRaw;
   const profile = parseUserSettings(userRow?.settings ?? {}).profile;
 
   const counter = await getTodayCounter(session.user.id);
   if (counter.chatMessages >= LIMITS.CHAT_PER_DAY) {
     return new Response(JSON.stringify({ error: "本日のチャット上限に達しました" }), { status: 429 });
+  }
+
+  const started = Date.now();
+  const serverNow = new Date();
+  const orchestratorNow = resolveOrchestratorClockNow(serverNow, parsed.data.clientNow);
+  const dayCtx = await getUserEffectiveDayContext(session.user.id, orchestratorNow);
+
+  // ユーザーが明示的に「昨日の振り返り」を希望した場合は、昨日エントリへ切り替える（自動遷移）。
+  // これにより「今日スレッドに書いてしまった」状態を避ける。
+  let navigateToEntryYmd: string | undefined;
+  if (isYesterdayReflectionRequestJa(parsed.data.message)) {
+    const yesterdayYmd = previousCalendarYmdInZone(dayCtx.calendarYmd, dayCtx.timeZone);
+    if (entry.entryDateYmd !== yesterdayYmd) {
+      const yEntry = await prisma.dailyEntry.findUnique({
+        where: { userId_entryDateYmd: { userId: session.user.id, entryDateYmd: yesterdayYmd } },
+      });
+      if (yEntry) {
+        entry = yEntry;
+        navigateToEntryYmd = yesterdayYmd;
+      }
+    }
   }
 
   let thread = await prisma.chatThread.findFirst({
@@ -111,9 +150,55 @@ export async function POST(req: NextRequest) {
     journalDraftMaterial,
   );
 
-  const started = Date.now();
-  const serverNow = new Date();
-  const orchestratorNow = resolveOrchestratorClockNow(serverNow, parsed.data.clientNow);
+  const notesRaw = (thread.conversationNotes as Record<string, unknown>) ?? {};
+  const pendingRaw = notesRaw.pendingSettingsChange as
+    | {
+        dayBoundaryEndTime?: string | null;
+        timeZone?: string;
+        reasonJa?: string;
+        proposedAt?: string;
+      }
+    | undefined;
+
+  let extraSystemAppend: string | undefined;
+  let settingsUndoPayload:
+    | {
+        previous: { dayBoundaryEndTime: string | null; timeZone: string | null };
+        next: { dayBoundaryEndTime: string | null; timeZone: string | null };
+      }
+    | undefined;
+
+  if (pendingRaw && isAffirmativeJaMessage(parsed.data.message)) {
+    const patch: { dayBoundaryEndTime?: string | null; timeZone?: string } = {};
+    if (pendingRaw.dayBoundaryEndTime !== undefined) patch.dayBoundaryEndTime = pendingRaw.dayBoundaryEndTime;
+    if (pendingRaw.timeZone !== undefined) patch.timeZone = pendingRaw.timeZone;
+    const applied = await applySettingsPatchFromChat({
+      userId: session.user.id,
+      entryId: entry.id,
+      threadId: thread.id,
+      patch,
+    });
+    if (applied.ok) {
+      const nextNotes = { ...notesRaw };
+      delete nextNotes.pendingSettingsChange;
+      await prisma.chatThread.update({
+        where: { id: thread.id },
+        data: { conversationNotes: nextNotes as Prisma.InputJsonValue },
+      });
+      const afterCtx = await getUserEffectiveDayContext(session.user.id, orchestratorNow);
+      if (afterCtx.effectiveYmd !== entry.entryDateYmd) {
+        navigateToEntryYmd = afterCtx.effectiveYmd;
+      }
+      extraSystemAppend = [
+        "## 直前に適用された設定（ユーザーが肯定応答した直後）",
+        "ユーザーは提案していた設定変更に同意した。変更内容を**一言**で確認したうえで、",
+        "**このエントリ日**の振り返りを続ける。会話がまだ浅ければ、開口に近いトーンでこの日の一日について具体的に聞く（長い設定説明は不要。チップで元に戻せることに触れない）。",
+      ].join("\n");
+      settingsUndoPayload = { previous: applied.previous, next: applied.next };
+    } else {
+      extraSystemAppend = `## 設定の適用に失敗\n${applied.errorJa}`;
+    }
+  }
 
   const { stream, agentsUsed, personaInstructions, mbtiHint, orchestratorModel } = await runOrchestrator({
     userId: session.user.id,
@@ -127,6 +212,8 @@ export async function POST(req: NextRequest) {
     reflectiveUserTurnIncludingCurrent,
     preferMiniOrchestrator,
     clockNow: orchestratorNow,
+    threadId: thread.id,
+    extraSystemAppend,
   });
 
   const encoder = new TextEncoder();
@@ -254,6 +341,8 @@ export async function POST(req: NextRequest) {
               assistantModel: orchestratorModel,
               triggerJournalDraft,
               journalDraftMaterial,
+              settingsUndo: settingsUndoPayload,
+              navigateToEntryYmd,
             })}\n\n`,
           ),
         );

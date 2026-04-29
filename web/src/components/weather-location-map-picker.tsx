@@ -223,14 +223,20 @@ export function WeatherLocationMapPicker({
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!map) return;
+    const leafletMap = map;
+    if (!leafletMap) return;
     function onFlyTo(ev: Event) {
+      const m = leafletMap;
+      if (!m) return;
       const e = ev as CustomEvent<{ lat: number; lng: number; zoom?: number }>;
       const lat = e.detail?.lat;
       const lng = e.detail?.lng;
       if (typeof lat !== "number" || typeof lng !== "number") return;
-      const z = typeof e.detail?.zoom === "number" && Number.isFinite(e.detail.zoom) ? e.detail.zoom : Math.max(map.getZoom() || 0, 13);
-      map.flyTo([lat, lng], z, { animate: true, duration: 0.6 });
+      const z =
+        typeof e.detail?.zoom === "number" && Number.isFinite(e.detail.zoom)
+          ? e.detail.zoom
+          : Math.max(m.getZoom() || 0, 13);
+      m.flyTo([lat, lng], z, { animate: true, duration: 0.6 });
     }
     window.addEventListener("daily-snap:weather-map:flyto", onFlyTo as EventListener);
     return () => window.removeEventListener("daily-snap:weather-map:flyto", onFlyTo as EventListener);

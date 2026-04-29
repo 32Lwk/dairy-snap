@@ -15,6 +15,12 @@ import {
   orchestratorOpeningSamplingParams,
 } from "@/lib/ai/openai-chat-models";
 import { withChatModelFallbackAndModel } from "@/lib/ai/openai-model-fallback";
+import {
+  diffCalendarDaysInZone,
+  getEffectiveTodayYmd,
+  resolveDayBoundaryEndTime,
+  resolveUserTimeZone,
+} from "@/lib/time/user-day-boundary";
 import { formatOrchestratorStaticProfileBlock, parseUserSettings } from "@/lib/user-settings";
 import { formatAgentPersonaForPrompt } from "@/lib/agent-persona-preferences";
 import { isMbtiType, mbtiDisplayJa } from "@/lib/mbti";
@@ -26,10 +32,9 @@ import {
   type CalendarFetchResult,
 } from "@/server/calendar";
 import { formatTimetableNextFocusForOpeningJa, formatYmdWithTokyoWeekday } from "@/lib/timetable";
-import { formatYmdTokyo } from "@/lib/time/tokyo";
 import {
   buildReflectiveOpeningSystemInstruction,
-  diffCalendarDaysTokyo,
+  formatOrchestratorDayBoundaryBlock,
   formatOrchestratorConversationScopeBlock,
   formatOrchestratorScheduleGroundingBlock,
   formatOrchestratorTemporalBlock,
@@ -56,12 +61,14 @@ import type { AgentRequest, PersonaContext, WeatherContext } from "@/server/agen
 import { ORCHESTRATOR_TOOLS } from "@/server/agents/types";
 import { loadShortTermContextForEntry } from "@/server/mas-memory";
 import { scoreOpeningTopic } from "@/server/chat-context";
+import { runProposeSettingsChangeTool } from "@/server/agents/settings-agent";
 
 const OPENING_OMIT_TOOLS = new Set([
   "query_weather",
   "query_calendar_daily",
   "query_calendar_work",
   "query_calendar_social",
+  "propose_settings_change",
 ]);
 
 /** Opening chat user line: avoids a lone "." which often elicits meta / "system will…" preambles. */
@@ -143,20 +150,20 @@ async function loadLongTermContext(userId: string): Promise<string> {
 
 // ─── 対象日カレンダー要約（システム注入・全会話ターン共通）────────────────────
 
-function hhmmTokyoBrief(isoLike: string): string {
+function hhmmInUserZoneBrief(isoLike: string, timeZone: string): string {
   if (!isoLike || /^\d{4}-\d{2}-\d{2}$/.test(isoLike)) return "";
   const ms = Date.parse(isoLike);
   if (!Number.isFinite(ms)) return "";
   return new Intl.DateTimeFormat("ja-JP", {
-    timeZone: "Asia/Tokyo",
+    timeZone,
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
   }).format(new Date(ms));
 }
 
-function formatOneOpeningCalendarLine(ev: CalendarEventBrief): string {
-  const t = hhmmTokyoBrief(ev.start);
+function formatOneOpeningCalendarLine(ev: CalendarEventBrief, timeZone: string): string {
+  const t = hhmmInUserZoneBrief(ev.start, timeZone);
   const when = t || "終日";
   const loc = ev.location?.trim() ? ` @${ev.location.trim()}` : "";
   const title = ev.title?.trim() || "（タイトルなし）";
@@ -164,7 +171,11 @@ function formatOneOpeningCalendarLine(ev: CalendarEventBrief): string {
 }
 
 /** `orderedEvIdx`: 開口時は Impact×近さでソートした event インデックス（先頭ほど優先） */
-function formatOpeningDayCalendarBrief(events: CalendarEventBrief[], orderedEvIdx?: number[]): string {
+function formatOpeningDayCalendarBrief(
+  events: CalendarEventBrief[],
+  orderedEvIdx: number[] | undefined,
+  timeZone: string,
+): string {
   if (events.length === 0) {
     return "（この日の予定は登録されていないか、取得結果が空です）";
   }
@@ -175,13 +186,13 @@ function formatOpeningDayCalendarBrief(events: CalendarEventBrief[], orderedEvId
     for (const i of orderedEvIdx) {
       if (i < 0 || i >= events.length || used.has(i)) continue;
       used.add(i);
-      lines.push(formatOneOpeningCalendarLine(events[i]!));
+      lines.push(formatOneOpeningCalendarLine(events[i]!, timeZone));
       if (lines.length >= max) break;
     }
   }
   for (let i = 0; i < events.length && lines.length < max; i++) {
     if (used.has(i)) continue;
-    lines.push(formatOneOpeningCalendarLine(events[i]!));
+    lines.push(formatOneOpeningCalendarLine(events[i]!, timeZone));
   }
   return lines.join("\n");
 }
@@ -281,6 +292,15 @@ export type OrchestratorParams = {
   preferMiniOrchestrator?: boolean;
   /** クライアント送信時刻を反映した壁時計（未指定時は呼び出し側で `new Date()` を渡す） */
   clockNow?: Date;
+  /** チャットスレッド（設定提案の pending 保存に使用） */
+  threadId?: string | null;
+  /** 直前の設定適用など、system に追記するブロック（Markdown 可） */
+  extraSystemAppend?: string;
+  /**
+   * 開口のみ: カレンダー日とエントリ日がずれている等のとき `propose_settings_change` をツール候補に含める
+   * （通常の開口では OPENING_OMIT_TOOLS で除外される）
+   */
+  openingAllowSettingsTool?: boolean;
 };
 
 export type OrchestratorResult = {
@@ -313,10 +333,12 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     reflectiveUserTurnIncludingCurrent,
     preferMiniOrchestrator,
     clockNow,
+    threadId,
+    extraSystemAppend,
+    openingAllowSettingsTool,
   } = params;
 
   const orchestratorNow = clockNow ?? new Date();
-  const todayYmd = formatYmdTokyo(orchestratorNow);
   const useMini = Boolean(preferMiniOrchestrator) && !isOpening;
   let primaryModel = isOpening ? getOrchestratorOpeningChatModel() : getOrchestratorChatModel();
   let fallbackModel = isOpening ? getOrchestratorOpeningChatFallbackModel() : getOrchestratorChatFallbackModel();
@@ -325,11 +347,19 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     fallbackModel = getAgentSocialMiniChatFallbackModel();
   }
 
-  const [userRow, longTermContext, shortTermContext, weather, calendarRes] = await Promise.all([
-    prisma.user.findUnique({
-      where: { id: userId },
-      select: { settings: true },
-    }),
+  const userRow = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { settings: true, timeZone: true },
+  });
+  const parsedSettings = parseUserSettings(userRow?.settings ?? {});
+  const profile = parsedSettings.profile;
+  const dayBoundaryEndTime = parsedSettings.dayBoundaryEndTime ?? null;
+  const userTimeZone = resolveUserTimeZone(profile?.timeZone, userRow?.timeZone);
+  const boundaryResolved = resolveDayBoundaryEndTime(dayBoundaryEndTime);
+  const todayYmd = getEffectiveTodayYmd(orchestratorNow, userTimeZone, boundaryResolved);
+  const temporalOpts = { timeZone: userTimeZone, dayBoundaryEndTime };
+
+  const [longTermContext, shortTermContext, weather, calendarRes] = await Promise.all([
     loadLongTermContext(userId),
     loadShortTermContextForEntry(userId, entryId),
     getWeatherContext({ userId, entryId, entryDateYmd, now: orchestratorNow }).catch(
@@ -346,13 +376,13 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
           now: orchestratorNow,
           lat: DEFAULT_WEATHER_LATITUDE,
           lon: DEFAULT_WEATHER_LONGITUDE,
+          timeZone: userTimeZone,
+          dayBoundaryEndTime,
         }),
       }),
     ),
     fetchCalendarEventsForDay(userId, entryDateYmd),
   ]);
-
-  const profile = parseUserSettings(userRow?.settings ?? {}).profile;
   const calendarAvailable = isCalendarToolEligible(calendarRes);
 
   const personaLines = formatAgentPersonaForPrompt({
@@ -404,7 +434,10 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     persona,
   );
 
-  const openingRecommendedForPrompt = openingHint.recommendedAgents.filter((n) => !OPENING_OMIT_TOOLS.has(n));
+  const openingRecommendedForPrompt = openingHint.recommendedAgents.filter((n) => {
+    if (n === "propose_settings_change") return Boolean(openingAllowSettingsTool);
+    return !OPENING_OMIT_TOOLS.has(n);
+  });
 
   let calendarOrderedEvIdx: number[] | undefined;
   let openingCalendarPriorityJa = "";
@@ -438,7 +471,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
 
   const timetableOpeningFocusJa =
     isOpening &&
-    diffCalendarDaysTokyo(entryDateYmd, todayYmd) === 0 &&
+    diffCalendarDaysInZone(entryDateYmd, todayYmd, userTimeZone) === 0 &&
     profile?.occupationRole === "student" &&
     profile.studentTimetable?.trim()
       ? formatTimetableNextFocusForOpeningJa(
@@ -457,7 +490,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
       : rawBody;
 
   const weatherSectionTitle =
-    diffCalendarDaysTokyo(entryDateYmd, todayYmd) === 0
+    diffCalendarDaysInZone(entryDateYmd, todayYmd, userTimeZone) === 0
       ? "## 今日の天気"
       : `## エントリ日（${formatYmdWithTokyoWeekday(entryDateYmd)}）の天気`;
 
@@ -475,9 +508,16 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
       ? `## ユーザーの訂正メモ（断定を避けること）\n${corrections.map((c) => `- ${c}`).join("\n")}`
       : "",
     "",
-    formatOrchestratorTemporalBlock(entryDateYmd, orchestratorNow),
+    formatOrchestratorTemporalBlock(entryDateYmd, orchestratorNow, temporalOpts),
     "",
     weather.wallClockDaylightBlockEn ?? "",
+    "",
+    formatOrchestratorDayBoundaryBlock({
+      entryDateYmd,
+      now: orchestratorNow,
+      dayBoundaryEndTime,
+      timeZone: userTimeZone,
+    }),
     "",
     formatOrchestratorScheduleGroundingBlock(),
     "",
@@ -498,12 +538,17 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     "",
     bodyForPrompt ? `## 本文（このエントリ）\n${bodyForPrompt}` : "",
     isOpening
-      ? buildReflectiveOpeningSystemInstruction(entryDateYmd, orchestratorNow, {
-          hasDiaryBody: rawBody.length > 0,
-          calendarLinked: calendarRes.ok,
-          calendarEventCount: calendarRes.ok ? calendarRes.events.length : 0,
-          hasTimetableLecturesToday,
-        })
+      ? buildReflectiveOpeningSystemInstruction(
+          entryDateYmd,
+          orchestratorNow,
+          {
+            hasDiaryBody: rawBody.length > 0,
+            calendarLinked: calendarRes.ok,
+            calendarEventCount: calendarRes.ok ? calendarRes.events.length : 0,
+            hasTimetableLecturesToday,
+          },
+          temporalOpts,
+        )
       : "",
     isOpening && openingHint.openingNote ? `## 開口のヒント\n${openingHint.openingNote}` : "",
     isOpening && openingRecommendedForPrompt.length > 0
@@ -514,7 +559,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
       ? `## 時間割ベースのこの後の講義（Googleカレンダーに無いことが多い）\n${timetableOpeningFocusJa}`
       : "",
     calendarRes.ok
-      ? `${ORCHESTRATOR_DAY_CALENDAR_HEADING}\n${formatOpeningDayCalendarBrief(calendarRes.events, calendarOrderedEvIdx)}`
+      ? `${ORCHESTRATOR_DAY_CALENDAR_HEADING}\n${formatOpeningDayCalendarBrief(calendarRes.events, calendarOrderedEvIdx, userTimeZone)}`
       : "",
     "",
     !calendarAvailable
@@ -526,6 +571,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
       : "",
     longTermContext ? `## 長期記憶（参考）\n${longTermContext}` : "",
     shortTermContext ? `## 短期（この日・参考）\n${shortTermContext}` : "",
+    extraSystemAppend ? extraSystemAppend : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -554,7 +600,11 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
   });
 
   if (isOpening) {
-    allowedTools = allowedTools.filter((t) => !OPENING_OMIT_TOOLS.has(t.function.name));
+    allowedTools = allowedTools.filter((t) => {
+      const name = t.function.name;
+      if (name === "propose_settings_change" && openingAllowSettingsTool) return true;
+      return !OPENING_OMIT_TOOLS.has(name);
+    });
   }
 
   if (useMini) {
@@ -612,20 +662,21 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
         const toolName = (tc as { id: string; function: { name: string; arguments: string } }).function.name;
         agentsUsed.push(toolName);
 
-        let args: { focus?: string } = {};
+        let rawArgs: Record<string, unknown> = {};
         try {
-          args = JSON.parse(
+          rawArgs = JSON.parse(
             (tc as { id: string; function: { name: string; arguments: string } }).function.arguments || "{}",
-          ) as { focus?: string };
+          ) as Record<string, unknown>;
         } catch {
-          args = {};
+          rawArgs = {};
         }
+        const focus = typeof rawArgs.focus === "string" ? rawArgs.focus : undefined;
 
         const baseReq: AgentRequest = {
           userId,
           entryId,
           entryDateYmd,
-          userMessage: args.focus ?? toolUserFallback,
+          userMessage: focus ?? toolUserFallback,
           persona,
           longTermContext: longTermContext || undefined,
           agentMemory: {},
@@ -687,6 +738,8 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
           } else {
             toolResult = "（恋愛トピックは除外設定済み）";
           }
+        } else if (toolName === "propose_settings_change") {
+          toolResult = await runProposeSettingsChangeTool({ rawArgs, threadId: threadId ?? null });
         } else {
           toolResult = "（未対応のツール）";
         }

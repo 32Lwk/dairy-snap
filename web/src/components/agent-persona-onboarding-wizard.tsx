@@ -13,6 +13,7 @@ import {
   AI_HEALTH_COMFORT_OPTIONS,
   AI_HOUSEHOLD_OPTIONS,
 } from "@/lib/agent-persona-preferences";
+import { FancySelect } from "@/components/fancy-select";
 
 type Form = UserProfileSettings & { onboardingWorkLifeAnswers?: Record<string, string> };
 
@@ -140,7 +141,7 @@ export function AgentPersonaOnboardingWizard({
           <div className="rounded-xl border border-zinc-200 bg-white px-3 py-3 dark:border-zinc-700 dark:bg-zinc-950">
             <p className="text-sm font-medium text-zinc-900 dark:text-zinc-50">会話の中で、どう呼ばれたいですか？</p>
             <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">未選択なら、特に指定しません。</p>
-            <select
+            <FancySelect
               value={form.aiAddressStyle ?? ""}
               onChange={(e) => patchForm({ ...form, aiAddressStyle: e.target.value })}
               className={selectCls}
@@ -150,7 +151,7 @@ export function AgentPersonaOnboardingWizard({
                   {o.label}
                 </option>
               ))}
-            </select>
+            </FancySelect>
           </div>
         }
         footer={nav}
@@ -165,7 +166,7 @@ export function AgentPersonaOnboardingWizard({
           <div className="rounded-xl border border-zinc-200 bg-white px-3 py-3 dark:border-zinc-700 dark:bg-zinc-950">
             <p className="text-sm font-medium text-zinc-900 dark:text-zinc-50">AIの返し方のイメージに近いものは？</p>
             <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">共感多め／短く要約、など好みに合わせられます。</p>
-            <select
+            <FancySelect
               value={form.aiChatTone ?? ""}
               onChange={(e) => patchForm({ ...form, aiChatTone: e.target.value })}
               className={selectCls}
@@ -175,7 +176,7 @@ export function AgentPersonaOnboardingWizard({
                   {o.label}
                 </option>
               ))}
-            </select>
+            </FancySelect>
           </div>
         }
         footer={nav}
@@ -192,7 +193,7 @@ export function AgentPersonaOnboardingWizard({
             <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
               深い話題は、あなたのペースを優先する設定も選べます。
             </p>
-            <select
+            <FancySelect
               value={form.aiDepthLevel ?? ""}
               onChange={(e) => patchForm({ ...form, aiDepthLevel: e.target.value })}
               className={selectCls}
@@ -202,7 +203,7 @@ export function AgentPersonaOnboardingWizard({
                   {o.label}
                 </option>
               ))}
-            </select>
+            </FancySelect>
           </div>
         }
         footer={nav}
@@ -226,7 +227,7 @@ export function AgentPersonaOnboardingWizard({
                 残業や締切が多いときは、次の「忙しい時間帯」で複数選ぶと言い回しが安定しやすいです。
               </p>
             ) : null}
-            <select
+            <FancySelect
               value={form.aiEnergyPeak ?? ""}
               onChange={(e) => patchForm({ ...form, aiEnergyPeak: e.target.value })}
               className={selectCls}
@@ -236,7 +237,7 @@ export function AgentPersonaOnboardingWizard({
                   {o.label}
                 </option>
               ))}
-            </select>
+            </FancySelect>
           </div>
         }
         footer={nav}
@@ -287,7 +288,7 @@ export function AgentPersonaOnboardingWizard({
             <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
               答えたくなければ「答えたくない」のままでOKです。あとで「避けたい話題」の候補が変わります。
             </p>
-            <select
+            <FancySelect
               value={form.aiHousehold ?? ""}
               onChange={(e) => patchForm({ ...form, aiHousehold: e.target.value })}
               className={selectCls}
@@ -297,7 +298,7 @@ export function AgentPersonaOnboardingWizard({
                   {o.label}
                 </option>
               ))}
-            </select>
+            </FancySelect>
           </div>
         }
         footer={nav}
@@ -314,7 +315,7 @@ export function AgentPersonaOnboardingWizard({
             <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
               医療の判断や診断は行いません。保存はアプリ内の文脈づくりにだけ使います。
             </p>
-            <select
+            <FancySelect
               value={form.aiHealthComfort ?? ""}
               onChange={(e) => patchForm({ ...form, aiHealthComfort: e.target.value })}
               className={selectCls}
@@ -324,7 +325,7 @@ export function AgentPersonaOnboardingWizard({
                   {o.label}
                 </option>
               ))}
-            </select>
+            </FancySelect>
             {healthNone ? (
               <p className="mt-2 rounded-lg bg-zinc-50 px-2 py-1.5 text-xs text-zinc-600 dark:bg-zinc-900/60 dark:text-zinc-300">
                 体調や病気の具体的な話題は扱わない設定になります。

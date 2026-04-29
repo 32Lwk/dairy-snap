@@ -36,6 +36,7 @@ enum ArtifactKind {
   IMPACT_ESTIMATE
   EMBEDDING
   IMAGE_PROMPT
+  SETTINGS_PATCH
 }
 
 model User {
@@ -560,6 +561,8 @@ model UsageCounter {
   orchestratorCalls Int @default(0)
   /** 記憶サブエージェント（ターン抽出・日記統合・スレッド整合）の LLM 呼び出し回数／日（将来の上限用） */
   memorySubAgentCalls Int @default(0)
+  /** チャット経由の設定自動適用（成功時にインクリメント／日） */
+  settingsChanges Int @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

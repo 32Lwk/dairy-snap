@@ -51,12 +51,44 @@ export async function GET(req: NextRequest) {
       list.push(row);
       shortByEntry.set(row.entryId, list);
     }
-    const shortTermGroups = entries.map((e) => ({
+
+    /** 日記一覧は直近 400 件のみ。短期・長期の参照先がそれより古い日でも DB 上は残るため、メタと一覧を補完する。 */
+    const coveredEntryIds = new Set(entries.map((e) => e.id));
+    const shortEntryIdsBeyondWindow = [...shortByEntry.keys()].filter((id) => !coveredEntryIds.has(id));
+    const longSourceIdsNeedingMeta = [
+      ...new Set(
+        allLong.map((r) => r.sourceEntryId).filter((id): id is string => id != null),
+      ),
+    ].filter((id) => !entryIdToMeta.has(id));
+    const extraEntryIds = [...new Set([...shortEntryIdsBeyondWindow, ...longSourceIdsNeedingMeta])];
+    if (extraEntryIds.length > 0) {
+      const extraRows = await prisma.dailyEntry.findMany({
+        where: { userId: session.user.id, id: { in: extraEntryIds } },
+        select: { id: true, entryDateYmd: true, encryptionMode: true },
+      });
+      for (const e of extraRows) entryIdToMeta.set(e.id, e);
+    }
+
+    const shortTermGroupsFromRecent = entries.map((e) => ({
       entryId: e.id,
       entryDateYmd: e.entryDateYmd,
       encryptionMode: e.encryptionMode,
       items: shortByEntry.get(e.id) ?? [],
     }));
+    let shortTermGroups = shortTermGroupsFromRecent;
+    if (shortEntryIdsBeyondWindow.length > 0) {
+      const beyondGroups = shortEntryIdsBeyondWindow
+        .map((id) => entryIdToMeta.get(id))
+        .filter((m): m is (typeof entries)[number] => m != null)
+        .sort((a, b) => b.entryDateYmd.localeCompare(a.entryDateYmd))
+        .map((e) => ({
+          entryId: e.id,
+          entryDateYmd: e.entryDateYmd,
+          encryptionMode: e.encryptionMode,
+          items: shortByEntry.get(e.id) ?? [],
+        }));
+      shortTermGroups = [...shortTermGroupsFromRecent, ...beyondGroups];
+    }
 
     const longByKey = new Map<
       string,
