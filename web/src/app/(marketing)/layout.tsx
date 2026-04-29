@@ -1,10 +1,19 @@
 import { MarketingSiteShell } from "@/components/marketing/marketing-site-shell";
-import { env } from "@/env";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
+function safeMetadataBase() {
+  const origin = process.env.NEXT_PUBLIC_APP_ORIGIN;
+  if (!origin) return undefined;
+  try {
+    return new URL(origin);
+  } catch {
+    return undefined;
+  }
+}
+
 export const metadata: Metadata = {
-  metadataBase: new URL(env.NEXT_PUBLIC_APP_ORIGIN),
+  metadataBase: safeMetadataBase(),
   title: {
     template: "%s — daily-snap",
     default: "daily-snap",
