@@ -31,7 +31,7 @@ type WeatherJsonForPanel = {
   locationNote?: string;
 };
 
-export type JournalDraftPanelImage = { id: string; mimeType: string; byteSize: number };
+export type JournalDraftPanelImage = { id: string; mimeType: string; byteSize: number; rotationQuarterTurns?: number; caption?: string };
 
 /** flushSync 直後の fetch がメインスレッドを塞ぐ前に、ブラウザに描画を譲る */
 function yieldToPaint(): Promise<void> {

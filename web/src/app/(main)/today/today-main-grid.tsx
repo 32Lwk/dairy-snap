@@ -14,6 +14,7 @@ export function TodayMainGrid({
   entryDateYmd,
   chatSecurityNoticeJa,
   images,
+  photosDailyQuota,
   initialThreadId,
   initialMessages,
   latitude,
@@ -27,7 +28,8 @@ export function TodayMainGrid({
   entryId: string;
   entryDateYmd: string;
   chatSecurityNoticeJa?: string | null;
-  images: { id: string; mimeType: string; byteSize: number }[];
+  images: { id: string; mimeType: string; byteSize: number; rotationQuarterTurns?: number; caption?: string }[];
+  photosDailyQuota?: { remaining: number; dailyLimit: number; resetAt: string };
   initialThreadId: string | null;
   initialMessages: Msg[];
   latitude: number | null;
@@ -104,6 +106,7 @@ export function TodayMainGrid({
             entryId={entryId}
             entryDateYmd={entryDateYmd}
             images={images}
+            photosDailyQuota={photosDailyQuota}
           />
         </div>
 

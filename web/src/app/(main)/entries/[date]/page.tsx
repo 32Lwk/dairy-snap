@@ -52,6 +52,11 @@ export default async function EntryByDatePage({
     (chatThread?.messages ?? []).map((m) => ({ role: m.role, content: m.content })),
   );
   const savedEntryTagsCsv = entry.entryTags.map((et) => et.tag.name).join("、");
+  const dailyLimit = 5;
+  const remaining = Math.max(0, dailyLimit - (entry.images?.length ?? 0));
+  const resetAt = new Date(`${date}T00:00:00+09:00`);
+  resetAt.setDate(resetAt.getDate() + 1);
+  const resetAtIso = resetAt.toISOString();
 
   return (
     <EntryByDateView
@@ -84,7 +89,10 @@ export default async function EntryByDatePage({
         id: i.id,
         mimeType: i.mimeType,
         byteSize: i.byteSize,
+        rotationQuarterTurns: i.rotationQuarterTurns,
+        caption: i.caption,
       }))}
+      photosDailyQuota={{ remaining, dailyLimit, resetAt: resetAtIso }}
       dominantEmotion={entry.dominantEmotion}
       initialPlutchikAnalysis={entry.plutchikAnalysis}
       transcriptCharCount={transcriptMeta.charCount}

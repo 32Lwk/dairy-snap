@@ -1,7 +1,12 @@
 "use client";
 
 import { ResponsiveDialog } from "@/components/responsive-dialog";
-import { runGooglePhotosPickerImport } from "@/lib/google-photos-picker-client";
+import {
+  openBlankGooglePhotosPickerWindow,
+  runGooglePhotosPickerImport,
+  startGooglePhotosPickerSession,
+  type GooglePhotosPickerSessionStart,
+} from "@/lib/google-photos-picker-client";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
@@ -28,21 +33,49 @@ export function GooglePhotosImportDialog({
   const [phase, setPhase] = useState<Phase>("intro");
   const [resultMsg, setResultMsg] = useState<string | null>(null);
   const [errMsg, setErrMsg] = useState<string | null>(null);
+  const [prefetchedSession, setPrefetchedSession] = useState<GooglePhotosPickerSessionStart | null>(null);
+  const [prefetchErr, setPrefetchErr] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) {
-      setPhase("intro");
-      setResultMsg(null);
-      setErrMsg(null);
+      // lint ルール（react-hooks/set-state-in-effect）回避のため、effect 直下ではなく非同期キューでリセットする
+      queueMicrotask(() => {
+        setPhase("intro");
+        setResultMsg(null);
+        setErrMsg(null);
+        setPrefetchedSession(null);
+        setPrefetchErr(null);
+      });
+      return;
     }
-  }, [open]);
+    // 体感速度改善: ダイアログを開いた時点で Picker セッションを先読みする（失敗しても start 時に再試行する）
+    let cancelled = false;
+    setPrefetchErr(null);
+    void (async () => {
+      try {
+        const s = await startGooglePhotosPickerSession({ entryDateYmd, entryId });
+        if (!cancelled) setPrefetchedSession(s);
+      } catch (e) {
+        if (!cancelled) setPrefetchErr(e instanceof Error ? e.message : "Google Photos の準備に失敗しました");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, entryDateYmd, entryId]);
 
   const start = useCallback(async () => {
     setErrMsg(null);
     setResultMsg(null);
     setPhase("working");
     try {
-      const outcome = await runGooglePhotosPickerImport({ entryDateYmd, entryId });
+      const outcome = await runGooglePhotosPickerImport({
+        entryDateYmd,
+        entryId,
+        // クリック直後に空ポップアップを開く（ブロック回避 + ブロック検知）
+        openPopup: () => openBlankGooglePhotosPickerWindow(),
+        session: prefetchedSession ?? undefined,
+      });
       if (!outcome.ok) {
         setErrMsg(outcome.error);
         setPhase("error");
@@ -55,7 +88,7 @@ export function GooglePhotosImportDialog({
       setErrMsg(e instanceof Error ? e.message : "取り込みに失敗しました");
       setPhase("error");
     }
-  }, [entryDateYmd, entryId, router]);
+  }, [entryDateYmd, entryId, prefetchedSession, router]);
 
   const idSuffix = instanceId.replace(/[^a-zA-Z0-9_-]/g, "") || "default";
 
@@ -88,6 +121,11 @@ export function GooglePhotosImportDialog({
                 Google の仕様により、写真の選択画面は<strong>このアプリ内の iframe には表示できません</strong>。
                 代わりに<strong>中央のポップアップ</strong>で開きます（選択後は自動で閉じる設定です）。
               </p>
+              {prefetchErr ? (
+                <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-900 dark:bg-red-950/40 dark:text-red-100">
+                  {prefetchErr}
+                </p>
+              ) : null}
               <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-950 dark:bg-amber-950/40 dark:text-amber-100">
                 取り込み対象は<strong>撮影日（メタデータ）が「{entryDateYmd}」の東京の暦日と一致するものだけ</strong>です。別日の写真を選んでも日記には保存されません。
               </p>
@@ -136,6 +174,15 @@ export function GooglePhotosImportDialog({
           {phase === "error" && errMsg ? (
             <div className="space-y-3">
               <p className="text-red-600 dark:text-red-400">{errMsg}</p>
+              {errMsg.includes("ポップアップ") ? (
+                <div className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+                  <p className="font-medium">対処方法</p>
+                  <ul className="mt-1 list-disc space-y-1 pl-5">
+                    <li>このサイトのポップアップを「許可」にしてください（アドレスバー右側のアイコンから変更できます）。</li>
+                    <li>許可後、下の「もう一度開く」を押してください。</li>
+                  </ul>
+                </div>
+              ) : null}
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
@@ -144,6 +191,15 @@ export function GooglePhotosImportDialog({
                 >
                   戻る
                 </button>
+                {errMsg.includes("ポップアップ") ? (
+                  <button
+                    type="button"
+                    onClick={() => void start()}
+                    className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600"
+                  >
+                    もう一度開く
+                  </button>
+                ) : null}
                 <button type="button" onClick={onClose} className="rounded-lg border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700">
                   閉じる
                 </button>

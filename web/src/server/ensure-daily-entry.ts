@@ -7,7 +7,7 @@ const dailyEntryLatestThreadInclude = {
     take: 1,
     include: { messages: { orderBy: { createdAt: "asc" as const } } },
   },
-  images: { select: { id: true, mimeType: true, byteSize: true } },
+  images: { select: { id: true, mimeType: true, byteSize: true, rotationQuarterTurns: true, caption: true } },
 } as const;
 
 function isPrismaUniqueViolation(e: unknown): boolean {

@@ -6,7 +6,6 @@ import { prisma } from "@/server/db";
 import { upsertDailyEntryForYmd } from "@/server/ensure-daily-entry";
 import { redirect } from "next/navigation";
 import { readSecurityNoticeJaFromConversationNotes } from "@/lib/chat-thread-security-notice";
-import { PhotosDailyQuotaBadge } from "@/components/photos-daily-quota-badge";
 import { TodayMainGrid } from "./today-main-grid";
 
 export default async function TodayPage() {
@@ -33,6 +32,7 @@ export default async function TodayPage() {
   const remaining = Math.max(0, dailyLimit - (entry.images?.length ?? 0));
   const resetAt = new Date(`${ymd}T00:00:00+09:00`);
   resetAt.setDate(resetAt.getDate() + 1);
+  const resetAtIso = resetAt.toISOString();
   const chatSecurityNoticeJa = readSecurityNoticeJaFromConversationNotes(chatThread?.conversationNotes);
   const transcriptMeta = buildEntryChatTranscript(
     (chatThread?.messages ?? []).map((m) => ({ role: m.role, content: m.content })),
@@ -47,9 +47,6 @@ export default async function TodayPage() {
             <h1 className="mt-1 text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
               {ymd}
             </h1>
-            <div className="mt-2">
-              <PhotosDailyQuotaBadge remaining={remaining} dailyLimit={dailyLimit} resetAt={resetAt} />
-            </div>
           </div>
         </div>
       </header>
@@ -58,8 +55,15 @@ export default async function TodayPage() {
         entryId={entry.id}
         entryDateYmd={ymd}
         diaryBody={entry.body ?? ""}
+        photosDailyQuota={{ remaining, dailyLimit, resetAt: resetAtIso }}
         chatSecurityNoticeJa={chatSecurityNoticeJa}
-        images={(entry.images ?? []).map((i) => ({ id: i.id, mimeType: i.mimeType, byteSize: i.byteSize }))}
+        images={(entry.images ?? []).map((i) => ({
+          id: i.id,
+          mimeType: i.mimeType,
+          byteSize: i.byteSize,
+          rotationQuarterTurns: i.rotationQuarterTurns,
+          caption: i.caption,
+        }))}
         initialThreadId={chatThread?.id ?? null}
         initialMessages={
           chatThread?.messages.map((m) => ({

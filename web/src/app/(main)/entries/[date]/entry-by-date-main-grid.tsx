@@ -25,6 +25,7 @@ export function EntryByDateMainGrid({
   body,
   appendEvents,
   images,
+  photosDailyQuota,
   dominantEmotion,
   initialPlutchikAnalysis,
   transcriptCharCount,
@@ -42,7 +43,8 @@ export function EntryByDateMainGrid({
   weatherJson: unknown;
   body: string;
   appendEvents: AppendEv[];
-  images: { id: string; mimeType: string; byteSize: number }[];
+  images: { id: string; mimeType: string; byteSize: number; rotationQuarterTurns?: number; caption?: string }[];
+  photosDailyQuota?: { remaining: number; dailyLimit: number; resetAt: string };
   dominantEmotion: string | null;
   initialPlutchikAnalysis: unknown | null;
   transcriptCharCount: number;
@@ -146,6 +148,7 @@ export function EntryByDateMainGrid({
             entryId={entryId}
             entryDateYmd={entryDateYmd}
             images={images}
+            photosDailyQuota={photosDailyQuota}
           />
         </div>
 

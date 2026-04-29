@@ -186,6 +186,11 @@ model Image {
   /** Google Photos Picker の mediaItemId（同一枚の重複保存防止用・任意） */
   googleMediaItemId String?
 
+  /** UI表示用の回転（0,1,2,3 で 0/90/180/270 度）。画像データ自体は回転しない。 */
+  rotationQuarterTurns Int @default(0)
+  /** 画像に付ける一言メモ（キャプション） */
+  caption String @default("")
+
   width  Int?
   height Int?
 

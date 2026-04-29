@@ -1027,26 +1027,7 @@ export function CalendarClient(props: {
         </div>
       </header>
 
-      <div className="mt-2 flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,3fr)_minmax(0,7fr)] lg:items-start lg:gap-8">
-        <div className="min-w-0 space-y-4 lg:min-h-0">
-          <UpcomingGoogleEvents
-            key="upcoming-google-events"
-            filter={filterSettings}
-            calendarHexById={gridDisplay.calendarHexById}
-            calendarDisplayLabelById={opening?.calendarDisplayLabelById}
-          />
-          {props.selectedDateYmd ? (
-            <p className="text-center text-sm text-zinc-600 sm:text-left dark:text-zinc-400">
-              <Link
-                href={`/entries/${props.selectedDateYmd}`}
-                className="font-medium text-emerald-700 underline decoration-emerald-700/30 underline-offset-2 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300"
-              >
-                {props.selectedDateYmd} のエントリ（本文・画像・追記）を開く
-              </Link>
-            </p>
-          ) : null}
-        </div>
-
+      <div className="mt-2 flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,7fr)_minmax(0,3fr)] lg:items-start lg:gap-8">
         <div className="min-w-0 space-y-4 lg:min-w-0">
           <div className="space-y-1.5">
         <p className="text-[11px] font-medium text-zinc-600 dark:text-zinc-300">表示の絞り込み</p>
@@ -1154,6 +1135,24 @@ export function CalendarClient(props: {
               onDayActivate={onCalendarDayActivate}
             />
           )}
+        </div>
+        <div className="min-w-0 space-y-4 lg:min-h-0">
+          <UpcomingGoogleEvents
+            key="upcoming-google-events"
+            filter={filterSettings}
+            calendarHexById={gridDisplay.calendarHexById}
+            calendarDisplayLabelById={opening?.calendarDisplayLabelById}
+          />
+          {props.selectedDateYmd ? (
+            <p className="text-center text-sm text-zinc-600 sm:text-left dark:text-zinc-400">
+              <Link
+                href={`/entries/${props.selectedDateYmd}`}
+                className="font-medium text-emerald-700 underline decoration-emerald-700/30 underline-offset-2 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300"
+              >
+                {props.selectedDateYmd} のエントリ（本文・画像・追記）を開く
+              </Link>
+            </p>
+          ) : null}
         </div>
       </div>
 

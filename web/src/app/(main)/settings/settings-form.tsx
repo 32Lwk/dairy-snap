@@ -252,6 +252,8 @@ export function SettingsForm({ userId }: { userId: string }) {
         | null
         | undefined;
       if (nw && typeof nw.latitude === "number" && typeof nw.longitude === "number") {
+        setLatIn(String(nw.latitude));
+        setLonIn(String(nw.longitude));
         void reverseGeocodeClient(nw.latitude, nw.longitude).then(setPlaceLine);
       } else {
         setPlaceLine(null);
@@ -264,6 +266,7 @@ export function SettingsForm({ userId }: { userId: string }) {
             }
           : d,
       );
+      await reloadSettingsFromServer();
     } finally {
       setSaving(false);
     }
@@ -296,6 +299,7 @@ export function SettingsForm({ userId }: { userId: string }) {
       setLabelIn("");
       setPlaceLine(null);
       setData((d) => (d ? { ...d, defaultWeatherLocation: null } : d));
+      await reloadSettingsFromServer();
     } finally {
       setSaving(false);
     }
@@ -316,6 +320,7 @@ export function SettingsForm({ userId }: { userId: string }) {
         setLonIn(String(lo));
         setGeoBusy(false);
         void reverseGeocodeClient(la, lo).then(setPlaceLine);
+        window.dispatchEvent(new CustomEvent("daily-snap:weather-map:flyto", { detail: { lat: la, lng: lo, zoom: 13 } }));
       },
       () => {
         setGeoBusy(false);
@@ -382,6 +387,16 @@ export function SettingsForm({ userId }: { userId: string }) {
   const pickedLat = parseFloat(latIn);
   const pickedLon = parseFloat(lonIn);
   const pickedOk = Number.isFinite(pickedLat) && Number.isFinite(pickedLon);
+  const savedLoc = data.defaultWeatherLocation;
+  const savedLat = typeof savedLoc?.latitude === "number" ? savedLoc.latitude : NaN;
+  const savedLon = typeof savedLoc?.longitude === "number" ? savedLoc.longitude : NaN;
+  const savedLabel = typeof savedLoc?.label === "string" ? savedLoc.label : "";
+  const sameCoords =
+    pickedOk && Number.isFinite(savedLat) && Number.isFinite(savedLon)
+      ? Math.abs(pickedLat - savedLat) < 1e-6 && Math.abs(pickedLon - savedLon) < 1e-6
+      : !pickedOk && !Number.isFinite(savedLat) && !Number.isFinite(savedLon);
+  const sameLabel = (labelIn ?? "").trim() === (savedLabel ?? "").trim();
+  const locationIsSynced = sameCoords && sameLabel;
 
   return (
     <>
@@ -578,7 +593,7 @@ export function SettingsForm({ userId }: { userId: string }) {
       </section>
 
       <section className="w-full min-w-0 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
-        <h2 className="font-medium text-zinc-900 dark:text-zinc-50">天気の既定の地点</h2>
+        <h2 className="text-sm font-medium text-zinc-900 dark:text-zinc-50">天気の既定の地点</h2>
         <p className="mt-1 text-xs text-zinc-500">
           エントリに位置がないときの天気取得（午前・午後）に使います。エントリに位置を保存した場合はそちらが優先されます。
         </p>
@@ -592,25 +607,27 @@ export function SettingsForm({ userId }: { userId: string }) {
           <WeatherLocationMapPicker
             latitude={pickedOk ? pickedLat : null}
             longitude={pickedOk ? pickedLon : null}
+            savedLatitude={typeof data.defaultWeatherLocation?.latitude === "number" ? data.defaultWeatherLocation.latitude : null}
+            savedLongitude={typeof data.defaultWeatherLocation?.longitude === "number" ? data.defaultWeatherLocation.longitude : null}
             onPick={onWeatherMapPick}
           />
         </div>
         <p className="mt-2 text-xs text-zinc-500">
           {"\u5730\u56f3\u3092\u30bf\u30c3\u30d7\u3059\u308b\u304b\u3001\u30d4\u30f3\u3092\u30c9\u30e9\u30c3\u30b0\u3057\u3066\u5730\u70b9\u3092\u6307\u5b9a\u3067\u304d\u307e\u3059\uff08OpenStreetMap\uff09\u3002"}
         </p>
-        <div className="mt-3 flex flex-wrap items-end gap-2">
+        <div className="mt-3 flex flex-wrap items-center gap-2">
           <input
             value={labelIn}
             onChange={(e) => setLabelIn(e.target.value)}
             aria-label="表示名（任意）"
             placeholder="表示名（任意）・自宅など"
-            className="min-w-[10rem] flex-1 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950 sm:min-w-[12rem]"
+            className="min-w-[10rem] flex-1 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs shadow-sm outline-none placeholder:text-zinc-400 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200/60 dark:border-zinc-700 dark:bg-zinc-950 dark:placeholder:text-zinc-600 dark:focus:border-emerald-500 dark:focus:ring-emerald-500/20 sm:min-w-[12rem]"
           />
           <button
             type="button"
             disabled={saving}
             onClick={() => void saveDefaultLocation()}
-            className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
+            className="inline-flex min-h-10 items-center justify-center rounded-xl bg-zinc-900 px-4 text-sm font-semibold text-white shadow-sm hover:bg-zinc-800 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
           >
             既定地点を保存
           </button>
@@ -618,7 +635,7 @@ export function SettingsForm({ userId }: { userId: string }) {
             type="button"
             disabled={saving || geoBusy}
             onClick={() => requestDefaultLocationGeolocation()}
-            className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm dark:border-zinc-700"
+            className="inline-flex min-h-10 items-center justify-center rounded-xl border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-800 shadow-sm hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
           >
             {geoBusy ? "…" : "現在地"}
           </button>
@@ -626,10 +643,19 @@ export function SettingsForm({ userId }: { userId: string }) {
             type="button"
             disabled={saving}
             onClick={() => void clearDefaultLocation()}
-            className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm dark:border-zinc-700"
+            className="inline-flex min-h-10 items-center justify-center rounded-xl border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 shadow-sm hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900"
           >
             クリア
           </button>
+          <span
+            className={[
+              "text-[11px] font-medium",
+              locationIsSynced ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300",
+            ].join(" ")}
+            aria-live="polite"
+          >
+            {locationIsSynced ? "保存済み" : "未保存"}
+          </span>
         </div>
       </section>
 
@@ -649,7 +675,7 @@ export function SettingsForm({ userId }: { userId: string }) {
       </section>
 
       <section className="w-full min-w-0 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
-        <h2 className="font-medium text-zinc-900 dark:text-zinc-50">アプリ内カレンダー</h2>
+        <h2 className="text-sm font-medium text-zinc-900 dark:text-zinc-50">アプリ内カレンダー</h2>
         <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
           Google に同期せず、このアプリのデータベースだけに保存するカレンダーです。一覧では「名前(アプリ)」のように表示されます。削除するとそのカレンダー上の予定もすべて消えます。
         </p>
@@ -659,7 +685,7 @@ export function SettingsForm({ userId }: { userId: string }) {
             onChange={(e) => setNewAppLocalName(e.target.value)}
             placeholder="新しいカレンダー名"
             aria-label="新しいアプリ内カレンダー名"
-            className="min-w-[12rem] flex-1 rounded-lg border border-zinc-200 px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+            className="min-w-[12rem] flex-1 rounded-lg border border-zinc-200 px-2 py-1.5 text-xs dark:border-zinc-700 dark:bg-zinc-950"
           />
           <button
             type="button"
@@ -687,13 +713,15 @@ export function SettingsForm({ userId }: { userId: string }) {
                 }
               })();
             }}
-            className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+            className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
           >
             追加
           </button>
         </div>
         {appLocalCalendars.length === 0 ? (
-          <p className="mt-3 text-sm text-zinc-500">まだありません。上で名前を付けて追加するか、カレンダー画面の表示設定からも追加できます。</p>
+          <p className="mt-3 text-xs text-zinc-500">
+            まだありません。上で名前を付けて追加するか、カレンダー画面の表示設定からも追加できます。
+          </p>
         ) : (
           <ul className="mt-3 space-y-3">
             {appLocalCalendars.map((row) => (

@@ -662,7 +662,7 @@ export function EntryChat({
               value={input}
               onChange={(e) => setInput(e.target.value)}
               rows={variant === "compact" ? 2 : 3}
-              className="min-h-[2.75rem] flex-1 resize-none rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-inner outline-none ring-emerald-500/30 placeholder:text-zinc-400 focus:border-emerald-500/50 focus:ring-2 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50"
+              className="min-h-[2.75rem] flex-1 resize-none rounded-xl border border-zinc-200 bg-white px-3 py-2 text-[13px] text-zinc-900 shadow-inner outline-none ring-emerald-500/30 placeholder:text-zinc-400 focus:border-emerald-500/50 focus:ring-2 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50"
               placeholder="気づいたこと、感情、今日の予定とのこと…"
               disabled={busy}
               onKeyDown={(e) => {
