@@ -6,6 +6,7 @@ import { prisma } from "@/server/db";
 import { upsertDailyEntryForYmd } from "@/server/ensure-daily-entry";
 import { redirect } from "next/navigation";
 import { readSecurityNoticeJaFromConversationNotes } from "@/lib/chat-thread-security-notice";
+import { PhotosDailyQuotaBadge } from "@/components/photos-daily-quota-badge";
 import { TodayMainGrid } from "./today-main-grid";
 
 export default async function TodayPage() {
@@ -28,6 +29,10 @@ export default async function TodayPage() {
   }
 
   const chatThread = entry?.chatThreads[0];
+  const dailyLimit = 5;
+  const remaining = Math.max(0, dailyLimit - (entry.images?.length ?? 0));
+  const resetAt = new Date(`${ymd}T00:00:00+09:00`);
+  resetAt.setDate(resetAt.getDate() + 1);
   const chatSecurityNoticeJa = readSecurityNoticeJaFromConversationNotes(chatThread?.conversationNotes);
   const transcriptMeta = buildEntryChatTranscript(
     (chatThread?.messages ?? []).map((m) => ({ role: m.role, content: m.content })),
@@ -42,6 +47,9 @@ export default async function TodayPage() {
             <h1 className="mt-1 text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
               {ymd}
             </h1>
+            <div className="mt-2">
+              <PhotosDailyQuotaBadge remaining={remaining} dailyLimit={dailyLimit} resetAt={resetAt} />
+            </div>
           </div>
         </div>
       </header>
