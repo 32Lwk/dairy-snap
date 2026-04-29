@@ -1,7 +1,7 @@
 "use client";
 
 import L from "leaflet";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MapContainer, Marker, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 
@@ -38,6 +38,17 @@ export function WeatherLocationMapPicker({
   longitude: number | null;
   onPick: (lat: number, lng: number) => void;
 }) {
+  const [shouldLoadMap, setShouldLoadMap] = useState(() => {
+    if (typeof navigator === "undefined") return true;
+    const connection = navigator.connection;
+    if (!connection) return true;
+    return !(
+      connection.saveData ||
+      connection.effectiveType === "slow-2g" ||
+      connection.effectiveType === "2g"
+    );
+  });
+
   useEffect(() => {
     const proto = L.Icon.Default.prototype as unknown as { _getIconUrl?: string };
     delete proto._getIconUrl;
@@ -55,6 +66,21 @@ export function WeatherLocationMapPicker({
   const fallbackZoom = hasPin ? 13 : 11;
   /** Avoid remounting on every drag; remount when toggling between「保存地点あり」and探索（東京）. */
   const mapKey = hasPin ? "pinned" : "explore-tokyo";
+
+  if (!shouldLoadMap) {
+    return (
+      <div className="relative z-0 flex h-56 w-full flex-col items-center justify-center gap-3 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 p-4 text-center text-sm text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 md:h-64">
+        <p>低速回線（データ節約）を検出したため、地図の自動読み込みを停止しています。</p>
+        <button
+          type="button"
+          onClick={() => setShouldLoadMap(true)}
+          className="rounded-md bg-zinc-900 px-3 py-2 text-xs font-medium text-white hover:bg-zinc-700 dark:bg-zinc-200 dark:text-zinc-900 dark:hover:bg-zinc-300"
+        >
+          地図を読み込む
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="relative z-0 h-56 w-full overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-700 md:h-64">

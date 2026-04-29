@@ -5,6 +5,8 @@ import { getResolvedAuthUser } from "@/lib/server/resolved-auth-user";
 import { fetchAppLocalEventsAsBriefs } from "@/server/app-local-calendar";
 import { prisma } from "@/server/db";
 import { notFound, redirect } from "next/navigation";
+import { formatYmdTokyo } from "@/lib/time/tokyo";
+import { PhotosDailyQuotaBadge } from "@/components/photos-daily-quota-badge";
 import { CalendarClient } from "../calendar-client";
 
 function monthRange(ym: string): { from: string; to: string } {
@@ -37,15 +39,22 @@ export default async function CalendarByDatePage({
   }
 
   const ym = date.slice(0, 7);
+  const todayYmd = formatYmdTokyo();
   const { from, to } = monthRange(ym);
   const fromAt = new Date(`${from}T00:00:00+09:00`);
   const toAt = new Date(`${to}T23:59:59.999+09:00`);
 
-  const entries = await prisma.dailyEntry.findMany({
-    where: { userId: r.user.id, entryDateYmd: { gte: from, lte: to } },
-    select: { entryDateYmd: true, title: true },
-    orderBy: { entryDateYmd: "asc" },
-  });
+  const [entries, todayEntry] = await Promise.all([
+    prisma.dailyEntry.findMany({
+      where: { userId: r.user.id, entryDateYmd: { gte: from, lte: to } },
+      select: { entryDateYmd: true, title: true },
+      orderBy: { entryDateYmd: "asc" },
+    }),
+    prisma.dailyEntry.findUnique({
+      where: { userId_entryDateYmd: { userId: r.user.id, entryDateYmd: todayYmd } },
+      select: { images: { select: { id: true } } },
+    }),
+  ]);
 
   const [initialGcalRows, appLocalBriefs] = await Promise.all([
     prisma.googleCalendarEventCache.findMany({
@@ -109,9 +118,16 @@ export default async function CalendarByDatePage({
   const next = new Date(yy, mm, 1);
   const prevYm = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`;
   const nextYm = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
+  const dailyLimit = 5;
+  const remaining = Math.max(0, dailyLimit - (todayEntry?.images.length ?? 0));
+  const resetAt = new Date(`${todayYmd}T00:00:00+09:00`);
+  resetAt.setDate(resetAt.getDate() + 1);
 
   return (
     <div className="mx-auto max-w-3xl px-4 pb-6 pt-[calc(4.5rem+env(safe-area-inset-top,0px))] md:max-w-2xl md:pt-[calc(4.75rem+env(safe-area-inset-top,0px))] lg:max-w-5xl xl:max-w-6xl">
+      <div className="mb-3">
+        <PhotosDailyQuotaBadge remaining={remaining} dailyLimit={dailyLimit} resetAt={resetAt} />
+      </div>
       <CalendarClient
         ym={ym}
         prevYm={prevYm}
