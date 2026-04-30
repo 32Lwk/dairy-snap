@@ -31,6 +31,23 @@ export async function deleteEmbedding(userId: string, targetType: string, target
   );
 }
 
+/** 同一種別の複数 target を1クエリで削除（チャット一括削除など） */
+export async function deleteEmbeddingsForTargets(
+  userId: string,
+  targetType: EmbeddingTargetType,
+  targetIds: string[],
+) {
+  const ids = [...new Set(targetIds)].filter(Boolean);
+  if (ids.length === 0) return;
+  const placeholders = ids.map((_, i) => `$${i + 3}`).join(", ");
+  await prisma.$executeRawUnsafe(
+    `DELETE FROM embeddings WHERE "userId" = $1 AND "targetType" = $2 AND "targetId" IN (${placeholders})`,
+    userId,
+    targetType,
+    ...ids,
+  );
+}
+
 /** 任意テキストをベクトル化して保存（空文字なら行削除） */
 export async function upsertTextEmbedding(
   userId: string,

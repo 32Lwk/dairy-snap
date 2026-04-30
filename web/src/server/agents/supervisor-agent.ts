@@ -64,17 +64,38 @@ export async function runSupervisorAgent(req: SupervisorRequest): Promise<void> 
       parsed = {};
     }
 
+    const routingScore = clamp01(parsed.routingScore);
+    const qualityScore = clamp01(parsed.qualityScore);
+    const personaScore = clamp01(parsed.personaScore);
+
     await prisma.agentEvaluation.create({
       data: {
         userId: req.userId,
         threadId: req.threadId,
         agentsUsed: req.agentsUsed,
-        routingScore: clamp01(parsed.routingScore),
-        qualityScore: clamp01(parsed.qualityScore),
-        personaScore: clamp01(parsed.personaScore),
+        routingScore,
+        qualityScore,
+        personaScore,
         notes: (parsed.notes as Record<string, string>) ?? {},
       },
     });
+
+    const LOW = 0.35;
+    if (routingScore < LOW || qualityScore < LOW || personaScore < LOW) {
+      await prisma.auditLog.create({
+        data: {
+          userId: req.userId,
+          action: "supervisor_low_score",
+          metadata: {
+            threadId: req.threadId,
+            routingScore,
+            qualityScore,
+            personaScore,
+            agentsUsed: req.agentsUsed,
+          },
+        },
+      });
+    }
   } catch {
     // スーパーバイザーの失敗はサイレントに無視（ユーザー体験に影響させない）
   }

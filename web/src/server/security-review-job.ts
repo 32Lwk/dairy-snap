@@ -24,6 +24,8 @@ export type SecurityReviewJobPayload = {
   entryId: string;
   runLlm: boolean;
   syncRuleTags: string[];
+  agentsUsed?: string[];
+  settingsProposalSummary?: string | null;
 };
 
 function excerpt(text: string, head: number, tail: number): string {
@@ -89,10 +91,26 @@ export async function runSecurityReviewJob(payload: SecurityReviewJobPayload): P
     const system = loadAgentPrompt("security-reviewer");
     const userBlock = [
       `## syncRuleTags (from server hot path)\n${JSON.stringify(payload.syncRuleTags)}`,
+      payload.agentsUsed?.length
+        ? `## agentsUsed (orchestrator tools this turn)\n${JSON.stringify(payload.agentsUsed)}`
+        : "",
+      payload.settingsProposalSummary
+        ? [
+            `## settingsProposalSummary (no secrets; patch shape only)\n${payload.settingsProposalSummary}`,
+            `## settingsPatchTokens\n${JSON.stringify(
+              payload.settingsProposalSummary
+                .split(";")
+                .map((s) => s.trim())
+                .filter(Boolean),
+            )}`,
+          ].join("\n\n")
+        : "",
       `## assistant excerpt (messageId=${payload.messageId})\n${excerpt(message.content, 500, 200)}`,
       "## recent_turns_excerpts",
       transcript || "(none)",
-    ].join("\n\n");
+    ]
+      .filter(Boolean)
+      .join("\n\n");
 
     try {
       const openai = getOpenAI();

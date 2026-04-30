@@ -18,6 +18,7 @@ import {
   mergeAppLocalEventsIntoGoogleList,
   patchAppLocalCalendarEvent,
 } from "@/server/app-local-calendar";
+import { tokyoCalendarDayEndExclusive, tokyoCalendarDayStart } from "@/lib/time/tokyo-calendar-interval";
 import { deleteEmbedding, upsertTextEmbedding } from "@/server/embeddings";
 
 export type CalendarEventBrief = {
@@ -290,10 +291,10 @@ function looksLikeDbSchemaOutOfSync(msg: string): boolean {
   return false;
 }
 
-function dateFromIsoLikeTokyo(isoLike: string, isEnd: boolean): Date {
+/** 終日は `YYYY-MM-DD` の 0 時（Google の終了日は排他端）。時刻付きはそのままパース。 */
+function dateFromIsoLikeTokyo(isoLike: string): Date {
   if (/^\d{4}-\d{2}-\d{2}$/.test(isoLike)) {
-    const suffix = isEnd ? "T23:59:59.999+09:00" : "T00:00:00+09:00";
-    return new Date(`${isoLike}${suffix}`);
+    return new Date(`${isoLike}T00:00:00+09:00`);
   }
   return new Date(isoLike);
 }
@@ -411,8 +412,8 @@ async function syncGoogleCalendarCache(
               eventSearchBlob,
               startIso,
               endIso,
-              startAt: dateFromIsoLikeTokyo(startIso, false),
-              endAt: dateFromIsoLikeTokyo(endIso, true),
+              startAt: dateFromIsoLikeTokyo(startIso),
+              endAt: dateFromIsoLikeTokyo(endIso),
               isCancelled,
               updatedAtGcal: updatedAtGcal ?? undefined,
             },
@@ -427,8 +428,8 @@ async function syncGoogleCalendarCache(
               eventSearchBlob,
               startIso,
               endIso,
-              startAt: dateFromIsoLikeTokyo(startIso, false),
-              endAt: dateFromIsoLikeTokyo(endIso, true),
+              startAt: dateFromIsoLikeTokyo(startIso),
+              endAt: dateFromIsoLikeTokyo(endIso),
               isCancelled,
               updatedAtGcal: updatedAtGcal ?? undefined,
             },
@@ -698,8 +699,8 @@ async function persistGcalEventToCacheAfterFetch(
       eventSearchBlob,
       startIso,
       endIso,
-      startAt: dateFromIsoLikeTokyo(startIso, false),
-      endAt: dateFromIsoLikeTokyo(endIso, true),
+      startAt: dateFromIsoLikeTokyo(startIso),
+      endAt: dateFromIsoLikeTokyo(endIso),
       isCancelled,
       updatedAtGcal: updatedAtGcal ?? undefined,
     },
@@ -714,8 +715,8 @@ async function persistGcalEventToCacheAfterFetch(
       eventSearchBlob,
       startIso,
       endIso,
-      startAt: dateFromIsoLikeTokyo(startIso, false),
-      endAt: dateFromIsoLikeTokyo(endIso, true),
+      startAt: dateFromIsoLikeTokyo(startIso),
+      endAt: dateFromIsoLikeTokyo(endIso),
       isCancelled,
       updatedAtGcal: updatedAtGcal ?? undefined,
     },
@@ -1163,16 +1164,16 @@ export async function fetchCalendarEventsForDay(
     // 当日分もキャッシュ同期対象に含まれるよう、まず同期（差分）
     await syncGoogleCalendarCache(userId, cal, { forceSync: false, minIntervalMs: 5 * 60 * 1000 });
 
-    const dayStart = tokyoStartOfDay(dayYmd);
-    const dayEnd = tokyoEndOfDay(dayYmd);
+    const dayStart = tokyoCalendarDayStart(dayYmd);
+    const dayEndExclusive = tokyoCalendarDayEndExclusive(dayYmd);
 
-    // 「当日に重なる」: startAt <= dayEnd && endAt >= dayStart
+    // 「当日に重なる」: [dayStart, dayEndExclusive) と [startAt, endAt) の半開区間が交差（回帰: src/lib/time/tokyo-calendar-interval.test.ts）
     const rows = await prisma.googleCalendarEventCache.findMany({
       where: {
         userId,
         isCancelled: false,
-        startAt: { lte: dayEnd },
-        endAt: { gte: dayStart },
+        startAt: { lt: dayEndExclusive },
+        endAt: { gt: dayStart },
       },
       orderBy: { startAt: "asc" },
       take: 50,

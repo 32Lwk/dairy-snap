@@ -13,6 +13,7 @@ export function TodayMainGrid({
   entryId,
   entryDateYmd,
   chatSecurityNoticeJa,
+  pendingSettingsSummaryJa,
   images,
   photosDailyQuota,
   initialThreadId,
@@ -28,6 +29,7 @@ export function TodayMainGrid({
   entryId: string;
   entryDateYmd: string;
   chatSecurityNoticeJa?: string | null;
+  pendingSettingsSummaryJa?: string | null;
   images: { id: string; mimeType: string; byteSize: number; rotationQuarterTurns?: number; caption?: string }[];
   photosDailyQuota?: { remaining: number; dailyLimit: number; resetAt: string };
   initialThreadId: string | null;
@@ -70,6 +72,7 @@ export function TodayMainGrid({
             entryId={entryId}
             threadId={initialThreadId}
             chatSecurityNoticeJa={chatSecurityNoticeJa}
+            pendingSettingsSummaryJa={pendingSettingsSummaryJa}
             initialMessages={initialMessages}
             variant="default"
             layoutHeight="fill"

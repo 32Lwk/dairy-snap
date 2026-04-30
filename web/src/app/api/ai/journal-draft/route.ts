@@ -11,6 +11,7 @@ import { PROMPT_VERSIONS } from "@/server/prompts";
 import { buildEntryChatTranscript } from "@/lib/chat/build-entry-chat-transcript";
 import { classifyJournalDraftMaterial } from "@/lib/reflective-chat-diary-nudge-rules";
 import { parseUserSettings } from "@/lib/user-settings";
+import { AppLogScope, scheduleAppLog } from "@/lib/server/app-log";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -115,12 +116,14 @@ export async function PUT(req: NextRequest) {
   if ("response" in session) return session.response;
 
   if (!process.env.OPENAI_API_KEY) {
+    scheduleAppLog(AppLogScope.journal, "warn", "journal_draft_openai_unconfigured", { method: "PUT" });
     return NextResponse.json({ error: "OPENAI_API_KEY が未設定です" }, { status: 503 });
   }
 
   const json = await req.json().catch(() => null);
   const parsed = genSchema.safeParse(json);
   if (!parsed.success) {
+    scheduleAppLog(AppLogScope.journal, "warn", "journal_draft_bad_request", { method: "PUT" });
     return NextResponse.json({ error: "入力が不正です" }, { status: 400 });
   }
 
@@ -174,6 +177,12 @@ export async function PUT(req: NextRequest) {
     },
   );
   if (!result.ok || !result.data) {
+    scheduleAppLog(AppLogScope.journal, "error", "journal_draft_generate_failed", {
+      userId: session.user.id,
+      entryId: parsed.data.entryId,
+      threadId: thread.id,
+      err: String(result.error ?? "no_data").slice(0, 400),
+    });
     return NextResponse.json(
       { error: result.error ?? "生成に失敗しました" },
       { status: 500 },
@@ -186,6 +195,15 @@ export async function PUT(req: NextRequest) {
   const tagGroundingCorpus = [suggestedTitle, text].filter((s) => s.trim().length > 0).join("\n");
   const suggestedTags = filterGroundedSuggestedTagsCsv(suggestedTagsRaw, tagGroundingCorpus, text);
   const latencyMs = Date.now() - started;
+
+  scheduleAppLog(AppLogScope.journal, "info", "journal_draft_generate_ok", {
+    userId: session.user.id,
+    entryId: parsed.data.entryId,
+    threadId: thread.id,
+    latencyMs,
+    model: result.data.model,
+    materialTier: journalDraftMaterial.tier,
+  });
 
   await prisma.aIArtifact.create({
     data: {
@@ -219,6 +237,7 @@ export async function POST(req: NextRequest) {
   const json = await req.json().catch(() => null);
   const parsed = approveSchema.safeParse(json);
   if (!parsed.success) {
+    scheduleAppLog(AppLogScope.journal, "warn", "journal_draft_bad_request", { method: "POST" });
     return NextResponse.json({ error: "入力が不正です" }, { status: 400 });
   }
 
@@ -233,13 +252,32 @@ export async function POST(req: NextRequest) {
       ? { title: parsed.data.entryTitle.trim() === "" ? null : parsed.data.entryTitle.trim().slice(0, 120) }
       : {};
 
-  const updated = await prisma.dailyEntry.update({
-    where: { id: entry.id },
-    data: { body: nextBody, ...titlePatch },
-  });
+  let updated;
+  try {
+    updated = await prisma.dailyEntry.update({
+      where: { id: entry.id },
+      data: { body: nextBody, ...titlePatch },
+    });
+  } catch (e) {
+    scheduleAppLog(AppLogScope.journal, "error", "journal_draft_merge_failed", {
+      userId: session.user.id,
+      entryId: entry.id,
+      err: e instanceof Error ? e.message : String(e).slice(0, 400),
+    });
+    return NextResponse.json({ error: "本文の更新に失敗しました" }, { status: 500 });
+  }
 
   if (parsed.data.tagsCsv !== undefined) {
-    await replaceEntryTagsFromCsv(entry.id, session.user.id, parsed.data.tagsCsv);
+    try {
+      await replaceEntryTagsFromCsv(entry.id, session.user.id, parsed.data.tagsCsv);
+    } catch (e) {
+      scheduleAppLog(AppLogScope.journal, "error", "journal_draft_tags_failed", {
+        userId: session.user.id,
+        entryId: entry.id,
+        err: e instanceof Error ? e.message : String(e).slice(0, 400),
+      });
+      return NextResponse.json({ error: "タグの更新に失敗しました" }, { status: 500 });
+    }
   }
 
   await prisma.auditLog.create({

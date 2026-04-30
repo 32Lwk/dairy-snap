@@ -21,7 +21,7 @@ import {
   resolveDayBoundaryEndTime,
   resolveUserTimeZone,
 } from "@/lib/time/user-day-boundary";
-import { formatOrchestratorStaticProfileBlock, parseUserSettings } from "@/lib/user-settings";
+import { formatOrchestratorStaticProfileBlock, parseUserSettings, type CalendarOpeningSettings } from "@/lib/user-settings";
 import { formatAgentPersonaForPrompt } from "@/lib/agent-persona-preferences";
 import { isMbtiType, mbtiDisplayJa } from "@/lib/mbti";
 import { isLoveMbtiType, loveMbtiDisplayJa } from "@/lib/love-mbti";
@@ -41,7 +41,9 @@ import {
   formatOrchestratorWallClockDaylightBlock,
   ORCHESTRATOR_DAY_CALENDAR_HEADING,
 } from "@/lib/time/entry-temporal-context";
-import { getJapaneseHolidayNameJa } from "@/lib/jp-holiday";
+import { inferCalendarEventCategory } from "@/lib/calendar-opening-infer-event";
+import { resolveJapaneseHolidayNameForEntry } from "@/lib/jp-holiday";
+import { AppLogScope, newCorrelationId, scheduleAppLog } from "@/lib/server/app-log";
 import { DEFAULT_WEATHER_LATITUDE, DEFAULT_WEATHER_LONGITUDE } from "@/lib/location-defaults";
 import {
   formatOrchestratorDiaryProposalGateBlock,
@@ -163,12 +165,24 @@ function hhmmInUserZoneBrief(isoLike: string, timeZone: string): string {
   }).format(new Date(ms));
 }
 
-function formatOneOpeningCalendarLine(ev: CalendarEventBrief, timeZone: string): string {
+function openingCalendarCategoryTagJa(ev: CalendarEventBrief, calendarOpening: CalendarOpeningSettings | undefined): string {
+  const cat = inferCalendarEventCategory(ev, calendarOpening ?? null);
+  if (cat === "parttime") return "（バイト/シフト）";
+  if (cat === "job_hunt") return "（就活・業務）";
+  return "";
+}
+
+function formatOneOpeningCalendarLine(
+  ev: CalendarEventBrief,
+  timeZone: string,
+  calendarOpening: CalendarOpeningSettings | undefined,
+): string {
   const t = hhmmInUserZoneBrief(ev.start, timeZone);
   const when = t || "終日";
   const loc = ev.location?.trim() ? ` @${ev.location.trim()}` : "";
   const title = ev.title?.trim() || "（タイトルなし）";
-  return `- ${when} ${title}${loc}`;
+  const catTag = openingCalendarCategoryTagJa(ev, calendarOpening);
+  return `- ${when} ${title}${loc}${catTag}`;
 }
 
 /** `orderedEvIdx`: 開口時は Impact×近さでソートした event インデックス（先頭ほど優先） */
@@ -176,6 +190,7 @@ function formatOpeningDayCalendarBrief(
   events: CalendarEventBrief[],
   orderedEvIdx: number[] | undefined,
   timeZone: string,
+  calendarOpening: CalendarOpeningSettings | undefined,
 ): string {
   if (events.length === 0) {
     return "（この日の予定は登録されていないか、取得結果が空です）";
@@ -187,13 +202,13 @@ function formatOpeningDayCalendarBrief(
     for (const i of orderedEvIdx) {
       if (i < 0 || i >= events.length || used.has(i)) continue;
       used.add(i);
-      lines.push(formatOneOpeningCalendarLine(events[i]!, timeZone));
+      lines.push(formatOneOpeningCalendarLine(events[i]!, timeZone, calendarOpening));
       if (lines.length >= max) break;
     }
   }
   for (let i = 0; i < events.length && lines.length < max; i++) {
     if (used.has(i)) continue;
-    lines.push(formatOneOpeningCalendarLine(events[i]!, timeZone));
+    lines.push(formatOneOpeningCalendarLine(events[i]!, timeZone, calendarOpening));
   }
   return lines.join("\n");
 }
@@ -361,6 +376,8 @@ export type OrchestratorResult = {
   /** Chat Completions に渡した実モデル ID（フォールバック時はここに反映） */
   orchestratorModel: string;
   threadId?: string;
+  /** stdout 構造化ログの突合用（`APP_LOG_LEVEL=debug` など） */
+  correlationId: string;
 };
 
 type ChatMsg = {
@@ -388,6 +405,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     openingAllowSettingsTool,
   } = params;
 
+  const correlationId = newCorrelationId();
   const orchestratorNow = clockNow ?? new Date();
   const useMini = Boolean(preferMiniOrchestrator) && !isOpening;
   let primaryModel = isOpening ? getOrchestratorOpeningChatModel() : getOrchestratorChatModel();
@@ -436,10 +454,9 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
   const calendarAvailable = isCalendarToolEligible(calendarRes);
   const holidaySignal =
     calendarRes.ok && calendarRes.events.length > 0 ? detectHolidaySignal(calendarRes.events) : null;
-  // Calendar may be unavailable or may not include a holiday calendar. Fall back to date-based JP holiday check.
-  const jpHolidayNameJa =
-    (holidaySignal?.hasHolidayLikeAllDay ? holidaySignal.titles[0] ?? null : null) ??
-    getJapaneseHolidayNameJa(entryDateYmd);
+  const calendarHolidayTitle =
+    holidaySignal?.hasHolidayLikeAllDay ? (holidaySignal.titles[0] ?? null) : null;
+  const jpHolidayNameJa = resolveJapaneseHolidayNameForEntry(entryDateYmd, calendarHolidayTitle);
 
   const personaLines = formatAgentPersonaForPrompt({
     aiAddressStyle: profile?.aiAddressStyle,
@@ -523,6 +540,59 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
         .filter(Boolean)
         .join("\n");
     }
+
+    scheduleAppLog(AppLogScope.opening, "debug", "opening_topic_scores", {
+      userId,
+      entryId,
+      threadId: threadId ?? null,
+      entryDateYmd,
+      calendarEventCount: calendarRes.events.length,
+      jpHolidayNameJa,
+      calendarHolidaySignalTitle: calendarHolidayTitle,
+      entryIsEffectiveToday: diffCalendarDaysInZone(entryDateYmd, todayYmd, userTimeZone) === 0,
+      studentTimetableConfigured:
+        profile?.occupationRole === "student" && Boolean(profile.studentTimetable?.trim()),
+      occupationRole: profile?.occupationRole ?? null,
+      openingConfidence: sco.confidence,
+      primary: sco.primary
+        ? {
+            title: sco.primary.title,
+            category: sco.primary.category,
+            timing: sco.primary.timing,
+            time: sco.primary.time,
+          }
+        : null,
+      secondary: sco.secondary
+        ? {
+            title: sco.secondary.title,
+            category: sco.secondary.category,
+            timing: sco.secondary.timing,
+            time: sco.secondary.time,
+          }
+        : null,
+      orderedEvIdxHead: sco.orderedEvIdx.slice(0, 12),
+      eventCategoriesSample: calendarRes.events.slice(0, 8).map((ev, i) => ({
+        i,
+        title: ev.title?.slice(0, 80) ?? "",
+        start: ev.start,
+        cat: inferCalendarEventCategory(ev, profile?.calendarOpening ?? null),
+      })),
+    }, { correlationId });
+  } else if (isOpening) {
+    scheduleAppLog(AppLogScope.opening, "debug", "opening_topic_scores", {
+      userId,
+      entryId,
+      threadId: threadId ?? null,
+      entryDateYmd,
+      calendarOk: calendarRes.ok,
+      calendarFailReason: calendarRes.ok ? undefined : calendarRes.reason,
+      calendarEventCount: calendarRes.ok ? calendarRes.events.length : 0,
+      jpHolidayNameJa,
+      calendarHolidaySignalTitle: calendarHolidayTitle,
+      primary: null,
+      secondary: null,
+      note: calendarRes.ok ? "no_events_for_day" : "calendar_unavailable",
+    }, { correlationId });
   }
 
   const timetableOpeningFocusJa =
@@ -551,14 +621,18 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
       : `## エントリ日（${formatYmdWithTokyoWeekday(entryDateYmd)}）の天気`;
 
   const baseSystem = loadAgentPrompt("orchestrator");
-  const holidayGuardBlock =
-    jpHolidayNameJa
-      ? [
-          "## 祝日・休みの可能性（重要）",
-          `この日は祝日/休日の可能性がある: 「${jpHolidayNameJa}」`,
-          "ルール: 時間割や推測があっても「講義があった」と断定しない。必要なら短く確認し、ユーザーが講義があったと言った場合にのみ講義の話題へ進む。",
-        ].join("\n")
-      : "";
+  const holidayGuardBlock = jpHolidayNameJa
+    ? [
+        "## 祝日・休みの可能性（重要）",
+        `このエントリ日（${entryDateYmd}）の祝日/休日シグナル: 「${jpHolidayNameJa}」`,
+        "ルール: 時間割や推測があっても「講義があった」と断定しない。必要なら短く確認し、ユーザーが講義があったと言った場合にのみ講義の話題へ進む。",
+        "上記の名前以外の祝日名をこの日に言い換えない（前日の祝日を当日にすり替えない）。",
+      ].join("\n")
+    : [
+        "## 国民の祝日（このエントリ日）",
+        `対象日 ${entryDateYmd} は、アプリ内の祝日判定（日本の祝日ライブラリおよび全日・祝日っぽいカレンダーイベント）では **祝日シグナルなし**。`,
+        "このブロックがあるときは、モデルは **いかなる国民の祝日名もこの日に付けない**（例: 4月30日を「昭和の日」と言わない）。前日が祝日でも名前言及を当日に移さない。",
+      ].join("\n");
   let systemBlocks = [
     baseSystem,
     "",
@@ -624,7 +698,12 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
       ? `## 時間割ベースのこの後の講義（Googleカレンダーに無いことが多い）\n${timetableOpeningFocusJa}`
       : "",
     calendarRes.ok
-      ? `${ORCHESTRATOR_DAY_CALENDAR_HEADING}\n${formatOpeningDayCalendarBrief(calendarRes.events, calendarOrderedEvIdx, userTimeZone)}`
+      ? `${ORCHESTRATOR_DAY_CALENDAR_HEADING}\n${formatOpeningDayCalendarBrief(
+          calendarRes.events,
+          calendarOrderedEvIdx,
+          userTimeZone,
+          profile?.calendarOpening,
+        )}`
       : "",
     holidayGuardBlock,
     "",
@@ -646,7 +725,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     systemBlocks += [
       "",
       "## Brief-turn mode（軽量・低コスト）",
-      "このターンのユーザー発言は短い確認／依頼のみと判定されている。**ツールは一切呼ばない**（query_weather / query_* も不可）。",
+      "このターンのユーザー発言は短い確認／依頼のみと判定されている。**利用できるツールは `propose_settings_change` のみ**（日付区切り・TZ・カレンダー開口・AI 嗜好・時間割エディタ提案の保留）。天気・カレンダー・学校など **query_* は呼ばない**。",
       "長文の日記草案はこの返答では書かず、**1〜3文**の自然な日本語で十分。必要ならユーザーに、右欄の「会話から草案を生成」で整形できることを**一文で**添えてよい。",
     ].join("\n");
   }
@@ -674,7 +753,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
   }
 
   if (useMini) {
-    allowedTools = [];
+    allowedTools = allowedTools.filter((t) => t.function.name === "propose_settings_change");
   }
 
   const openai = getOpenAI();
@@ -746,6 +825,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
           persona,
           longTermContext: longTermContext || undefined,
           agentMemory: {},
+          calendarOpening: profile?.calendarOpening ?? null,
         };
 
         let toolResult = "";
@@ -842,6 +922,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     personaInstructions,
     mbtiHint,
     orchestratorModel,
+    correlationId,
   };
 }
 

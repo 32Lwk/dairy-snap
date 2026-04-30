@@ -18,3 +18,24 @@ export async function resolveDbUserFromSession(opts: {
   if (!sessionEmail) return null;
   return prisma.user.findUnique({ where: { email: normalizeEmail(sessionEmail) } });
 }
+
+/**
+ * 設定 syncCheck 用。`settings` など巨大 JSON を読まず updatedAt のみ取得する。
+ */
+export async function resolveSessionUserUpdatedAt(opts: {
+  sessionUserId: string;
+  sessionEmail: string | null | undefined;
+}): Promise<Date | null> {
+  const { sessionUserId, sessionEmail } = opts;
+  const byId = await prisma.user.findUnique({
+    where: { id: sessionUserId },
+    select: { updatedAt: true },
+  });
+  if (byId) return byId.updatedAt;
+  if (!sessionEmail) return null;
+  const byEmail = await prisma.user.findUnique({
+    where: { email: normalizeEmail(sessionEmail) },
+    select: { updatedAt: true },
+  });
+  return byEmail?.updatedAt ?? null;
+}

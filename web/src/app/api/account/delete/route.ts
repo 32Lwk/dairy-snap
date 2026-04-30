@@ -4,6 +4,7 @@ import { auth } from "@/auth";
 import { resolveDbUserFromSession } from "@/lib/api/resolve-db-user-from-session";
 import { prisma } from "@/server/db";
 import { getObjectStorage } from "@/server/storage/local";
+import { AppLogScope, scheduleAppLog } from "@/lib/server/app-log";
 
 const bodySchema = z.object({
   confirmEmail: z.string().min(3).max(320),
@@ -67,6 +68,10 @@ export async function POST(req: NextRequest) {
       await tx.user.delete({ where: { id: userId } });
     });
   } catch (e) {
+    scheduleAppLog(AppLogScope.account, "error", "account_delete_transaction_failed", {
+      userId,
+      err: e instanceof Error ? e.message : String(e).slice(0, 400),
+    });
     console.error("[account/delete]", e);
     return NextResponse.json({ error: "削除処理に失敗しました" }, { status: 500 });
   }

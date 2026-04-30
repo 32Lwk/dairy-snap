@@ -11,6 +11,8 @@
     "env:decrypt": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/env-decrypt.ps1",
     "build:schools": "node scripts/build-schools-index.mjs",
     "lint": "eslint",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "test:e2e": "playwright test",
     "postinstall": "prisma generate",
     "db:migrate": "prisma migrate deploy",
@@ -59,6 +61,7 @@
     "eslint-config-next": "16.2.2",
     "iconv-lite": "^0.7.2",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.4"
   }
 }

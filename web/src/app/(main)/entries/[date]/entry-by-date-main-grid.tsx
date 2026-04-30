@@ -17,6 +17,7 @@ export function EntryByDateMainGrid({
   entryId,
   entryDateYmd,
   chatSecurityNoticeJa,
+  pendingSettingsSummaryJa,
   initialThreadId,
   initialMessages,
   latitude,
@@ -36,6 +37,8 @@ export function EntryByDateMainGrid({
   entryId: string;
   entryDateYmd: string;
   chatSecurityNoticeJa?: string | null;
+  /** 保留中の設定変更の要約（サーバーが conversationNotes から生成） */
+  pendingSettingsSummaryJa?: string | null;
   initialThreadId: string | null;
   initialMessages: Msg[];
   latitude: number | null;
@@ -96,6 +99,7 @@ export function EntryByDateMainGrid({
             entryId={entryId}
             threadId={initialThreadId}
             chatSecurityNoticeJa={chatSecurityNoticeJa}
+            pendingSettingsSummaryJa={pendingSettingsSummaryJa}
             initialMessages={initialMessages}
             variant="default"
             layoutHeight="fill"

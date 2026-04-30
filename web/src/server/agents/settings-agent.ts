@@ -3,7 +3,11 @@
  * オーケストレーターの `propose_settings_change` ツール実装。
  */
 import type { Prisma } from "@/generated/prisma/client";
-import { normalizeProposeSettingsArgs } from "@/lib/settings-proposal-tool";
+import {
+  formatPendingSettingsChangeSummaryJa,
+  normalizeProposeSettingsArgs,
+  summarizeSettingsProposalForSecurity,
+} from "@/lib/settings-proposal-tool";
 import { prisma } from "@/server/db";
 
 /**
@@ -20,7 +24,7 @@ export async function runProposeSettingsChangeTool(params: {
 
   const lines: string[] = [
     "【設定変更の提案（未適用）】",
-    "次のターンでユーザーが「はい」「お願い」などと肯定したときだけサーバーが適用します。",
+    "次のターンでユーザーが「はい」「お願い」などと肯定したときだけサーバーが適用します（時間割エディタのみの提案は、同意後にエディタを開きます）。",
   ];
   if (n.patch.dayBoundaryEndTime !== undefined) {
     lines.push(
@@ -30,6 +34,24 @@ export async function runProposeSettingsChangeTool(params: {
   if (n.patch.timeZone !== undefined) {
     lines.push(`タイムゾーン: ${n.patch.timeZone}`);
   }
+  if (n.patch.calendarOpening) {
+    const c = n.patch.calendarOpening;
+    if (c.rules?.length) lines.push(`カレンダー分類ルール: ${c.rules.length} 件`);
+    if (c.calendarCategoryById && Object.keys(c.calendarCategoryById).length > 0) {
+      lines.push(`カレンダー既定カテゴリ: ${Object.keys(c.calendarCategoryById).length} 件`);
+    }
+    if (c.categoryMultiplierById && Object.keys(c.categoryMultiplierById).length > 0) {
+      lines.push(`開口インパクト倍率: ${Object.keys(c.categoryMultiplierById).length} カテゴリ`);
+    }
+  }
+  if (n.patch.profileAi) {
+    if (n.patch.profileAi.aiChatTone) lines.push(`AI 会話トーン: ${n.patch.profileAi.aiChatTone}`);
+    if (n.patch.profileAi.aiDepthLevel) lines.push(`掘り下げ度: ${n.patch.profileAi.aiDepthLevel}`);
+    if (n.patch.profileAi.aiAvoidTopics?.length) lines.push(`避けたい話題: ${n.patch.profileAi.aiAvoidTopics.length} 件`);
+  }
+  if (n.patch.openStudentTimetableEditor) {
+    lines.push("時間割エディタで編集する提案");
+  }
   if (n.reasonJa) lines.push(`理由: ${n.reasonJa}`);
 
   if (params.threadId) {
@@ -38,6 +60,11 @@ export async function runProposeSettingsChangeTool(params: {
       select: { conversationNotes: true },
     });
     const notes = (trow?.conversationNotes as Record<string, unknown>) ?? {};
+    const securitySummary = summarizeSettingsProposalForSecurity(n.patch);
+    const summaryJa = formatPendingSettingsChangeSummaryJa({
+      ...n.patch,
+      reasonJa: n.reasonJa,
+    });
     await prisma.chatThread.update({
       where: { id: params.threadId },
       data: {
@@ -48,6 +75,8 @@ export async function runProposeSettingsChangeTool(params: {
             reasonJa: n.reasonJa,
             proposedAt: new Date().toISOString(),
           },
+          lastSettingsProposalSummary: securitySummary,
+          lastSettingsProposalSummaryJa: summaryJa,
         } as Prisma.InputJsonValue,
       },
     });

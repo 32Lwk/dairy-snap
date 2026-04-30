@@ -44,7 +44,7 @@ git log -1 --oneline origin/main
 | 2026-04-20 | あり | [§ 04-20](#2026-04-20月) |
 | 2026-04-21〜27 | なし | [§ 04-21〜27](#2026-04-21火-2026-04-27月) |
 | 2026-04-28 | あり | [§ 04-28](#2026-04-28火) |
-| 2026-04-30 | （作業ツリー） | [§ 04-30](#2026-04-30木) |
+| 2026-04-30 | あり | [§ 04-30](#2026-04-30木) |
 
 ---
 
@@ -799,6 +799,14 @@ git log -1 --oneline origin/main
 
 ## 2026-04-30（木）
 
+### コミット一覧（時系列・新しいものが下）
+
+| ハッシュ | メッセージ |
+|----------|------------|
+| `3a8a28a` | feat(web): chat-driven settings patch + user-day boundary |
+| `52235b5` | feat(web): holiday guard + faster streaming post-processing |
+| `c56d51b` | feat(web): app logging, vitest calendar tests, timetable editor from chat |
+
 ### 概要（本日の変更の全体像）
 
 1. **チャット経由の設定変更（提案→同意→適用）** — オーケストレーターに `propose_settings_change` ツールを追加し、今ターンは「提案の保留」を保存するだけに限定。次ターンでユーザーが肯定した場合のみ、サーバー側で **設定を適用**する二段階フローにした。
@@ -809,6 +817,12 @@ git log -1 --oneline origin/main
 6. **祝日シグナルの導入（講義の断定抑制）** — カレンダーの終日イベントや日付ベースの祝日判定を「祝日/休みの可能性」として扱い、時間割があっても講義があったと断定しないガードを追加した。
 7. **開口/チャットの応答性改善（後処理のバックグラウンド化）** — ストリーム close を待たせないために、記憶抽出などの重い後処理を非同期に回し、UI 側も done を見たら reader を cancel して復帰するようにした。
 8. **エントリ画面のレイアウト改善** — 固定ヘッダー化とグリッド高さ制御、チャットパネルの `fill` 対応などで、PC/モバイルのスクロール体験と入力時の視認性を改善した。
+9. **構造化アプリログ（非ブロッキング）** — `app-log.ts` で JSON 1 行を `setImmediate` 経由で stdout に出し、`APP_LOG_LEVEL` / `APP_LOG_SCOPES` / `APP_LOG_INCLUDE_IDS` で制御。開口・通常チャット・カレンダー取得・各種 API で失敗時・計測用イベントを記録。開口は `correlationId` で突合可能。
+10. **Vitest とカレンダー日付の回帰テスト** — `tokyo-calendar-interval.ts`（東京暦日の半開区間とキャッシュイベントの重なり）と `jp-holiday.test.ts`（祝日解決の誤混入防止）を追加。`npm test`（`vitest run`）を `package.json` に定義。
+11. **チャットから時間割エディタを開く** — 設定提案に **`openStudentTimetableEditor: true`** を追加（ホワイトリスト）。肯定後にだけフラグを解決し、エントリ／今日のチャットから **`TimetableEditorSheetPanel`** でフルシート編集を起動。プロフィールフォームでも同パネルを共通化。
+12. **開口カテゴリ推定のサーバー共通化** — `calendar-opening-infer-event.ts` でクライアントと同ルールの `inferCalendarEventCategory` をサーバーでも利用（ログ・エージェント・開口デバッグの一貫性）。
+13. **認証・埋め込み・セキュリティ周辺の堅牢化** — NextAuth ルートを try/catch でラップし JSON エラーを返す（空ボディ等での SessionProvider の ClientFetchError 抑制）。`deleteEmbeddingsForTargets` でチャット一括削除時のベクトル削除を一括化。セキュリティレビュー投入／ジョブにログや調整を追記。
+14. **カレンダー取得と UI** — 日次フェッチの Prisma 条件を東京暦日の半開区間に揃える変更に追従。`calendar-client` 等の UI 調整。`entry-temporal-context` の微修正。
 
 ### データベース（Prisma / マイグレーション）
 
@@ -822,7 +836,7 @@ git log -1 --oneline origin/main
 - **日付文脈**: `lib/server/user-effective-day.ts` により、ユーザー設定（TZ/日付境界）を踏まえた `effectiveYmd` / `calendarYmd` / `resetAtIso` を提供し、オーケストレーターや画面側の「今日」を合わせやすくした。
 - **オーケストレーター**: `opening` 側で「日付がズレていそう」なときに `propose_settings_change` を候補に含めるガイドを追加。
 
-### （追記・作業ツリー）祝日/休日シグナルと講義断定の抑制
+### 祝日/休日シグナルと講義断定の抑制（実装詳細）
 
 - **祝日判定ユーティリティ**: `web/src/lib/jp-holiday.ts` を追加し、`japanese-holidays` で `YYYY-MM-DD` から祝日名を引けるようにした（無効入力や非祝日は `null`）。
 - **オーケストレーターのガード注入**: `web/src/server/orchestrator.ts` で、
@@ -832,7 +846,7 @@ git log -1 --oneline origin/main
   - `buildReflectiveOpeningSystemInstruction` に `holidayNameJa` を渡して、開口時の講義断定を抑制する指示（確認質問を優先）を追加
 - **プロンプト側ルール強化**: `web/prompts/agents/orchestrator.md` と `web/prompts/agents/school.md` で、祝日/休みのシグナルがある場合は講義を断定しないルールを追記。
 
-### （追記・作業ツリー）開口/チャットのパフォーマンス改善（後処理の非同期化）
+### 開口/チャットのパフォーマンス改善（後処理の非同期化・実装詳細）
 
 - **開口 API**: `web/src/app/api/ai/orchestrator/opening/route.ts`
   - 昨日の「ユーザー発話 0」判定のためだけにメッセージ全文を読むのをやめ、`chatMessage.count`（role=user）で軽量化。
@@ -843,16 +857,28 @@ git log -1 --oneline origin/main
   - SSE で `done` を受けたら `reader.cancel()` して UI を復帰（サーバー側の後処理遅延の影響を低減）。
   - キーボード表示で `visualViewport` が縮むケースに、入力が詰まらないよう `maxHeight` を動的に抑制。
 
-### （追記・作業ツリー）エントリ画面レイアウト改善
+### エントリ画面レイアウト改善（実装詳細）
 
 - `web/src/app/(main)/entries/[date]/entry-by-date-view.tsx`: ヘッダーを固定化し、safe-area を考慮した上でタイトル/導線を常時見える位置に寄せた。
 - `web/src/app/(main)/entries/[date]/entry-by-date-main-grid.tsx`: md 以上でグリッドに高さを与え、左（本文/チャット）と右（草案/画像/操作）のスクロール責務を分離。`EntryChat` に `layoutHeight="fill"` を渡してパネルを列いっぱいに伸ばす。
 
-### （追記・作業ツリー）依存関係
+### 依存関係（`web/package.json` / `web/package-lock.json`）
 
-- `web/package.json` / `web/package-lock.json`
-  - `japanese-holidays` を追加
-  - `@types/japanese-holidays` を追加
+- `japanese-holidays` / `@types/japanese-holidays`（祝日判定）
+- `vitest`（ユニットテスト）
+
+### チャット経由の時間割エディタ（実装詳細）
+
+- **提案スキーマ**: `settings-proposal-tool.ts` に `openStudentTimetableEditor`（`z.literal(true)` 任意）を追加。`apply-settings-from-chat.ts` で「時間割だけ開く」パッチは DB 非更新・肯定後に `openTimetableEditorAfterAck` を SSE で返す分岐を持つ。
+- **オーケストレーター API**: `api/ai/orchestrator/chat/route.ts` が保留パッチの `openStudentTimetableEditor` を解決し、JSON 応答に `openTimetableEditorAfterAck` を載せる。
+- **画面**: `entry-chat.tsx` が `TimetableEditorSheetPanel` を制御。`entry-by-date-main-grid.tsx` は `layoutHeight="fill"` 等の追従。`entries/[date]/page.tsx` と `today/page.tsx` がサーバー側で `openStudentTimetableEditor` をチャット初期状態に渡す。
+- **プロンプト・型**: `orchestrator.md`、`server/agents/types.ts` のツール説明にホワイトリストとして追記。`calendar-work.md` / `security-reviewer.md` / `supervisor-agent.ts` / `settings-agent.ts` / `calendar-work-agent.ts` を追従。
+
+### 構造化ログ・テスト・開口推定（実装詳細）
+
+- **`app-log.ts`**: `scheduleAppLog`、scope 定数、テスト用 `_resetAppLogConfigForTests`。各 API で失敗・完了イベントを記録（`AGENTS.md` に運用メモ）。
+- **テスト**: `tokyo-calendar-interval.test.ts`、`jp-holiday.test.ts`、`app-log.test.ts`。`vitest.config.ts` で `src/**/*.test.ts`、`@` エイリアスを設定。
+- **`calendar-opening-infer-event.ts`**: ルール・優先順位・カレンダー既定カテゴリから 1 イベントの開口カテゴリを決定（UI の `inferCategoryForEvent` と同等ロジックのサーバー側）。
 
 ---
 
@@ -875,7 +901,7 @@ git log -1 --oneline origin/main
 | 04-20 | 複数 | セキュリティレビュー、Plutchik、ローカル GCal、Photos、日記 UI、および同日の CHANGELOG 反復更新 |
 | 04-21〜27 | 0 | — |
 | 04-28 | あり | 公開 LP／法務／PWA、開口設定モーダル・倍率プリセット、`ResponsiveDialog` 下寄せ、`scoreOpeningTopic` デバッグ、時間割 `st_level` 連携 |
-| 04-30 | （作業ツリー） | チャット経由の設定提案→同意→適用、日付境界/TZ基盤、監査・レート制限、Usage カウンタ拡張、設定 UI（`FancySelect`/`TimeZoneBootstrap`） |
+| 04-30 | 複数 | 設定提案→同意→適用、日付境界/TZ、監査・レート制限、祝日ガード、ストリーム後処理非同期化、レイアウト改善、**構造化ログ・Vitest・チャットから時間割エディタ・開口カテゴリ推定のサーバー共通化**、NextAuth JSON エラー化・埋め込み一括削除 など |
 
 ---
 

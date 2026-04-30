@@ -480,7 +480,11 @@ export function buildReflectiveOpeningSystemInstruction(
 
     if (opening.holidayNameJa) {
       anchorRules.push(
-        `Holiday signal present (${opening.holidayNameJa}). Do NOT assume classes/lectures happened even if a timetable slice exists. Prefer a neutral confirmation question like 「祝日だけど、授業はあった日だった？」 or 「授業はいつも通りだった？」 before discussing specific lectures.`,
+        `Holiday signal present for **this entry date**: 「${opening.holidayNameJa}」. Use **exactly this** holiday name if you mention a 祝日; do not substitute a different holiday (e.g. do not swap 振替休日 names). Do NOT assume classes/lectures happened even if a timetable slice exists. Prefer a neutral confirmation question like 「祝日だけど、授業はあった日だった？」 or 「授業はいつも通りだった？」 before discussing specific lectures.`,
+      );
+    } else {
+      anchorRules.push(
+        "No Japanese national-holiday signal is provided for **this entry date** in the system blocks. Do **not** name this day as a 国民の祝日 (e.g. do not treat April 30 as 「昭和の日」). Do not infer a holiday from Golden Week, from the **previous** calendar day, or from general knowledge — if 「## 祝日・休みの可能性」 is absent or does not name a holiday for this date, stay silent about 祝日 names.",
       );
     }
   }
@@ -499,6 +503,7 @@ export function buildReflectiveOpeningSystemInstruction(
     "**Single question (opening):** The reply must contain **at most one** sentence that asks the user something with 「…？」 (or a single combined question). Do **not** stack two separate question sentences (e.g. one about 「その前はゆっくり…？」 and another 「…聞かせて？」). Merge into one ask or drop the weaker one.",
     "If **before_sunrise** appears in 「Wall clock & daylight」 for this entry-today thread: prefer hooks about **today's schedule** (calendar, **講義・何限から** when student life fits), **time until the next plan**, or a brief optional **夢** mention — **not** leading with **眠さ** as the main topic.",
     `Event names: titles and times listed under "${ORCHESTRATOR_DAY_CALENDAR_HEADING}" are allowed and encouraged when you reference that day's schedule (use the title wording from the list; light paraphrase is OK). Same for tool results, diary body, and short-term bullets for this entry.`,
+    "When a calendar line includes 「（バイト/シフト）」, treat that event as the user's part-time / shift work for wording (e.g. バイト、シフト) — do not downplay it as a vague 「予定」 only.",
     "Do not invent events, titles, times, or places that do not appear in those sources. If nothing concrete is listed for plans, ask in general terms without making up names.",
   );
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { z } from "zod";
 import { requireSession } from "@/lib/api/require-session";
+import { AppLogScope, scheduleAppLog } from "@/lib/server/app-log";
 import { applyAmPmWeatherForEntry } from "@/server/entry-weather";
 import { prisma } from "@/server/db";
 import { runMasMemoryDiaryConsolidation, shouldRunMemoryDiaryConsolidationOnBodyChange } from "@/server/mas-memory";
@@ -58,16 +59,26 @@ export async function PATCH(
   });
   if (!existing) return NextResponse.json({ error: "見つかりません" }, { status: 404 });
 
-  const entry = await prisma.dailyEntry.update({
-    where: { id: entryId },
-    data: {
-      ...(parsed.data.title !== undefined ? { title: parsed.data.title } : {}),
-      ...(parsed.data.mood !== undefined ? { mood: parsed.data.mood } : {}),
-      ...(parsed.data.body !== undefined ? { body: parsed.data.body } : {}),
-      ...(parsed.data.latitude !== undefined ? { latitude: parsed.data.latitude } : {}),
-      ...(parsed.data.longitude !== undefined ? { longitude: parsed.data.longitude } : {}),
-    },
-  });
+  let entry;
+  try {
+    entry = await prisma.dailyEntry.update({
+      where: { id: entryId },
+      data: {
+        ...(parsed.data.title !== undefined ? { title: parsed.data.title } : {}),
+        ...(parsed.data.mood !== undefined ? { mood: parsed.data.mood } : {}),
+        ...(parsed.data.body !== undefined ? { body: parsed.data.body } : {}),
+        ...(parsed.data.latitude !== undefined ? { latitude: parsed.data.latitude } : {}),
+        ...(parsed.data.longitude !== undefined ? { longitude: parsed.data.longitude } : {}),
+      },
+    });
+  } catch (e) {
+    scheduleAppLog(AppLogScope.entries, "error", "entry_patch_failed", {
+      userId: session.user.id,
+      entryId,
+      err: e instanceof Error ? e.message : String(e).slice(0, 400),
+    });
+    return NextResponse.json({ error: "更新に失敗しました" }, { status: 500 });
+  }
 
   const locSet =
     parsed.data.latitude != null &&

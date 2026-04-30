@@ -157,12 +157,15 @@ export async function regenerateReflectiveChatTail(args: {
     where: { id: threadId },
     select: { conversationNotes: true },
   });
+  const prevNotes = (threadRow?.conversationNotes as Record<string, unknown>) ?? {};
+  const settingsProposalSummary =
+    typeof prevNotes.lastSettingsProposalSummary === "string" ? prevNotes.lastSettingsProposalSummary : null;
 
   await prisma.chatThread.update({
     where: { id: threadId },
     data: {
       conversationNotes: {
-        ...((threadRow?.conversationNotes as Record<string, unknown>) ?? {}),
+        ...prevNotes,
         lastExcerpt: latestUserText.slice(0, 200),
         updatedAt: new Date().toISOString(),
         lastAgentsUsed: agentsUsed,
@@ -190,6 +193,8 @@ export async function regenerateReflectiveChatTail(args: {
     entryId: entry.id,
     userMessage: latestUserText,
     assistantContent: storedAssistant,
+    agentsUsed,
+    settingsProposalSummary,
   });
   if (secPayload) scheduleSecurityReview(secPayload);
 

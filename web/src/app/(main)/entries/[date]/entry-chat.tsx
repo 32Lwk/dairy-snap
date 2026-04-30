@@ -1,10 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { type CSSProperties, startTransition, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, startTransition, useEffect, useId, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { ResponsiveDialog } from "@/components/responsive-dialog";
+import { TimetableEditorSheetPanel } from "@/components/timetable-editor-sheet-panel";
 import { emitLocalSettingsSavedFromJson } from "@/lib/settings-sync-client";
+import { emptyTimetable, serializeTimetable } from "@/lib/timetable";
 import { isOpeningPendingModel } from "@/lib/opening-pending";
 import { stripAssistantMetaEchoPrefix } from "@/lib/chat-assistant-sanitize";
 import { JournalDraftPanel } from "./journal-draft-panel";
@@ -76,6 +78,34 @@ function settingsChangeSummaryLine(tip: SettingsChangeTip): string {
   return parts.length > 0 ? parts.join(" ／ ") : "設定を更新しました";
 }
 
+function PendingSettingsProposalBanner({
+  summaryJa,
+  onDismiss,
+  onRefresh,
+}: {
+  summaryJa: string;
+  onDismiss: () => void;
+  onRefresh: () => void;
+}) {
+  return (
+    <details className="shrink-0 border-b border-violet-200/90 bg-violet-50/95 dark:border-violet-900/40 dark:bg-violet-950/45 [&_summary::-webkit-details-marker]:hidden">
+      <summary className="cursor-pointer select-none list-none px-4 py-2 text-xs font-medium text-violet-950 dark:text-violet-100">
+        保留中の設定変更
+        <span className="ml-1.5 font-normal text-violet-800/80 dark:text-violet-200/80">（タップで詳細）</span>
+      </summary>
+      <p className="px-4 pb-1 text-xs leading-relaxed text-violet-950 dark:text-violet-100">{summaryJa}</p>
+      <div className="flex flex-wrap gap-3 px-4 pb-2 text-[11px] text-violet-900/90 dark:text-violet-200/90">
+        <button type="button" className="underline" onClick={() => onRefresh()}>
+          最新を読み込む
+        </button>
+        <button type="button" className="underline" onClick={() => onDismiss()}>
+          閉じる
+        </button>
+      </div>
+    </details>
+  );
+}
+
 /** デフォルト高さ（`layoutHeight="fill"` のモバイル時のみ max-md: で利用） */
 const DEFAULT_CHAT_PANEL_MOBILE_HEIGHT =
   "max-md:min-h-[min(58dvh,420px)] max-md:max-h-[min(84dvh,min(780px,calc(100svh-10rem)))] max-md:landscape:max-h-[min(68dvh,min(560px,calc(100svh-9rem)))]";
@@ -99,6 +129,7 @@ function UserMessageBubble({
   onUpdated,
   onDeleted,
   hasFollowingMessages,
+  followingMessageCount,
 }: {
   m: Msg;
   onUpdated: (
@@ -109,9 +140,12 @@ function UserMessageBubble({
       newAssistant?: { id: string; role: string; content: string; model?: string | null };
     },
   ) => void;
-  onDeleted: (id: string) => void;
+  /** 楽観的 UI は親で行い、ここでは ID のみ通知 */
+  onRequestCascadeDelete: (userMessageId: string) => void;
   /** この発言のあとにメッセージがあるときだけ「再実行 / 再実行しない」を出す */
   hasFollowingMessages: boolean;
+  /** この発言より後ろのメッセージ件数（削除確認・注意文用） */
+  followingMessageCount: number;
 }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(m.content);
@@ -119,6 +153,8 @@ function UserMessageBubble({
   /** PATCH 送信中の種別（ボタンラベル用） */
   const [pendingAction, setPendingAction] = useState<null | "keep" | "regenerate">(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const deleteDialogTitleId = useId();
 
   useEffect(() => {
     setText(m.content);
@@ -167,22 +203,71 @@ function UserMessageBubble({
     }
   }
 
-  async function remove() {
-    if (!window.confirm("この発言を削除しますか？")) return;
-    flushSync(() => {
-      setBusy(true);
-    });
-    try {
-      const res = await fetch(`/api/chat-messages/${m.id}`, { method: "DELETE" });
-      if (!res.ok) return;
-      onDeleted(m.id);
-    } finally {
-      setBusy(false);
-    }
+  function openDeleteDialog() {
+    if (busy) return;
+    setDeleteDialogOpen(true);
+  }
+
+  function confirmDelete() {
+    setDeleteDialogOpen(false);
+    onRequestCascadeDelete(m.id);
   }
 
   return (
     <div className="flex flex-col items-end gap-1">
+      <ResponsiveDialog
+        open={deleteDialogOpen}
+        onClose={() => setDeleteDialogOpen(false)}
+        labelledBy={deleteDialogTitleId}
+        dialogId={`entry-chat-delete-${m.id}`}
+        presentation="island"
+        zClass="z-[70]"
+        panelClassName="max-w-md"
+      >
+        <div className="flex flex-col gap-3 p-4 sm:p-5">
+          <h2
+            id={deleteDialogTitleId}
+            className="text-sm font-semibold text-zinc-900 dark:text-zinc-50"
+          >
+            会話の削除
+          </h2>
+          {followingMessageCount > 0 ? (
+            <div className="space-y-2 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+              <p>
+                この発言と、あと {followingMessageCount}{" "}
+                件のメッセージ（AI の返信などを含む）がまとめて削除されます。元に戻せません。
+              </p>
+              <ul className="list-inside list-disc space-y-1 pl-0.5">
+                <li>本文だけ直したい → 閉じて「編集」</li>
+                <li>このあとを残したまま AI に答え直させたい → 編集の「再実行」</li>
+                <li>この時点から会話を切り詰めたい → 下の「削除する」</li>
+              </ul>
+            </div>
+          ) : (
+            <p className="text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+              この発言を削除しますか？（このあとに続くメッセージはありません）
+            </p>
+          )}
+          <div className="flex flex-wrap justify-end gap-2 border-t border-zinc-100 pt-3 dark:border-zinc-800">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setDeleteDialogOpen(false)}
+              className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-medium text-zinc-800 shadow-sm outline-none ring-emerald-500/20 transition hover:bg-zinc-50 focus-visible:ring-2 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+            >
+              キャンセル
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={confirmDelete}
+              className="rounded-lg bg-red-600 px-3 py-2 text-xs font-semibold text-white shadow-sm outline-none ring-red-500/30 transition hover:bg-red-700 focus-visible:ring-2 disabled:opacity-50 dark:bg-red-500 dark:hover:bg-red-600"
+            >
+              削除する
+            </button>
+          </div>
+        </div>
+      </ResponsiveDialog>
       <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">あなた</span>
       <div className="max-w-[min(100%,28rem)] rounded-2xl rounded-br-md bg-gradient-to-br from-zinc-800 to-zinc-900 px-4 py-2.5 text-sm text-white shadow-sm dark:from-zinc-200 dark:to-zinc-100 dark:text-zinc-900">
         {editing ? (
@@ -195,6 +280,11 @@ function UserMessageBubble({
             />
             {saveError ? (
               <p className="text-[11px] leading-snug text-amber-200 dark:text-red-700">{saveError}</p>
+            ) : null}
+            {hasFollowingMessages ? (
+              <p className="text-[10px] leading-snug text-white/75 dark:text-zinc-600">
+                会話の流れを残すなら「保存」、このあとを消して AI に答え直すなら「再実行」。スレッドを短く切るなら編集をやめて「削除」（この発言以降がまとめて消えます）。
+              </p>
             ) : null}
             <div className="flex flex-wrap items-center justify-end gap-2">
               <button
@@ -255,7 +345,7 @@ function UserMessageBubble({
               >
                 編集
               </button>
-              <button type="button" disabled={busy} onClick={() => void remove()} className="underline">
+              <button type="button" disabled={busy} onClick={() => openDeleteDialog()} className="underline">
                 削除
               </button>
             </div>
@@ -330,6 +420,7 @@ export function EntryChat({
   /** 各チャット完了時に草案パネル側で会話素材判定を取り直す（親に別置きパネルがあるとき用） */
   onJournalDraftContextRefresh,
   chatSecurityNoticeJa,
+  pendingSettingsSummaryJa = null,
   layoutHeight = "default",
   /** 本文が左カラムにあるときなど、会話エリア（メッセージ＋送信）を折りたたみ可能にする */
   conversationAccordion = false,
@@ -345,6 +436,8 @@ export function EntryChat({
   onJournalDraftContextRefresh?: () => void;
   /** Server-driven notice after async security review (medium). */
   chatSecurityNoticeJa?: string | null;
+  /** 保留中の設定変更の要約（「はい」適用前の確認用） */
+  pendingSettingsSummaryJa?: string | null;
   /**
    * `fill`: 親（例: 今日ページの左カラム）が高さを与えるとき、md 以上でメッセージ＋入力を列いっぱいに伸ばす。
    * モバイルは従来どおり dvh ベースの高さ。
@@ -361,12 +454,20 @@ export function EntryChat({
   const [error, setError] = useState<string | null>(null);
   const [securityBannerDismissed, setSecurityBannerDismissed] = useState(false);
   const [settingsUndoBusy, setSettingsUndoBusy] = useState(false);
+  const [pendingProposalDismissed, setPendingProposalDismissed] = useState(false);
+  const [timetableEditorOpen, setTimetableEditorOpen] = useState(false);
+  const [timetableValue, setTimetableValue] = useState(() => serializeTimetable(emptyTimetable()));
+  const [timetableStLevel, setTimetableStLevel] = useState("");
+  const [timetableBusy, setTimetableBusy] = useState(false);
   const [journalDraftAutoKey, setJournalDraftAutoKey] = useState(0);
   const [journalDraftPanelRefreshKey, setJournalDraftPanelRefreshKey] = useState(0);
   const [conversationOpen, setConversationOpen] = useState(!conversationAccordion);
   const messagesScrollRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const vvShellStyle = useVisualViewportKeyboardMaxHeight();
+  /** 楽観削除後、RSC の props がサーバーと一致するまで initialMessages で上書きしない */
+  const awaitingRefreshAfterDeleteRef = useRef(false);
+  const lastDeleteAnchorIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     setConversationOpen(!conversationAccordion);
@@ -374,12 +475,26 @@ export function EntryChat({
 
   useEffect(() => {
     if (busy || streaming) return;
+    if (awaitingRefreshAfterDeleteRef.current && lastDeleteAnchorIdRef.current) {
+      const anchor = lastDeleteAnchorIdRef.current;
+      if (initialMessages.some((x) => x.id === anchor)) {
+        return;
+      }
+      awaitingRefreshAfterDeleteRef.current = false;
+      lastDeleteAnchorIdRef.current = null;
+      setMessages(initialMessages);
+      return;
+    }
     setMessages(initialMessages);
   }, [initialMessages, busy, streaming]);
 
   useEffect(() => {
     setSecurityBannerDismissed(false);
   }, [chatSecurityNoticeJa, initialThreadId]);
+
+  useEffect(() => {
+    setPendingProposalDismissed(false);
+  }, [pendingSettingsSummaryJa, initialThreadId]);
 
   useEffect(() => {
     onThreadIdChange?.(tid);
@@ -569,6 +684,146 @@ export function EntryChat({
     }
   }
 
+  async function loadAndOpenTimetableEditor() {
+    setTimetableBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/settings", { credentials: "same-origin" });
+      const json = (await res.json().catch(() => ({}))) as {
+        profile?: {
+          occupationRole?: string;
+          studentTimetable?: string;
+          workLifeAnswers?: Record<string, string>;
+        };
+        error?: string;
+      };
+      if (!res.ok) {
+        setError(typeof json.error === "string" ? json.error : "設定の取得に失敗しました");
+        return;
+      }
+      const profile = json.profile ?? {};
+      if (profile.occupationRole !== "student") {
+        setError(
+          "時間割エディタは職業が「学生」のときのみ使えます。プロフィールで職業を学生に設定してから、もう一度お試しください。",
+        );
+        return;
+      }
+      const raw = profile.studentTimetable?.trim();
+      setTimetableValue(raw && raw.length > 0 ? raw : serializeTimetable(emptyTimetable()));
+      setTimetableStLevel(profile.workLifeAnswers?.st_level ?? "");
+      setTimetableEditorOpen(true);
+    } catch {
+      setError("通信に失敗しました。接続やログイン状態を確認してください。");
+    } finally {
+      setTimetableBusy(false);
+    }
+  }
+
+  async function saveTimetableFromChatDialog() {
+    setTimetableBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ profile: { studentTimetable: timetableValue } }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(
+          typeof (json as { error?: string }).error === "string"
+            ? (json as { error: string }).error
+            : "時間割の保存に失敗しました",
+        );
+        return;
+      }
+      emitLocalSettingsSavedFromJson(json);
+      setTimetableEditorOpen(false);
+      startTransition(() => {
+        router.refresh();
+      });
+    } catch {
+      setError("通信に失敗しました。接続やログイン状態を確認してください。");
+    } finally {
+      setTimetableBusy(false);
+    }
+  }
+
+  function requestCascadeDeleteUserMessage(anchorId: string) {
+    setError(null);
+    let snapshot: Msg[] = [];
+    let removedIds: string[] = [];
+    let expectedLen = 0;
+
+    flushSync(() => {
+      setMessages((prev) => {
+        const i = prev.findIndex((x) => x.id === anchorId);
+        if (i < 0) return prev;
+        snapshot = prev;
+        removedIds = prev.slice(i).map((x) => x.id);
+        expectedLen = prev.length - removedIds.length;
+        return prev.slice(0, i);
+      });
+    });
+
+    if (removedIds.length === 0) return;
+
+    lastDeleteAnchorIdRef.current = anchorId;
+    awaitingRefreshAfterDeleteRef.current = true;
+
+    void (async () => {
+      try {
+        const res = await fetch(`/api/chat-messages/${anchorId}`, { method: "DELETE" });
+        const data = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          removedMessageIds?: string[];
+        };
+
+        if (!res.ok) {
+          awaitingRefreshAfterDeleteRef.current = false;
+          lastDeleteAnchorIdRef.current = null;
+          setMessages((curr) => {
+            if (curr.length !== expectedLen) {
+              startTransition(() => router.refresh());
+              return curr;
+            }
+            return snapshot;
+          });
+          setError(
+            typeof data.error === "string" ? data.error : "削除に失敗しました。表示を元に戻しました。",
+          );
+          return;
+        }
+
+        const serverIds = data.removedMessageIds;
+        if (
+          Array.isArray(serverIds) &&
+          serverIds.length > 0 &&
+          serverIds.length !== removedIds.length
+        ) {
+          awaitingRefreshAfterDeleteRef.current = false;
+          lastDeleteAnchorIdRef.current = null;
+        }
+
+        startTransition(() => {
+          router.refresh();
+        });
+      } catch {
+        awaitingRefreshAfterDeleteRef.current = false;
+        lastDeleteAnchorIdRef.current = null;
+        setMessages((curr) => {
+          if (curr.length !== expectedLen) {
+            startTransition(() => router.refresh());
+            return curr;
+          }
+          return snapshot;
+        });
+        setError("通信に失敗しました。表示を元に戻しました。");
+      }
+    })();
+  }
+
   async function deleteThread() {
     const id = tid ?? initialThreadId;
     if (!id) return;
@@ -634,6 +889,7 @@ export function EntryChat({
       let triggerJournalDraft = false;
       let streamingSettingsUndo: SettingsChangeTip | undefined;
       let doneSeen = false;
+      let openTimetableAfterAck = false;
 
       while (true) {
         const { value, done } = await reader.read();
@@ -655,6 +911,8 @@ export function EntryChat({
               triggerJournalDraft?: boolean;
               settingsUndo?: SettingsChangeTip;
               navigateToEntryYmd?: string;
+              openTimetableEditorAfterAck?: boolean;
+              pendingSettingsSummaryJa?: string;
             };
             if (json.delta) {
               assistant += json.delta;
@@ -677,6 +935,9 @@ export function EntryChat({
                 window.setTimeout(() => {
                   router.push(`/entries/${json.navigateToEntryYmd}`);
                 }, 350);
+              }
+              if (json.openTimetableEditorAfterAck === true) {
+                openTimetableAfterAck = true;
               }
             }
           } catch {
@@ -719,6 +980,9 @@ export function EntryChat({
         }
         onJournalDraftGenerateRequest?.();
       }
+      if (openTimetableAfterAck) {
+        void loadAndOpenTimetableEditor();
+      }
       startTransition(() => {
         router.refresh();
       });
@@ -756,6 +1020,7 @@ export function EntryChat({
                 key={m.id}
                 m={m}
                 hasFollowingMessages={messages.slice(i + 1).length > 0}
+                followingMessageCount={messages.slice(i + 1).length}
                 onUpdated={(id, content, meta) => {
                   flushSync(() => {
                     setMessages((prev) => {
@@ -785,12 +1050,7 @@ export function EntryChat({
                     });
                   }
                 }}
-                onDeleted={(id) => {
-                  setMessages((prev) => prev.filter((x) => x.id !== id));
-                  startTransition(() => {
-                    router.refresh();
-                  });
-                }}
+                onRequestCascadeDelete={requestCascadeDeleteUserMessage}
               />
             ) : (
               <AssistantBubble
@@ -827,7 +1087,9 @@ export function EntryChat({
               placeholder="気づいたこと、感情、今日の予定とのこと…"
               disabled={busy}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
+                if (e.key !== "Enter") return;
+                // Enter / Shift+Enter は改行（textarea 既定）。送信は Mac: Option+Return / Win: Alt+Enter のみ。
+                if (e.altKey) {
                   e.preventDefault();
                   void send();
                 }
@@ -941,6 +1203,16 @@ export function EntryChat({
         </div>
       )}
 
+      {pendingSettingsSummaryJa &&
+        !pendingProposalDismissed &&
+        (!accordionLayout || !conversationOpen) && (
+          <PendingSettingsProposalBanner
+            summaryJa={pendingSettingsSummaryJa}
+            onDismiss={() => setPendingProposalDismissed(true)}
+            onRefresh={() => router.refresh()}
+          />
+        )}
+
       {accordionLayout && conversationOpen ? (
         <ResponsiveDialog
           open={conversationOpen}
@@ -987,6 +1259,13 @@ export function EntryChat({
               </div>
             </div>
           ) : null}
+          {pendingSettingsSummaryJa && !pendingProposalDismissed ? (
+            <PendingSettingsProposalBanner
+              summaryJa={pendingSettingsSummaryJa}
+              onDismiss={() => setPendingProposalDismissed(true)}
+              onRefresh={() => router.refresh()}
+            />
+          ) : null}
           <div
             ref={scrollRef}
             id="entry-chat-conversation-panel"
@@ -1014,6 +1293,32 @@ export function EntryChat({
           variant="chat-footer"
         />
       )}
+
+      <ResponsiveDialog
+        open={timetableEditorOpen}
+        onClose={() => {
+          if (!timetableBusy) setTimetableEditorOpen(false);
+        }}
+        labelledBy="entry-chat-timetable-title"
+        dialogId="entry-chat-timetable-dialog"
+        presentation="sheetBottom"
+        zClass="z-[62]"
+        panelClassName="max-h-[min(92dvh,900px)] min-h-0 w-full max-w-lg"
+      >
+        <TimetableEditorSheetPanel
+          titleId="entry-chat-timetable-title"
+          title="時間割"
+          value={timetableValue}
+          onChange={setTimetableValue}
+          stLevel={timetableStLevel}
+          busy={timetableBusy}
+          showSaveFooter
+          onSave={() => void saveTimetableFromChatDialog()}
+          onRequestClose={() => {
+            if (!timetableBusy) setTimetableEditorOpen(false);
+          }}
+        />
+      </ResponsiveDialog>
     </section>
   );
 }

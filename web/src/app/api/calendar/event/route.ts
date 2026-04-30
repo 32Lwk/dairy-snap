@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/api/require-session";
+import { AppLogScope, scheduleAppLog } from "@/lib/server/app-log";
 import {
   type CalendarEventInsertInput,
   type CalendarEventPatchInput,
@@ -48,6 +49,11 @@ export async function PATCH(req: Request) {
 
   const result = await patchGoogleCalendarEventForUser(session.user.id, input);
   if (!result.ok) {
+    scheduleAppLog(AppLogScope.calendar, "warn", "calendar_event_patch_failed", {
+      userId: session.user.id,
+      reason: result.reason,
+      calendarId: input.calendarId?.slice(0, 80),
+    });
     const status =
       result.reason === "validation_error"
         ? 400
@@ -101,6 +107,11 @@ export async function POST(req: Request) {
 
   const result = await insertGoogleCalendarEventForUser(session.user.id, input);
   if (!result.ok) {
+    scheduleAppLog(AppLogScope.calendar, "warn", "calendar_event_insert_failed", {
+      userId: session.user.id,
+      reason: result.reason,
+      calendarId: input.calendarId?.slice(0, 80),
+    });
     const status =
       result.reason === "validation_error"
         ? 400

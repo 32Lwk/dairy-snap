@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireSession } from "@/lib/api/require-session";
+import { AppLogScope, scheduleAppLog } from "@/lib/server/app-log";
 import { prisma } from "@/server/db";
 import { appendToDailyEntry } from "@/server/journal";
 
@@ -74,6 +75,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ entry });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "保存に失敗しました";
+    scheduleAppLog(AppLogScope.entries, "warn", "entry_append_failed", {
+      userId: session.user.id,
+      entryDateYmd: parsed.data.entryDateYmd,
+      err: msg.slice(0, 400),
+    });
     return NextResponse.json({ error: msg }, { status: 400 });
   }
 }

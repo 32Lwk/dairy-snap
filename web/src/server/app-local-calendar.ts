@@ -7,10 +7,10 @@ import {
 import { prisma } from "@/server/db";
 import type { CalendarEventBrief, CalendarEventWriteFields } from "@/server/calendar";
 
-function dateFromIsoLikeTokyo(isoLike: string, isEnd: boolean): Date {
+/** Google と同様に終日の終了日は排他端（0 時）として格納する。 */
+function dateFromIsoLikeTokyo(isoLike: string): Date {
   if (/^\d{4}-\d{2}-\d{2}$/.test(isoLike)) {
-    const suffix = isEnd ? "T23:59:59.999+09:00" : "T00:00:00+09:00";
-    return new Date(`${isoLike}${suffix}`);
+    return new Date(`${isoLike}T00:00:00+09:00`);
   }
   return new Date(isoLike);
 }
@@ -199,8 +199,8 @@ export async function insertAppLocalCalendarEvent(
       location,
       startIso: se.startIso,
       endIso: se.endIso,
-      startAt: dateFromIsoLikeTokyo(se.startIso, false),
-      endAt: dateFromIsoLikeTokyo(se.endIso, true),
+      startAt: dateFromIsoLikeTokyo(se.startIso),
+      endAt: dateFromIsoLikeTokyo(se.endIso),
     },
     include: { calendar: { select: { name: true } } },
   });
@@ -249,8 +249,8 @@ export async function patchAppLocalCalendarEvent(
       location,
       startIso: se.startIso,
       endIso: se.endIso,
-      startAt: dateFromIsoLikeTokyo(se.startIso, false),
-      endAt: dateFromIsoLikeTokyo(se.endIso, true),
+      startAt: dateFromIsoLikeTokyo(se.startIso),
+      endAt: dateFromIsoLikeTokyo(se.endIso),
     },
     include: { calendar: { select: { name: true } } },
   });

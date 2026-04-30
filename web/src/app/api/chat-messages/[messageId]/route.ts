@@ -4,6 +4,7 @@ import { requireSession } from "@/lib/api/require-session";
 import { prisma } from "@/server/db";
 import { runMasMemoryThreadReconcile } from "@/server/mas-memory";
 import { upsertTextEmbedding } from "@/server/embeddings";
+import { deleteEmbeddingsForTargets } from "@/server/embeddings";
 import { regenerateReflectiveChatTail } from "@/server/reflective-chat-user-edit-regeneration";
 
 export const runtime = "nodejs";
@@ -177,9 +178,12 @@ export async function DELETE(
       id: messageId,
       thread: { entry: { userId: session.user.id } },
     },
-    include: {
+    select: {
+      id: true,
+      role: true,
+      threadId: true,
       thread: {
-        include: {
+        select: {
           entry: {
             select: { id: true, entryDateYmd: true, encryptionMode: true, body: true },
           },
@@ -189,23 +193,53 @@ export async function DELETE(
   });
   if (!existing) return NextResponse.json({ error: "見つかりません" }, { status: 404 });
 
-  const ent = existing.thread.entry;
-  await prisma.chatMessage.delete({ where: { id: messageId } });
+  if (existing.role !== "user") {
+    return NextResponse.json({ error: "ユーザー発言のみ削除できます" }, { status: 400 });
+  }
 
-  await prisma.chatThread.update({
-    where: { id: existing.threadId },
-    data: { memoryChatBackfillAt: null, memoryChatBackfillMsgCount: null },
+  const ent = existing.thread.entry;
+  const userId = session.user.id;
+
+  const ordered = await prisma.chatMessage.findMany({
+    where: { threadId: existing.threadId },
+    orderBy: { createdAt: "asc" },
+    select: { id: true },
+  });
+  const idx = ordered.findIndex((r) => r.id === messageId);
+  if (idx < 0) {
+    return NextResponse.json({ error: "メッセージがスレッドにありません" }, { status: 400 });
+  }
+
+  const toDelete = ordered.slice(idx).map((r) => r.id);
+
+  await prisma.$transaction([
+    prisma.chatMessage.deleteMany({ where: { id: { in: toDelete } } }),
+    prisma.chatThread.update({
+      where: { id: existing.threadId },
+      data: { memoryChatBackfillAt: null, memoryChatBackfillMsgCount: null },
+    }),
+  ]);
+
+  const stripEmbeddings = ent.encryptionMode === "STANDARD";
+
+  after(() => {
+    void (async () => {
+      if (stripEmbeddings && toDelete.length > 0) {
+        await deleteEmbeddingsForTargets(userId, "CHAT_MESSAGE", toDelete).catch(() => {});
+      }
+      await runMasMemoryThreadReconcile({
+        userId,
+        entryId: ent.id,
+        entryDateYmd: ent.entryDateYmd,
+        encryptionMode: ent.encryptionMode,
+        diaryBody: ent.body,
+      }).catch(() => {});
+    })();
   });
 
-  after(() =>
-    runMasMemoryThreadReconcile({
-      userId: session.user.id,
-      entryId: ent.id,
-      entryDateYmd: ent.entryDateYmd,
-      encryptionMode: ent.encryptionMode,
-      diaryBody: ent.body,
-    }).catch(() => {}),
-  );
-
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({
+    ok: true,
+    removedCount: toDelete.length,
+    removedMessageIds: toDelete,
+  });
 }

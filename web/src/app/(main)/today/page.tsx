@@ -7,6 +7,10 @@ import { prisma } from "@/server/db";
 import { upsertDailyEntryForYmd } from "@/server/ensure-daily-entry";
 import { redirect } from "next/navigation";
 import { readSecurityNoticeJaFromConversationNotes } from "@/lib/chat-thread-security-notice";
+import {
+  formatPendingSettingsChangeSummaryJa,
+  type NormalizedCalendarOpeningPatch,
+} from "@/lib/settings-proposal-tool";
 import { TodayMainGrid } from "./today-main-grid";
 
 export default async function TodayPage() {
@@ -34,6 +38,24 @@ export default async function TodayPage() {
   const remaining = Math.max(0, dailyLimit - (entry.images?.length ?? 0));
   const resetAtIso = dayCtx.resetAtIso;
   const chatSecurityNoticeJa = readSecurityNoticeJaFromConversationNotes(chatThread?.conversationNotes);
+  const cn = (chatThread?.conversationNotes as Record<string, unknown>) ?? {};
+  const pendingRaw = cn.pendingSettingsChange as Record<string, unknown> | undefined;
+  let pendingSettingsSummaryJa: string | null = null;
+  if (typeof cn.lastSettingsProposalSummaryJa === "string" && cn.lastSettingsProposalSummaryJa.trim()) {
+    pendingSettingsSummaryJa = cn.lastSettingsProposalSummaryJa.trim();
+  } else if (pendingRaw && typeof pendingRaw === "object") {
+    const s = formatPendingSettingsChangeSummaryJa({
+      dayBoundaryEndTime: pendingRaw.dayBoundaryEndTime as string | null | undefined,
+      timeZone: pendingRaw.timeZone as string | undefined,
+      calendarOpening: pendingRaw.calendarOpening as NormalizedCalendarOpeningPatch | undefined,
+      profileAi: pendingRaw.profileAi as
+        | { aiChatTone?: string; aiDepthLevel?: string; aiAvoidTopics?: string[] }
+        | undefined,
+      openStudentTimetableEditor: pendingRaw.openStudentTimetableEditor === true ? true : undefined,
+      reasonJa: typeof pendingRaw.reasonJa === "string" ? pendingRaw.reasonJa : undefined,
+    });
+    pendingSettingsSummaryJa = s.trim() ? s : null;
+  }
   const transcriptMeta = buildEntryChatTranscript(
     (chatThread?.messages ?? []).map((m) => ({ role: m.role, content: m.content })),
   );
@@ -71,6 +93,7 @@ export default async function TodayPage() {
         diaryBody={entry.body ?? ""}
         photosDailyQuota={{ remaining, dailyLimit, resetAt: resetAtIso }}
         chatSecurityNoticeJa={chatSecurityNoticeJa}
+        pendingSettingsSummaryJa={pendingSettingsSummaryJa}
         images={(entry.images ?? []).map((i) => ({
           id: i.id,
           mimeType: i.mimeType,

@@ -10,11 +10,20 @@ export function buildSecurityReviewPayload(params: {
   entryId: string;
   userMessage: string;
   assistantContent: string;
+  /** 直近ターンのオーケストレーターが呼んだツール名（重複除去済み推奨） */
+  agentsUsed?: string[];
+  /** 設定提案の要約（機密を含めない短文字列） */
+  settingsProposalSummary?: string | null;
 }): SecurityReviewJobPayload | null {
-  const syncRuleTags = computeSecuritySyncRuleTags({
-    userMessage: params.userMessage,
-    assistantContent: params.assistantContent,
-  });
+  const syncRuleTags = [
+    ...computeSecuritySyncRuleTags({
+      userMessage: params.userMessage,
+      assistantContent: params.assistantContent,
+    }),
+  ];
+  if (params.agentsUsed?.includes("propose_settings_change")) {
+    if (!syncRuleTags.includes("settings_proposal")) syncRuleTags.push("settings_proposal");
+  }
   const runLlm = shouldEnqueueSecurityReviewLlm({
     assistantContent: params.assistantContent,
     syncRuleTags,
@@ -27,6 +36,8 @@ export function buildSecurityReviewPayload(params: {
     entryId: params.entryId,
     runLlm,
     syncRuleTags,
+    agentsUsed: params.agentsUsed ?? [],
+    settingsProposalSummary: params.settingsProposalSummary ?? null,
   };
 }
 

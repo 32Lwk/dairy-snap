@@ -4,6 +4,7 @@
  */
 
 import type { LocalSolarPhase } from "@/lib/time/local-solar-phase";
+import type { CalendarOpeningSettings } from "@/lib/user-settings";
 
 // ─── ペルソナ・コンテキスト ────────────────────────────────────────────────
 
@@ -63,6 +64,8 @@ export type AgentRequest = {
   longTermContext?: string;
   /** このエージェントのドメイン別メモリ（AgentMemory テーブルから取得済み） */
   agentMemory: Record<string, string>;
+  /** カレンダー開口設定（勤務エージェント等が分類に利用） */
+  calendarOpening?: CalendarOpeningSettings | null;
 };
 
 // ─── エージェント共通レスポンス ──────────────────────────────────────────
@@ -240,7 +243,7 @@ export const ORCHESTRATOR_TOOLS = [
     function: {
       name: "propose_settings_change",
       description:
-        "日付の区切り（前の日の終了時刻・00:00〜03:00）またはタイムゾーン（IANA）の変更を**提案するだけ**。DBには適用せず、ユーザーが次のターンで肯定したときだけサーバーが適用する。深夜の文脈やユーザー依頼があるときのみ。",
+        "設定変更を**提案するだけ**（DB 非適用）。ユーザーが次ターンで「はい」等と肯定したときだけサーバーが適用。変更できるのはホワイトリストのみ: 日付区切り dayBoundaryEndTime、IANA timeZone、カレンダー開口 calendarOpening（rules / calendarCategoryById / categoryMultiplierById の一部）、AI 嗜好 profileAi（aiChatTone / aiDepthLevel / aiAvoidTopics）、時間割エディタを開く提案 openStudentTimetableEditor=true。いずれか1つ以上必須。",
       parameters: {
         type: "object",
         properties: {
@@ -255,6 +258,29 @@ export const ORCHESTRATOR_TOOLS = [
           reasonJa: {
             type: "string",
             description: "提案理由（短く、200文字以内）",
+          },
+          calendarOpening: {
+            type: "object",
+            description:
+              "開口カレンダー設定の部分更新。rules は {kind:keyword|calendarId|colorId|location|description, value, category, weight?} の配列（最大24）。calendarCategoryById はカレンダーID→カテゴリ。categoryMultiplierById はカテゴリ→0.2〜3。いずれかを含める。",
+            properties: {
+              rules: { type: "array", items: { type: "object" } },
+              calendarCategoryById: { type: "object", additionalProperties: { type: "string" } },
+              categoryMultiplierById: { type: "object", additionalProperties: { type: "number" } },
+            },
+          },
+          profileAi: {
+            type: "object",
+            description: "プロフィールの AI 関連のみ。いずれか1フィールド以上。",
+            properties: {
+              aiChatTone: { type: "string" },
+              aiDepthLevel: { type: "string" },
+              aiAvoidTopics: { type: "array", items: { type: "string" } },
+            },
+          },
+          openStudentTimetableEditor: {
+            type: "boolean",
+            description: "true のとき、ユーザー肯定後にチャットから時間割エディタを開く提案のみ（このツール呼び出し単体でも可）。",
           },
         },
         required: [],

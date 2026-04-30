@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/api/require-session";
+import { AppLogScope, scheduleAppLog } from "@/lib/server/app-log";
 import { fetchCalendarEventsForUser } from "@/server/calendar";
 
 export const runtime = "nodejs";
@@ -42,6 +43,14 @@ export async function GET(req: Request) {
   });
   if (!result.ok) {
     const detail = result.detail ?? result.reason;
+    scheduleAppLog(AppLogScope.calendar, "warn", "calendar_events_fetch_failed", {
+      userId: session.user.id,
+      reason: result.reason,
+      detailSnippet: typeof detail === "string" ? detail.slice(0, 300) : undefined,
+      fromYmd: from ?? null,
+      toYmd: to ?? null,
+      forceSync,
+    });
     const detailLooksInternal =
       typeof detail === "string" &&
       (detail.includes("Invalid `prisma.") ||

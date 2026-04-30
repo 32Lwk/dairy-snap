@@ -1,7 +1,10 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireSession } from "@/lib/api/require-session";
-import { resolveDbUserFromSession } from "@/lib/api/resolve-db-user-from-session";
+import {
+  resolveDbUserFromSession,
+  resolveSessionUserUpdatedAt,
+} from "@/lib/api/resolve-db-user-from-session";
 import { isLoveMbtiType } from "@/lib/love-mbti";
 import { isMbtiType } from "@/lib/mbti";
 import { isValidIanaTimeZone } from "@/lib/time/user-day-boundary";
@@ -10,6 +13,7 @@ import {
   parseUserSettings,
   type UserProfileSettings,
 } from "@/lib/user-settings";
+import { AppLogScope, scheduleAppLog } from "@/lib/server/app-log";
 import { prisma } from "@/server/db";
 import { PROMPT_VERSIONS } from "@/server/prompts";
 import { LIMITS, getTodayCounter } from "@/server/usage";
@@ -180,6 +184,20 @@ export async function GET(req: NextRequest) {
   const session = await requireSession({ allowDisallowed: true });
   if ("response" in session) return session.response;
 
+  if (req.nextUrl.searchParams.get("syncCheck") === "1") {
+    const updatedAt = await resolveSessionUserUpdatedAt({
+      sessionUserId: session.user.id,
+      sessionEmail: session.user.email,
+    });
+    if (!updatedAt) {
+      return NextResponse.json(
+        { error: "セッションと一致するユーザーが見つかりません。再ログインしてください。" },
+        { status: 401 },
+      );
+    }
+    return NextResponse.json({ serverSyncToken: updatedAt.toISOString() }, JSON_NO_CACHE);
+  }
+
   const user = await resolveDbUserFromSession({
     sessionUserId: session.user.id,
     sessionEmail: session.user.email,
@@ -192,10 +210,6 @@ export async function GET(req: NextRequest) {
   }
 
   const serverSyncToken = user.updatedAt.toISOString();
-
-  if (req.nextUrl.searchParams.get("syncCheck") === "1") {
-    return NextResponse.json({ serverSyncToken }, JSON_NO_CACHE);
-  }
 
   const counter = await getTodayCounter(user.id);
   const s = parseUserSettings(user.settings);
@@ -317,24 +331,33 @@ export async function PATCH(req: NextRequest) {
         })
       : undefined;
 
-  const user = await prisma.user.update({
-    where: { id: resolved.id },
-    data: {
-      ...(parsed.data.encryptionMode
-        ? { encryptionMode: parsed.data.encryptionMode }
-        : {}),
-      ...(settingsPatch !== undefined ? { settings: settingsPatch } : {}),
-      /** `profile.timeZone` と DB の `User.timeZone` を同期（空文字は既定 Asia/Tokyo） */
-      ...(parsed.data.profile?.timeZone !== undefined
-        ? {
-            timeZone:
-              parsed.data.profile.timeZone.trim() === ""
-                ? "Asia/Tokyo"
-                : parsed.data.profile.timeZone.trim(),
-          }
-        : {}),
-    },
-  });
+  let user;
+  try {
+    user = await prisma.user.update({
+      where: { id: resolved.id },
+      data: {
+        ...(parsed.data.encryptionMode
+          ? { encryptionMode: parsed.data.encryptionMode }
+          : {}),
+        ...(settingsPatch !== undefined ? { settings: settingsPatch } : {}),
+        /** `profile.timeZone` と DB の `User.timeZone` を同期（空文字は既定 Asia/Tokyo） */
+        ...(parsed.data.profile?.timeZone !== undefined
+          ? {
+              timeZone:
+                parsed.data.profile.timeZone.trim() === ""
+                  ? "Asia/Tokyo"
+                  : parsed.data.profile.timeZone.trim(),
+            }
+          : {}),
+      },
+    });
+  } catch (e) {
+    scheduleAppLog(AppLogScope.settings, "error", "settings_patch_failed", {
+      userId: resolved.id,
+      err: e instanceof Error ? e.message : String(e).slice(0, 400),
+    });
+    return NextResponse.json({ error: "設定の保存に失敗しました" }, { status: 500 });
+  }
 
   const s = parseUserSettings(user.settings);
 

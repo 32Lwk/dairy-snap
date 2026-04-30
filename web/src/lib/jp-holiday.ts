@@ -1,4 +1,5 @@
 import JapaneseHolidays from "japanese-holidays";
+import { previousCalendarYmdInZone } from "@/lib/time/user-day-boundary";
 
 function dateAtNoonJst(ymd: string): Date | null {
   const t = (ymd ?? "").trim();
@@ -18,5 +19,24 @@ export function getJapaneseHolidayNameJa(ymd: string): string | null {
   if (!d) return null;
   const name = JapaneseHolidays.isHolidayAt(d);
   return typeof name === "string" && name.trim() ? name.trim() : null;
+}
+
+/**
+ * 開口・オーケストレータ用。国立祝日ライブラリを正とし、カレンダーの終日ラベルは補助。
+ * 終日イベントの終端解釈ミスや古いキャッシュで「前日の祝日」が翌日分に残る場合、
+ * タイトルが前日の祝日名と一致するだけなら当日の祝日シグナルから外す。
+ */
+export function resolveJapaneseHolidayNameForEntry(
+  entryDateYmd: string,
+  calendarAllDayHolidayTitle: string | null | undefined,
+): string | null {
+  const libToday = getJapaneseHolidayNameJa(entryDateYmd);
+  if (libToday) return libToday;
+  const cal = (calendarAllDayHolidayTitle ?? "").trim();
+  if (!cal) return null;
+  const prevYmd = previousCalendarYmdInZone(entryDateYmd, "Asia/Tokyo");
+  const libPrev = getJapaneseHolidayNameJa(prevYmd);
+  if (libPrev && cal === libPrev) return null;
+  return cal;
 }
 

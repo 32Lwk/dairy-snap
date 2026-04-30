@@ -4,6 +4,10 @@ import { getResolvedAuthUser } from "@/lib/server/resolved-auth-user";
 import { upsertDailyEntryForYmd } from "@/server/ensure-daily-entry";
 import { prisma } from "@/server/db";
 import { readSecurityNoticeJaFromConversationNotes } from "@/lib/chat-thread-security-notice";
+import {
+  formatPendingSettingsChangeSummaryJa,
+  type NormalizedCalendarOpeningPatch,
+} from "@/lib/settings-proposal-tool";
 import { EntryByDateView } from "./entry-by-date-view";
 
 const entryByDateInclude = {
@@ -58,6 +62,25 @@ export default async function EntryByDatePage({
   resetAt.setDate(resetAt.getDate() + 1);
   const resetAtIso = resetAt.toISOString();
 
+  const cn = (chatThread?.conversationNotes as Record<string, unknown>) ?? {};
+  const pendingRaw = cn.pendingSettingsChange as Record<string, unknown> | undefined;
+  let pendingSettingsSummaryJa: string | null = null;
+  if (typeof cn.lastSettingsProposalSummaryJa === "string" && cn.lastSettingsProposalSummaryJa.trim()) {
+    pendingSettingsSummaryJa = cn.lastSettingsProposalSummaryJa.trim();
+  } else if (pendingRaw && typeof pendingRaw === "object") {
+    const s = formatPendingSettingsChangeSummaryJa({
+      dayBoundaryEndTime: pendingRaw.dayBoundaryEndTime as string | null | undefined,
+      timeZone: pendingRaw.timeZone as string | undefined,
+      calendarOpening: pendingRaw.calendarOpening as NormalizedCalendarOpeningPatch | undefined,
+      profileAi: pendingRaw.profileAi as
+        | { aiChatTone?: string; aiDepthLevel?: string; aiAvoidTopics?: string[] }
+        | undefined,
+      openStudentTimetableEditor: pendingRaw.openStudentTimetableEditor === true ? true : undefined,
+      reasonJa: typeof pendingRaw.reasonJa === "string" ? pendingRaw.reasonJa : undefined,
+    });
+    pendingSettingsSummaryJa = s.trim() ? s : null;
+  }
+
   return (
     <EntryByDateView
       date={date}
@@ -67,6 +90,7 @@ export default async function EntryByDatePage({
       mood={entry.mood}
       entryDateYmd={date}
       chatSecurityNoticeJa={chatSecurityNoticeJa}
+      pendingSettingsSummaryJa={pendingSettingsSummaryJa}
       initialThreadId={chatThread?.id ?? null}
       initialMessages={
         chatThread?.messages.map((m) => ({

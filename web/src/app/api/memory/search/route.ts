@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSession } from "@/lib/api/require-session";
 import { prisma } from "@/server/db";
+import { AppLogScope, scheduleAppLog } from "@/lib/server/app-log";
 import { searchEmbeddings } from "@/server/embeddings";
 
 export const runtime = "nodejs";
@@ -35,6 +36,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ hits: enriched });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "検索に失敗しました";
+    scheduleAppLog(AppLogScope.memory, "error", "memory_search_failed", {
+      userId: session.user.id,
+      err: msg.slice(0, 400),
+    });
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

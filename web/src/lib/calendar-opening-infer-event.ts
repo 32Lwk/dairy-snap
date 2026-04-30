@@ -1,0 +1,86 @@
+import type { CalendarOpeningCategory, CalendarOpeningSettings } from "@/lib/user-settings";
+import {
+  addCalendarOpeningBuiltinTextHints,
+  BIRTHDAY_CALENDAR_NAME_SCORE_BOOST,
+  CALENDAR_DEFAULT_CATEGORY_WEIGHT,
+  normalizeCalendarOpeningPriorityOrder,
+  PARTTIME_CALENDAR_NAME_SCORE_BOOST,
+  pickWinningCalendarCategory,
+  resolveCalendarDefaultCategoryForScoring,
+  SCHOOL_CALENDAR_NAME_SCORE_BOOST,
+  suggestsBirthdayCalendarName,
+  suggestsParttimeCalendarName,
+  suggestsSchoolCalendarName,
+} from "@/lib/user-settings";
+
+/** 開口・カレンダー要約・勤務エージェントで共有する最小イベント形 */
+export type CalendarEventForCategoryInfer = {
+  title?: string;
+  start?: string;
+  end?: string;
+  location?: string;
+  description?: string;
+  calendarName?: string;
+  calendarId?: string;
+  colorId?: string;
+  fixedCategory?: string;
+};
+
+/**
+ * カレンダー UI と同じルールで 1 イベントの開口カテゴリを決定する。
+ * （クライアント `inferCategoryForEvent` と同等）
+ */
+export function inferCalendarEventCategory(
+  ev: CalendarEventForCategoryInfer,
+  settings: CalendarOpeningSettings | null,
+): CalendarOpeningCategory {
+  const fixed = (ev.fixedCategory ?? "").trim();
+  if (fixed) return fixed as CalendarOpeningCategory;
+  const rules = settings?.rules ?? [];
+  const priority = normalizeCalendarOpeningPriorityOrder(settings);
+  const hayTitle = (ev.title ?? "").toLowerCase();
+  const hayLoc = (ev.location ?? "").toLowerCase();
+  const hayDesc = (ev.description ?? "").toLowerCase();
+  const haystack = `${ev.title ?? ""}\n${ev.location ?? ""}\n${ev.description ?? ""}\n${ev.calendarName ?? ""}`;
+  const scores = new Map<CalendarOpeningCategory, number>();
+  const add = (cat: CalendarOpeningCategory, w: number) => {
+    scores.set(cat, (scores.get(cat) ?? 0) + w);
+  };
+  const calDefault = resolveCalendarDefaultCategoryForScoring(
+    ev.calendarId,
+    ev.calendarName,
+    settings?.calendarCategoryById,
+  );
+  if (calDefault) add(calDefault, CALENDAR_DEFAULT_CATEGORY_WEIGHT);
+  for (const r of rules) {
+    const w = typeof r.weight === "number" ? r.weight : 5;
+    const v = (r.value ?? "").toLowerCase();
+    if (!v) continue;
+    if (r.kind === "calendarId") {
+      if (ev.calendarId && ev.calendarId === r.value) add(r.category, w);
+      continue;
+    }
+    if (r.kind === "colorId") {
+      if (ev.colorId && ev.colorId === r.value) add(r.category, w);
+      continue;
+    }
+    if (r.kind === "keyword") {
+      if (hayTitle.includes(v)) add(r.category, w);
+      continue;
+    }
+    if (r.kind === "location") {
+      if (hayLoc.includes(v)) add(r.category, w);
+      continue;
+    }
+    if (r.kind === "description") {
+      if (hayDesc.includes(v)) add(r.category, w);
+      continue;
+    }
+  }
+  addCalendarOpeningBuiltinTextHints(haystack, add);
+  if (suggestsParttimeCalendarName(ev.calendarName)) add("parttime", PARTTIME_CALENDAR_NAME_SCORE_BOOST);
+  if (suggestsBirthdayCalendarName(ev.calendarName)) add("birthday", BIRTHDAY_CALENDAR_NAME_SCORE_BOOST);
+  if (suggestsSchoolCalendarName(ev.calendarName)) add("school", SCHOOL_CALENDAR_NAME_SCORE_BOOST);
+  add("other", 1);
+  return pickWinningCalendarCategory(scores, priority);
+}

@@ -1,3 +1,4 @@
+import { inferCalendarEventCategory } from "@/lib/calendar-opening-infer-event";
 import { getOpenAI } from "@/lib/ai/openai";
 import {
   chatCompletionOutputTokenLimit,
@@ -5,15 +6,25 @@ import {
   getAgentQualityChatModel,
 } from "@/lib/ai/openai-chat-models";
 import { withChatModelFallback } from "@/lib/ai/openai-model-fallback";
-import { fetchCalendarEventsForDay } from "@/server/calendar";
+import { suggestsParttimeCalendarName } from "@/lib/user-settings";
+import { fetchCalendarEventsForDay, type CalendarEventBrief } from "@/server/calendar";
 import type { AgentRequest, AgentResponse } from "./types";
 import { loadAgentPrompt } from "./utils";
 
 const WORK_KEYWORDS = ["バイト", "アルバイト", "シフト", "出勤", "勤務", "残業", "退勤", "職場", "レジ"];
 
-function isWorkEvent(title: string): boolean {
+function titleSuggestsWorkShift(title: string): boolean {
   const t = title.toLowerCase();
   return WORK_KEYWORDS.some((w) => t.includes(w.toLowerCase()));
+}
+
+function eventIsWorkRelated(ev: CalendarEventBrief, req: AgentRequest): boolean {
+  if (titleSuggestsWorkShift(ev.title)) return true;
+  if (suggestsParttimeCalendarName(ev.calendarName)) return true;
+  const fixed = (ev.fixedCategory ?? "").trim();
+  if (fixed === "parttime" || fixed === "job_hunt") return true;
+  const cat = inferCalendarEventCategory(ev, req.calendarOpening ?? null);
+  return cat === "parttime" || cat === "job_hunt";
 }
 
 function hhmmTokyo(isoLike: string): string {
@@ -34,13 +45,14 @@ export async function runCalendarWorkAgent(req: AgentRequest): Promise<AgentResp
   try {
     const cal = await fetchCalendarEventsForDay(req.userId, req.entryDateYmd);
     if (cal.ok && cal.events.length > 0) {
-      const workEvents = cal.events.filter((ev) => isWorkEvent(ev.title));
+      const workEvents = cal.events.filter((ev) => eventIsWorkRelated(ev, req));
       if (workEvents.length > 0) {
         eventsBlock = workEvents
           .map((ev) => {
             const start = hhmmTokyo(ev.start);
             const end = hhmmTokyo(ev.end);
-            return `- ${ev.title}${start ? ` ${start}〜${end}` : ""}`;
+            const calHint = suggestsParttimeCalendarName(ev.calendarName) ? " [シフト系カレンダー]" : "";
+            return `- ${ev.title}${calHint}${start ? ` ${start}〜${end}` : ""}`;
           })
           .join("\n");
       }

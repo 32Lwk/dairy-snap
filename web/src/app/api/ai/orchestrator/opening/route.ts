@@ -11,6 +11,7 @@ import { PROMPT_VERSIONS } from "@/server/prompts";
 import { upsertTextEmbedding } from "@/server/embeddings";
 import { computeAssistantStreamDelta, stripAssistantMetaEchoPrefix } from "@/lib/chat-assistant-sanitize";
 import { buildSecurityReviewPayload, scheduleSecurityReview } from "@/server/security-review-queue";
+import { AppLogScope, scheduleAppLog } from "@/lib/server/app-log";
 import { resolveOrchestratorClockNow } from "@/lib/time/client-clock";
 import { getUserEffectiveDayContext } from "@/lib/server/user-effective-day";
 import {
@@ -37,10 +38,12 @@ export async function POST(req: NextRequest) {
   const json = await req.json().catch(() => null);
   const parsed = bodySchema.safeParse(json);
   if (!parsed.success) {
+    scheduleAppLog(AppLogScope.opening, "warn", "opening_bad_request", { reason: "body_schema" });
     return new Response(JSON.stringify({ error: "入力が不正です" }), { status: 400 });
   }
 
   if (!process.env.OPENAI_API_KEY) {
+    scheduleAppLog(AppLogScope.opening, "warn", "opening_openai_unconfigured", {});
     return new Response(JSON.stringify({ error: "OPENAI_API_KEY が未設定です" }), { status: 503 });
   }
 
@@ -48,17 +51,24 @@ export async function POST(req: NextRequest) {
     where: { id: parsed.data.entryId, userId: session.user.id },
   });
   if (!entry) {
+    scheduleAppLog(AppLogScope.opening, "info", "opening_entry_not_found", { entryId: parsed.data.entryId });
     return new Response(JSON.stringify({ error: "見つかりません" }), { status: 404 });
   }
 
   const counter = await getTodayCounter(session.user.id);
   if (counter.chatMessages >= LIMITS.CHAT_PER_DAY) {
+    scheduleAppLog(AppLogScope.opening, "warn", "opening_rate_limited", { limit: LIMITS.CHAT_PER_DAY });
     return new Response(JSON.stringify({ error: "本日のチャット上限に達しました" }), { status: 429 });
   }
 
   const claim = await claimThreadForOpening(entry.id);
 
   if (claim.kind === "skip") {
+    scheduleAppLog(AppLogScope.opening, "debug", "opening_skipped_already_done", {
+      userId: session.user.id,
+      entryId: entry.id,
+      threadId: claim.threadId,
+    });
     return new Response(JSON.stringify({ skipped: true, threadId: claim.threadId }), {
       status: 200,
       headers: { "Content-Type": "application/json; charset=utf-8" },
@@ -66,6 +76,11 @@ export async function POST(req: NextRequest) {
   }
 
   if (claim.kind === "in_progress") {
+    scheduleAppLog(AppLogScope.opening, "debug", "opening_skipped_in_progress", {
+      userId: session.user.id,
+      entryId: entry.id,
+      threadId: claim.threadId,
+    });
     return new Response(
       JSON.stringify({
         skipped: true,
@@ -263,7 +278,8 @@ export async function POST(req: NextRequest) {
         .join("\n")
     : "";
 
-  const { stream, agentsUsed, personaInstructions, mbtiHint, orchestratorModel } = await runOrchestrator({
+  const { stream, agentsUsed, personaInstructions, mbtiHint, orchestratorModel, correlationId } =
+    await runOrchestrator({
     userId: session.user.id,
     entryId: entry.id,
     entryDateYmd: entry.entryDateYmd,
@@ -359,6 +375,14 @@ export async function POST(req: NextRequest) {
           mbtiHint: mbtiHint || undefined,
         });
 
+        const tNotes = await prisma.chatThread.findUnique({
+          where: { id: threadId },
+          select: { conversationNotes: true },
+        });
+        const cn = (tNotes?.conversationNotes as Record<string, unknown>) ?? {};
+        const settingsProposalSummary =
+          typeof cn.lastSettingsProposalSummary === "string" ? cn.lastSettingsProposalSummary : null;
+
         const secPayload = buildSecurityReviewPayload({
           messageId: assistant.id,
           userId: session.user.id,
@@ -366,8 +390,27 @@ export async function POST(req: NextRequest) {
           entryId: entry.id,
           userMessage: "",
           assistantContent: storedAssistant,
+          agentsUsed,
+          settingsProposalSummary,
         });
         if (secPayload) scheduleSecurityReview(secPayload);
+
+        scheduleAppLog(
+          AppLogScope.opening,
+          "info",
+          "opening_sse_complete",
+          {
+            userId: session.user.id,
+            entryId: entry.id,
+            threadId,
+            entryDateYmd: entry.entryDateYmd,
+            latencyMs,
+            model: orchestratorModel,
+            agentsUsed,
+            assistantChars: storedAssistant.length,
+          },
+          { correlationId },
+        );
 
         controller.enqueue(
           encoder.encode(`data: ${JSON.stringify({ done: true, threadId, agentsUsed })}\n\n`),
@@ -394,6 +437,19 @@ export async function POST(req: NextRequest) {
 
         controller.close();
       } catch (e) {
+        scheduleAppLog(
+          AppLogScope.opening,
+          "error",
+          "opening_sse_error",
+          {
+            userId: session.user.id,
+            entryId: entry.id,
+            threadId,
+            assistantMessageId,
+            err: e instanceof Error ? e.message : String(e).slice(0, 500),
+          },
+          { correlationId },
+        );
         await prisma.chatMessage
           .deleteMany({
             where: { id: assistantMessageId, model: OPENING_PENDING_MODEL },

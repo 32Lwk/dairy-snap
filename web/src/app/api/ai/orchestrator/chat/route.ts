@@ -24,7 +24,10 @@ import {
   applySettingsPatchFromChat,
   isAffirmativeJaMessage,
 } from "@/lib/server/apply-settings-from-chat";
+import type { SettingsProposalPatch } from "@/lib/settings-proposal-tool";
+import { formatPendingSettingsChangeSummaryJa } from "@/lib/settings-proposal-tool";
 import { previousCalendarYmdInZone } from "@/lib/time/user-day-boundary";
+import { AppLogScope, scheduleAppLog } from "@/lib/server/app-log";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -52,10 +55,12 @@ export async function POST(req: NextRequest) {
   const json = await req.json().catch(() => null);
   const parsed = bodySchema.safeParse(json);
   if (!parsed.success) {
+    scheduleAppLog(AppLogScope.chat, "warn", "orchestrator_chat_bad_request", { reason: "body_schema" });
     return new Response(JSON.stringify({ error: "入力が不正です" }), { status: 400 });
   }
 
   if (!process.env.OPENAI_API_KEY) {
+    scheduleAppLog(AppLogScope.chat, "warn", "orchestrator_chat_openai_unconfigured", {});
     return new Response(JSON.stringify({ error: "OPENAI_API_KEY が未設定です" }), { status: 503 });
   }
 
@@ -69,6 +74,9 @@ export async function POST(req: NextRequest) {
     }),
   ]);
   if (!entryRaw) {
+    scheduleAppLog(AppLogScope.chat, "info", "orchestrator_chat_entry_not_found", {
+      entryId: parsed.data.entryId,
+    });
     return new Response(JSON.stringify({ error: "見つかりません" }), { status: 404 });
   }
   let entry = entryRaw;
@@ -77,6 +85,9 @@ export async function POST(req: NextRequest) {
 
   const counter = await getTodayCounter(session.user.id);
   if (counter.chatMessages >= LIMITS.CHAT_PER_DAY) {
+    scheduleAppLog(AppLogScope.chat, "warn", "orchestrator_chat_rate_limited", {
+      limit: LIMITS.CHAT_PER_DAY,
+    });
     return new Response(JSON.stringify({ error: "本日のチャット上限に達しました" }), { status: 429 });
   }
 
@@ -88,6 +99,7 @@ export async function POST(req: NextRequest) {
   // ユーザーが明示的に「昨日の振り返り」を希望した場合は、昨日エントリへ切り替える（自動遷移）。
   // これにより「今日スレッドに書いてしまった」状態を避ける。
   let navigateToEntryYmd: string | undefined;
+  let openTimetableEditorAfterAck = false;
   if (isYesterdayReflectionRequestJa(parsed.data.message)) {
     const yesterdayYmd = previousCalendarYmdInZone(dayCtx.calendarYmd, dayCtx.timeZone);
     if (entry.entryDateYmd !== yesterdayYmd) {
@@ -173,12 +185,10 @@ export async function POST(req: NextRequest) {
 
   const notesRaw = (thread.conversationNotes as Record<string, unknown>) ?? {};
   const pendingRaw = notesRaw.pendingSettingsChange as
-    | {
-        dayBoundaryEndTime?: string | null;
-        timeZone?: string;
+    | (SettingsProposalPatch & {
         reasonJa?: string;
         proposedAt?: string;
-      }
+      })
     | undefined;
 
   let extraSystemAppend: string | undefined;
@@ -188,11 +198,14 @@ export async function POST(req: NextRequest) {
         next: { dayBoundaryEndTime: string | null; timeZone: string | null };
       }
     | undefined;
-
   if (pendingRaw && isAffirmativeJaMessage(parsed.data.message)) {
-    const patch: { dayBoundaryEndTime?: string | null; timeZone?: string } = {};
+    const patch: SettingsProposalPatch = {};
     if (pendingRaw.dayBoundaryEndTime !== undefined) patch.dayBoundaryEndTime = pendingRaw.dayBoundaryEndTime;
     if (pendingRaw.timeZone !== undefined) patch.timeZone = pendingRaw.timeZone;
+    if (pendingRaw.calendarOpening) patch.calendarOpening = pendingRaw.calendarOpening;
+    if (pendingRaw.profileAi) patch.profileAi = pendingRaw.profileAi;
+    if (pendingRaw.openStudentTimetableEditor === true) patch.openStudentTimetableEditor = true;
+
     const applied = await applySettingsPatchFromChat({
       userId: session.user.id,
       entryId: entry.id,
@@ -202,40 +215,56 @@ export async function POST(req: NextRequest) {
     if (applied.ok) {
       const nextNotes = { ...notesRaw };
       delete nextNotes.pendingSettingsChange;
+      delete nextNotes.lastSettingsProposalSummary;
+      delete nextNotes.lastSettingsProposalSummaryJa;
       await prisma.chatThread.update({
         where: { id: thread.id },
         data: { conversationNotes: nextNotes as Prisma.InputJsonValue },
       });
-      const afterCtx = await getUserEffectiveDayContext(session.user.id, orchestratorNow);
-      if (afterCtx.effectiveYmd !== entry.entryDateYmd) {
-        navigateToEntryYmd = afterCtx.effectiveYmd;
+      if (!applied.noPersist) {
+        const afterCtx = await getUserEffectiveDayContext(session.user.id, orchestratorNow);
+        if (afterCtx.effectiveYmd !== entry.entryDateYmd) {
+          navigateToEntryYmd = afterCtx.effectiveYmd;
+        }
       }
-      extraSystemAppend = [
-        "## 直前に適用された設定（ユーザーが肯定応答した直後）",
-        "ユーザーは提案していた設定変更に同意した。変更内容を**一言**で確認したうえで、",
-        "**このエントリ日**の振り返りを続ける。会話がまだ浅ければ、開口に近いトーンでこの日の一日について具体的に聞く（長い設定説明は不要。チップで元に戻せることに触れない）。",
-      ].join("\n");
-      settingsUndoPayload = { previous: applied.previous, next: applied.next };
+      if (applied.openTimetableEditorAfterAck) openTimetableEditorAfterAck = true;
+      if (applied.noPersist && applied.patchKinds?.includes("openStudentTimetableEditor")) {
+        extraSystemAppend = [
+          "## 直前の応答（ユーザーが時間割エディタ提案に同意した直後）",
+          "ユーザーは時間割をチャットから編集する流れに同意した。アプリがエディタを開く案内を出す想定なので、**長い説明はせず**一言で確認し、この日の振り返りに戻る。",
+        ].join("\n");
+      } else {
+        extraSystemAppend = [
+          "## 直前に適用された設定（ユーザーが肯定応答した直後）",
+          "ユーザーは提案していた設定変更に同意した。変更内容を**一言**で確認したうえで、",
+          "**このエントリ日**の振り返りを続ける。会話がまだ浅ければ、開口に近いトーンでこの日の一日について具体的に聞く（長い設定説明は不要。チップで元に戻せることに触れない）。",
+          ...(applied.openTimetableEditorAfterAck
+            ? ["時間割エディタを開く案内も出る想定なら、**一文**で触れてよい（長く説明しない）。"]
+            : []),
+        ].join("\n");
+        settingsUndoPayload = { previous: applied.previous, next: applied.next };
+      }
     } else {
       extraSystemAppend = `## 設定の適用に失敗\n${applied.errorJa}`;
     }
   }
 
-  const { stream, agentsUsed, personaInstructions, mbtiHint, orchestratorModel } = await runOrchestrator({
-    userId: session.user.id,
-    entryId: entry.id,
-    entryDateYmd: entry.entryDateYmd,
-    userMessage: parsed.data.message,
-    historyMessages,
-    isOpening: false,
-    encryptionMode: entry.encryptionMode,
-    currentBody: entry.body,
-    reflectiveUserTurnIncludingCurrent,
-    preferMiniOrchestrator,
-    clockNow: orchestratorNow,
-    threadId: thread.id,
-    extraSystemAppend,
-  });
+  const { stream, agentsUsed, personaInstructions, mbtiHint, orchestratorModel, correlationId } =
+    await runOrchestrator({
+      userId: session.user.id,
+      entryId: entry.id,
+      entryDateYmd: entry.entryDateYmd,
+      userMessage: parsed.data.message,
+      historyMessages,
+      isOpening: false,
+      encryptionMode: entry.encryptionMode,
+      currentBody: entry.body,
+      reflectiveUserTurnIncludingCurrent,
+      preferMiniOrchestrator,
+      clockNow: orchestratorNow,
+      threadId: thread.id,
+      extraSystemAppend,
+    });
 
   const encoder = new TextEncoder();
   let assistantText = "";
@@ -310,17 +339,38 @@ export async function POST(req: NextRequest) {
           },
         });
 
+        const notesBeforeMerge = await prisma.chatThread.findUnique({
+          where: { id: thread!.id },
+          select: { conversationNotes: true },
+        });
+        const mergedConversationNotes: Record<string, unknown> = {
+          ...((notesBeforeMerge?.conversationNotes as Record<string, unknown>) ?? {}),
+          lastExcerpt: parsed.data.message.slice(0, 200),
+          updatedAt: new Date().toISOString(),
+          lastAgentsUsed: agentsUsed,
+        };
         await prisma.chatThread.update({
           where: { id: thread!.id },
-          data: {
-            conversationNotes: {
-              ...((thread!.conversationNotes as Record<string, unknown>) ?? {}),
-              lastExcerpt: parsed.data.message.slice(0, 200),
-              updatedAt: new Date().toISOString(),
-              lastAgentsUsed: agentsUsed,
-            },
-          },
+          data: { conversationNotes: mergedConversationNotes as Prisma.InputJsonValue },
         });
+
+        const settingsProposalSummary =
+          typeof mergedConversationNotes.lastSettingsProposalSummary === "string"
+            ? mergedConversationNotes.lastSettingsProposalSummary
+            : null;
+        const pendRaw = mergedConversationNotes.pendingSettingsChange as Record<string, unknown> | undefined;
+        const pendingSettingsSummaryJa =
+          pendRaw && typeof pendRaw === "object"
+            ? formatPendingSettingsChangeSummaryJa({
+                dayBoundaryEndTime: pendRaw.dayBoundaryEndTime as string | null | undefined,
+                timeZone: pendRaw.timeZone as string | undefined,
+                calendarOpening: pendRaw.calendarOpening as SettingsProposalPatch["calendarOpening"],
+                profileAi: pendRaw.profileAi as SettingsProposalPatch["profileAi"],
+                openStudentTimetableEditor:
+                  pendRaw.openStudentTimetableEditor === true ? true : undefined,
+                reasonJa: typeof pendRaw.reasonJa === "string" ? pendRaw.reasonJa : undefined,
+              })
+            : null;
 
         const recentTurns = [
           ...historyMessages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
@@ -348,8 +398,29 @@ export async function POST(req: NextRequest) {
           entryId: entry.id,
           userMessage: parsed.data.message,
           assistantContent: storedAssistant,
+          agentsUsed,
+          settingsProposalSummary,
         });
         if (secPayload) scheduleSecurityReview(secPayload);
+
+        scheduleAppLog(
+          AppLogScope.chat,
+          "info",
+          "orchestrator_chat_sse_complete",
+          {
+            userId: session.user.id,
+            entryId: entry.id,
+            threadId: thread!.id,
+            entryDateYmd: entry.entryDateYmd,
+            latencyMs,
+            model: orchestratorModel,
+            agentsUsed,
+            userMessageChars: parsed.data.message.length,
+            assistantChars: storedAssistant.length,
+            preferMiniOrchestrator,
+          },
+          { correlationId },
+        );
 
         controller.enqueue(
           encoder.encode(
@@ -364,6 +435,8 @@ export async function POST(req: NextRequest) {
               journalDraftMaterial,
               settingsUndo: settingsUndoPayload,
               navigateToEntryYmd,
+              openTimetableEditorAfterAck,
+              pendingSettingsSummaryJa: pendingSettingsSummaryJa || undefined,
             })}\n\n`,
           ),
         );
@@ -389,6 +462,17 @@ export async function POST(req: NextRequest) {
 
         controller.close();
       } catch (e) {
+        scheduleAppLog(
+          AppLogScope.chat,
+          "error",
+          "orchestrator_chat_sse_error",
+          {
+            userId: session.user.id,
+            entryId: entry.id,
+            err: e instanceof Error ? e.message : String(e).slice(0, 500),
+          },
+          { correlationId },
+        );
         controller.error(e);
       }
     },
