@@ -28,7 +28,11 @@ const nextConfig: NextConfig = {
    * 必要な JSON を明示的に同梱させる。
    */
   outputFileTracingIncludes: {
-    "/*": ["./node_modules/@google-cloud/tasks/build/esm/src/v2/cloud_tasks_client_config.json"],
+    "/*": [
+      "./node_modules/@google-cloud/tasks/build/esm/src/v2/cloud_tasks_client_config.json",
+      "./node_modules/@google-cloud/tasks/build/esm/src/v2beta2/cloud_tasks_client_config.json",
+      "./node_modules/@google-cloud/tasks/build/esm/src/v2beta3/cloud_tasks_client_config.json",
+    ],
   },
 };
 
