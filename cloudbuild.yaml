@@ -1,0 +1,18 @@
+steps:
+  - name: "gcr.io/cloud-builders/npm"
+    dir: "web"
+    entrypoint: "bash"
+    env:
+      - "SKIP_ENV_VALIDATION=1"
+      - "NODE_OPTIONS=--max-old-space-size=4096"
+      # Prisma generate が参照するため、ビルド専用のダミー URL を入れる（接続はしない）
+      - "DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/postgres?schema=public"
+    args:
+      - "-lc"
+      - |
+        npm ci
+        npx prisma generate
+        npm run build
+
+options:
+  logging: CLOUD_LOGGING_ONLY
