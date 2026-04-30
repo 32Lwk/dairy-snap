@@ -70,9 +70,8 @@ export default async function SettingsPage() {
               </ul>
             </details>
 
-            {/* desktop: show all details */}
+            {/* desktop: show all details（ログイン表示は上の段落と重複しないようここでは出さない） */}
             <ul className="mt-3 hidden space-y-1.5 text-xs text-zinc-700 dark:text-zinc-300 lg:block lg:text-sm">
-              {email ? <li>ログイン中: {email}</li> : null}
               <li>Google 連携: {cal.hasGoogleAccount ? "あり" : "なし"}</li>
               <li>リフレッシュトークン: {cal.hasRefreshToken ? "保存済み" : "未保存（再連携が必要なことがあります）"}</li>
               <li>

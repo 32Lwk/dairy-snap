@@ -26,6 +26,17 @@ export default async function proxy(req: NextRequest) {
     return NextResponse.next();
   }
 
+  /**
+   * `public/` の静的ファイル（proxy が先に走るため、未ログイン時もそのまま配信する）
+   * さもないと `/brand/*.png` や `/file.svg` などが `/login` へ 307 される。
+   */
+  if (
+    nextUrl.pathname.startsWith("/brand/") ||
+    /\.(?:png|jpe?g|gif|webp|svg|ico|woff2?)$/i.test(nextUrl.pathname)
+  ) {
+    return NextResponse.next();
+  }
+
   /** 本番で SNAP_MARKETING_HOST 以外からマーケ URL へ来た場合、正規ホストへ寄せる */
   if (isMarketingPath) {
     const canonical = process.env.SNAP_MARKETING_HOST?.trim().toLowerCase();

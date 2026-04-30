@@ -823,6 +823,7 @@ git log -1 --oneline origin/main
 12. **開口カテゴリ推定のサーバー共通化** — `calendar-opening-infer-event.ts` でクライアントと同ルールの `inferCalendarEventCategory` をサーバーでも利用（ログ・エージェント・開口デバッグの一貫性）。
 13. **認証・埋め込み・セキュリティ周辺の堅牢化** — NextAuth ルートを try/catch でラップし JSON エラーを返す（空ボディ等での SessionProvider の ClientFetchError 抑制）。`deleteEmbeddingsForTargets` でチャット一括削除時のベクトル削除を一括化。セキュリティレビュー投入／ジョブにログや調整を追記。
 14. **カレンダー取得と UI** — 日次フェッチの Prisma 条件を東京暦日の半開区間に揃える変更に追従。`calendar-client` 等の UI 調整。`entry-temporal-context` の微修正。
+15. **アカウント移行（エクスポート/インポート）と静的アセット配信** — 設定画面から暗号化バンドル（`.dsbundle`）をエクスポート／インポートする UI と API を追加。未ログインでも `public/` の静的ファイル（`/brand/*` や画像・フォント等）が `proxy` によって `/login` へリダイレクトされないよう例外を追加。
 
 ### データベース（Prisma / マイグレーション）
 
@@ -835,6 +836,7 @@ git log -1 --oneline origin/main
 - **設定の適用**: `lib/server/apply-settings-from-chat.ts` が、ユーザーの肯定文を検知した場合にのみ保留パッチを検証して適用。成功/失敗を AuditLog と UsageCounter に反映。
 - **日付文脈**: `lib/server/user-effective-day.ts` により、ユーザー設定（TZ/日付境界）を踏まえた `effectiveYmd` / `calendarYmd` / `resetAtIso` を提供し、オーケストレーターや画面側の「今日」を合わせやすくした。
 - **オーケストレーター**: `opening` 側で「日付がズレていそう」なときに `propose_settings_change` を候補に含めるガイドを追加。
+- **アカウント移行**: `api/account/transfer/*` でエクスポートジョブの開始・状態・ダウンロード、インポート（dry-run 含む）を提供。
 
 ### 祝日/休日シグナルと講義断定の抑制（実装詳細）
 

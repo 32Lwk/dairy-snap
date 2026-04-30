@@ -2,6 +2,7 @@
 
 import { signOut } from "next-auth/react";
 import { useEffect, useState } from "react";
+import { AccountTransferDialog } from "@/components/account-transfer-dialog";
 
 type Props = {
   /** 省略時は `/api/account/me` で取得（許可リスト外の画面用） */
@@ -16,6 +17,7 @@ export function SettingsAccountActions({ email: emailProp }: Props) {
   const [confirmEmail, setConfirmEmail] = useState("");
   const [busy, setBusy] = useState<"logout" | "delete" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [transferOpen, setTransferOpen] = useState<null | "export" | "import">(null);
 
   useEffect(() => {
     if (emailProp !== undefined) {
@@ -90,6 +92,44 @@ export function SettingsAccountActions({ email: emailProp }: Props) {
           {busy === "logout" ? "ログアウト中…" : "ログアウト"}
         </button>
       </div>
+
+      <div className="mt-6 border-t border-zinc-200 pt-4 dark:border-zinc-700">
+        <h3 className="text-sm font-medium text-zinc-900 dark:text-zinc-50">データの引き継ぎ</h3>
+        <p className="mt-1 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+          別のアカウントや別環境（検証→本番など）へデータを移すには、暗号化されたバンドル(.dsbundle)をエクスポートし、
+          移行先のアカウントで再ログインしてからインポートしてください。
+        </p>
+        <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+          パスフレーズを忘れるとバンドルは復号できません。安全な場所に控えてください。
+          認証情報・セキュリティレビュー履歴などは引き継がれません。
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setTransferOpen("export")}
+            disabled={busy !== null}
+            className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-800 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-800/80"
+          >
+            データをエクスポート
+          </button>
+          <button
+            type="button"
+            onClick={() => setTransferOpen("import")}
+            disabled={busy !== null}
+            className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-800 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-800/80"
+          >
+            バンドルからインポート
+          </button>
+        </div>
+      </div>
+
+      {transferOpen !== null && (
+        <AccountTransferDialog
+          open={transferOpen !== null}
+          mode={transferOpen}
+          onClose={() => setTransferOpen(null)}
+        />
+      )}
 
       <div className="mt-6 border-t border-zinc-200 pt-4 dark:border-zinc-700">
         <h3 className="text-sm font-medium text-red-700 dark:text-red-400">アカウントの削除</h3>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, type MutableRefObject, type ReactNode } from "react";
+import { useEffect, useRef, useState, type MutableRefObject, type ReactNode } from "react";
 import { TimetableEditor } from "@/components/timetable-editor";
 
 export type TimetableEditorSheetPanelProps = {
@@ -52,6 +52,18 @@ export function TimetableEditorSheetPanel({
   const fallbackInteractRef = useRef<number | null>(null);
   const blurRef = guardTimestampRefs?.blurAt ?? fallbackBlurRef;
   const interactRef = guardTimestampRefs?.interactAt ?? fallbackInteractRef;
+  const [blurAt, setBlurAt] = useState<number | null>(null);
+  const [interactAt, setInteractAt] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (blurAt == null) return;
+    blurRef.current = blurAt;
+  }, [blurAt, blurRef]);
+
+  useEffect(() => {
+    if (interactAt == null) return;
+    interactRef.current = interactAt;
+  }, [interactAt, interactRef]);
 
   const editor = (
     <TimetableEditor compact value={value} onChange={onChange} stLevel={stLevel} />
@@ -60,16 +72,16 @@ export function TimetableEditorSheetPanel({
   const editorBlock = interactionGuard ? (
     <div
       onBlurCapture={() => {
-        blurRef.current = Date.now();
+        setBlurAt(Date.now());
       }}
       onFocusCapture={() => {
-        interactRef.current = Date.now();
+        setInteractAt(Date.now());
       }}
       onKeyDownCapture={() => {
-        interactRef.current = Date.now();
+        setInteractAt(Date.now());
       }}
       onPointerDownCapture={() => {
-        interactRef.current = Date.now();
+        setInteractAt(Date.now());
       }}
     >
       {editor}
