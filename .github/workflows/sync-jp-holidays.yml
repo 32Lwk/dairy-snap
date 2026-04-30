@@ -1,0 +1,48 @@
+name: Sync JP National Holidays (Cabinet Office CSV)
+
+on:
+  schedule:
+    # 1st day of month 01:20 JST ≈ 16:20 UTC (previous day) is messy.
+    # Keep it simple: run monthly on the 1st at 00:20 UTC.
+    - cron: "20 0 1 * *"
+  workflow_dispatch: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Sync holidays dataset
+        working-directory: web
+        run: npm run -s sync:jp-holidays
+
+      - name: Create PR if changed
+        uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: "data: sync JP national holidays (Cabinet Office CSV)"
+          title: "data: sync JP national holidays (Cabinet Office CSV)"
+          body: |
+            This PR updates `web/src/data/jp-national-holidays-official.json` by fetching
+            the official dataset (`syukujitsu.csv`) from the Cabinet Office.
+
+            Source: https://www8.cao.go.jp/chosei/shukujitsu/gaiyou.html
+          branch: chore/sync-jp-holidays
+          delete-branch: true
+          add-paths: |
+            web/src/data/jp-national-holidays-official.json

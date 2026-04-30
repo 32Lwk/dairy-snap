@@ -28,7 +28,8 @@
     "**/*.tsx",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
-    "**/*.mts"
+    "**/*.mts",
+    "src/data/jp-national-holidays-official.json"
   ],
   "exclude": ["node_modules", "vitest.config.ts", "**/*.test.ts"]
 }

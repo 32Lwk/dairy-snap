@@ -61,16 +61,16 @@ export default async function TodayPage() {
   );
 
   return (
-    <div className="mx-auto w-full px-4 pb-6 pt-[calc(4.5rem+env(safe-area-inset-top,0px))] md:max-w-5xl md:px-5 md:pt-[calc(4.75rem+env(safe-area-inset-top,0px))] lg:max-w-6xl lg:px-6">
-      <header className="fixed left-0 right-0 top-0 z-30 border-b border-zinc-200/90 bg-white/95 backdrop-blur-md dark:border-zinc-800/90 dark:bg-zinc-950/95">
-        <div className="mx-auto flex w-full max-w-5xl flex-wrap items-start justify-between gap-3 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] md:px-5 lg:max-w-6xl lg:px-6">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <header className="sticky top-0 z-30 w-full shrink-0 border-b border-zinc-200/90 bg-white/95 backdrop-blur-md dark:border-zinc-800/90 dark:bg-zinc-950/95">
+        <div className="mx-auto flex w-full max-w-5xl flex-wrap items-start justify-between gap-2 px-3 pb-2 pt-[max(0.5rem,env(safe-area-inset-top))] sm:px-4 md:px-5 md:pb-2.5 lg:max-w-6xl lg:px-6 lg:pb-3 lg:pt-[max(0.75rem,env(safe-area-inset-top))]">
           <div className="min-w-0">
-            <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">今日</p>
-            <h1 className="mt-1 text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+            <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-500 sm:text-xs">今日</p>
+            <h1 className="mt-0.5 text-xl font-bold tracking-tight text-zinc-900 sm:text-2xl md:mt-1 dark:text-zinc-50">
               {ymd}
             </h1>
             {dayCtx.calendarYmd !== ymd ? (
-              <p className="mt-2 max-w-xl text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+              <p className="mt-1.5 max-w-xl text-[11px] leading-snug text-zinc-500 sm:mt-2 sm:text-xs sm:leading-relaxed dark:text-zinc-400">
                 いま開いているのは{" "}
                 <span className="font-medium text-zinc-700 dark:text-zinc-300">{ymd}</span> の振り返りです（設定どおり「まだ前日の続き」）。
                 カレンダーでは今日は{" "}
@@ -87,35 +87,37 @@ export default async function TodayPage() {
         </div>
       </header>
 
-      <TodayMainGrid
-        entryId={entry.id}
-        entryDateYmd={ymd}
-        diaryBody={entry.body ?? ""}
-        photosDailyQuota={{ remaining, dailyLimit, resetAt: resetAtIso }}
-        chatSecurityNoticeJa={chatSecurityNoticeJa}
-        pendingSettingsSummaryJa={pendingSettingsSummaryJa}
-        images={(entry.images ?? []).map((i) => ({
-          id: i.id,
-          mimeType: i.mimeType,
-          byteSize: i.byteSize,
-          rotationQuarterTurns: i.rotationQuarterTurns,
-          caption: i.caption,
-        }))}
-        initialThreadId={chatThread?.id ?? null}
-        initialMessages={
-          chatThread?.messages.map((m) => ({
-            id: m.id,
-            role: m.role,
-            content: m.content,
-            model: m.model,
-          })) ?? []
-        }
-        latitude={entry.latitude}
-        longitude={entry.longitude}
-        weatherJson={entry.weatherJson}
-        initialPlutchikAnalysis={entry.plutchikAnalysis}
-        transcriptCharCount={transcriptMeta.charCount}
-      />
+      <div className="mx-auto flex min-h-0 w-full flex-1 flex-col px-3 pb-4 sm:px-4 md:max-w-5xl md:px-5 md:pb-5 lg:max-w-6xl lg:px-6 lg:pb-6">
+        <TodayMainGrid
+          entryId={entry.id}
+          entryDateYmd={ymd}
+          diaryBody={entry.body ?? ""}
+          photosDailyQuota={{ remaining, dailyLimit, resetAt: resetAtIso }}
+          chatSecurityNoticeJa={chatSecurityNoticeJa}
+          pendingSettingsSummaryJa={pendingSettingsSummaryJa}
+          images={(entry.images ?? []).map((i) => ({
+            id: i.id,
+            mimeType: i.mimeType,
+            byteSize: i.byteSize,
+            rotationQuarterTurns: i.rotationQuarterTurns,
+            caption: i.caption,
+          }))}
+          initialThreadId={chatThread?.id ?? null}
+          initialMessages={
+            chatThread?.messages.map((m) => ({
+              id: m.id,
+              role: m.role,
+              content: m.content,
+              model: m.model,
+            })) ?? []
+          }
+          latitude={entry.latitude}
+          longitude={entry.longitude}
+          weatherJson={entry.weatherJson}
+          initialPlutchikAnalysis={entry.plutchikAnalysis}
+          transcriptCharCount={transcriptMeta.charCount}
+        />
+      </div>
     </div>
   );
 }

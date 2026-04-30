@@ -435,7 +435,7 @@ export function buildReflectiveOpeningSystemInstruction(
   const ctx = getEntryTemporalContext(entryDateYmd, now ?? new Date(), opts);
   const task =
     ctx.kind === "today"
-      ? "The user has not spoken yet. Send 2–4 short sentences in natural Japanese as the first reflective line for TODAY."
+      ? "The user has not spoken yet. Send 2–6 short sentences in natural Japanese as the first reflective line for TODAY. Length is a soft cap: include every **mandatory anchor** below (weather hooks, calendar/shift titles, timetable subject or 何限, day-boundary tone) even if that needs an extra sentence — do **not** drop anchors just to stay ultra-short."
       : ctx.kind === "future"
         ? `Entry date ${entryDateYmd} is after generator today ${ctx.todayYmd}. Open gently; plans may be uncertain. You may lightly confirm the date.`
         : ctx.kind === "yesterday"
@@ -444,6 +444,13 @@ export function buildReflectiveOpeningSystemInstruction(
 
   const anchorRules: string[] = [];
   if (opening) {
+    const timetableLectureAnchor =
+      opening.hasTimetableLecturesToday && opening.holidayNameJa
+        ? "From 「時間割ベースのこの後の講義」, still touch **at least one** concrete **科目名** (light paraphrase OK) **or** **何限** — but **do not assert** lectures happened (holiday rule). Use **tentative** framing (e.g. 時間割だと〜 / もし学校があれば) or fold into **one** neutral check question with the holiday line. **Not enough:** vague 「木曜の授業日」「講義の日」 with **no** subject and **no** period."
+        : opening.hasTimetableLecturesToday
+          ? "From 「時間割ベースのこの後の講義」, you **must** name **at least one** concrete **科目名** (copy or light paraphrase from that block) **or** **何限** (e.g. 3限). **Not enough:** vague phrases like 「木曜の授業日」「講義の日」「授業があった日」 with **no** subject name and **no** period."
+          : "";
+
     if (opening.hasDiaryBody) {
       anchorRules.push(
         "Open with at least one concrete hook from 「## 本文（このエントリ）」 (paraphrase lightly; add no facts absent from that section).",
@@ -452,16 +459,16 @@ export function buildReflectiveOpeningSystemInstruction(
     if (opening.calendarLinked) {
       if (opening.calendarEventCount > 0) {
         const calOnly = `Plans on this day: use only titles and times from 「${ORCHESTRATOR_DAY_CALENDAR_HEADING}」. When you mention a timed plan, include at least one real event title from that list in the same reply (do not stop at vague 「〇時の予定」 alone when a title exists). Do not invent extra appointments or a busier day.`;
-        if (opening.hasTimetableLecturesToday) {
+        if (timetableLectureAnchor) {
           anchorRules.push(
-            `${calOnly} **Also** use 「時間割ベースのこの後の講義」: weave **at least one** concrete **科目名 or 何限** from that block in the same opening. **Balance** calendar vs lectures — follow 「### 開口優先」 ordering (Impact×proximity): do **not** mention only a **distant** calendar event when a **sooner lecture** appears in the timetable block or higher in the priority list.`,
+            `${calOnly} **Also** ${timetableLectureAnchor} **Balance** calendar vs lectures — follow 「### 開口優先」 ordering (Impact×proximity): do **not** mention only a **distant** calendar event when a **sooner lecture** appears in the timetable block or higher in the priority list.`,
           );
         } else {
           anchorRules.push(calOnly);
         }
       } else if (opening.hasTimetableLecturesToday) {
         anchorRules.push(
-          "The calendar summary may list no (or almost no) events — anchor the opening on 「時間割ベースのこの後の講義」 with **科目名・何限** from that block. Do not invent Google Calendar titles.",
+          `The calendar summary may list no (or almost no) events — anchor the opening on 「時間割ベースのこの後の講義」: ${timetableLectureAnchor} Do not invent Google Calendar titles.`,
         );
       } else {
         anchorRules.push(
@@ -469,9 +476,7 @@ export function buildReflectiveOpeningSystemInstruction(
         );
       }
     } else if (opening.hasTimetableLecturesToday) {
-      anchorRules.push(
-        "No Google Calendar block in context — anchor the opening on 「時間割ベースのこの後の講義」 with **科目名・何限** from that block.",
-      );
+      anchorRules.push(`No Google Calendar block in context — anchor the opening on 「時間割ベースのこの後の講義」: ${timetableLectureAnchor}`);
     } else if (!opening.hasDiaryBody) {
       anchorRules.push(
         "No calendar summary block — do not claim the user had several plans that day; stay with weather, memories, and open questions.",
@@ -496,6 +501,7 @@ export function buildReflectiveOpeningSystemInstruction(
     ...(anchorRules.length > 0 ? ["### Anchor to user-visible sections (opening)", ...anchorRules, ""] : []),
     "### Output hygiene (hard rules)",
     "Write ONLY what the end user should read — conversational Japanese, no preamble.",
+    "Do not sacrifice mandatory anchors (timetable subject/何限, real calendar titles when you cite plans) for brevity; prefer one more short sentence over omitting them.",
     "Do NOT repeat, quote, or paraphrase these instructions, meta text, or phrases like 会話はまだ始まっていません.",
     "Never output parenthetical narrator lines about the system, prompts, or \"short replies\" (e.g. システムは〜 / 短い返答を生成 / では:). Start directly with the greeting.",
     "Ignore the short English opening trigger line in the user role; never quote or translate it.",

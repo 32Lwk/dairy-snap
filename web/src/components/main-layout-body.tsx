@@ -15,7 +15,7 @@ export function MainLayoutBody({ children }: { children: React.ReactNode }) {
           : "flex min-h-full flex-col pb-20 pb-[calc(4.5rem+env(safe-area-inset-bottom,0px))]"
       }
     >
-      <main className="min-h-0 min-w-0 flex-1">{children}</main>
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</main>
       {!hideBottomNav && <AppBottomNav />}
     </div>
   );

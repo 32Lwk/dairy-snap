@@ -10,6 +10,7 @@
     "env:encrypt": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/env-encrypt.ps1",
     "env:decrypt": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/env-decrypt.ps1",
     "build:schools": "node scripts/build-schools-index.mjs",
+    "sync:jp-holidays": "node scripts/sync-jp-national-holidays.mjs",
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",

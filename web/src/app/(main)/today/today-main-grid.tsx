@@ -58,11 +58,10 @@ export function TodayMainGrid({
   return (
     <div
       className={[
-        "mt-6 grid grid-cols-1 gap-6 sm:gap-7 md:grid-cols-12 md:gap-8 lg:gap-10",
-        // md+: 左チャットはビューポート内に収め、右カラムだけ縦スクロール
-        "md:items-stretch",
-        "md:h-[calc(100svh-11rem-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))]",
-        "md:min-h-[22rem]",
+        // ヘッダー直下の余白はブレークポイントごとに固定（sticky ヘッダー高に依存しない）
+        "mt-2 grid min-h-[22rem] grid-cols-1 gap-3 sm:mt-2.5 sm:gap-4 md:mt-3 md:grid-cols-12 md:gap-6 lg:gap-8",
+        // md+: 左チャットはビューポート内に収め、右カラムだけ縦スクロール（高さは親の flex-1 に追従）
+        "md:min-h-0 md:flex-1 md:items-stretch",
       ].join(" ")}
     >
       <div className="order-1 min-h-0 md:col-span-7 md:order-1 md:flex md:h-full md:min-h-0 md:flex-col md:overflow-hidden lg:col-span-7">
@@ -83,9 +82,9 @@ export function TodayMainGrid({
           />
         </div>
       </div>
-      <div className="order-2 space-y-6 md:col-span-5 md:order-2 md:min-h-0 md:overflow-y-auto md:overscroll-y-contain md:pr-0.5 lg:col-span-5">
+      <div className="order-2 space-y-3 sm:space-y-4 md:col-span-5 md:order-2 md:min-h-0 md:space-y-5 md:overflow-y-auto md:overscroll-y-contain md:pr-0.5 lg:col-span-5 lg:space-y-6">
         {!hasSavedBody ? (
-          <div className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
+          <div className="rounded-xl border border-zinc-200 p-3 sm:p-3.5 md:p-4 dark:border-zinc-800">
             <JournalDraftPanel
               entryId={entryId}
               threadId={liveThreadId}
@@ -103,7 +102,7 @@ export function TodayMainGrid({
           </div>
         ) : null}
 
-        <div className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
+        <div className="rounded-xl border border-zinc-200 p-3 sm:p-3.5 md:p-4 dark:border-zinc-800">
           <EntryImages
             key={`${entryId}-${images.length}-${images[0]?.id ?? ""}`}
             entryId={entryId}

@@ -89,12 +89,12 @@ function PendingSettingsProposalBanner({
 }) {
   return (
     <details className="shrink-0 border-b border-violet-200/90 bg-violet-50/95 dark:border-violet-900/40 dark:bg-violet-950/45 [&_summary::-webkit-details-marker]:hidden">
-      <summary className="cursor-pointer select-none list-none px-4 py-2 text-xs font-medium text-violet-950 dark:text-violet-100">
+      <summary className="cursor-pointer select-none list-none px-3 py-1.5 text-[11px] font-medium text-violet-950 sm:px-4 sm:py-2 sm:text-xs dark:text-violet-100">
         保留中の設定変更
         <span className="ml-1.5 font-normal text-violet-800/80 dark:text-violet-200/80">（タップで詳細）</span>
       </summary>
-      <p className="px-4 pb-1 text-xs leading-relaxed text-violet-950 dark:text-violet-100">{summaryJa}</p>
-      <div className="flex flex-wrap gap-3 px-4 pb-2 text-[11px] text-violet-900/90 dark:text-violet-200/90">
+      <p className="px-3 pb-1 text-[11px] leading-snug text-violet-950 sm:px-4 sm:text-xs sm:leading-relaxed dark:text-violet-100">{summaryJa}</p>
+      <div className="flex flex-wrap gap-2 px-3 pb-2 text-[11px] text-violet-900/90 sm:gap-3 sm:px-4 dark:text-violet-200/90">
         <button type="button" className="underline" onClick={() => onRefresh()}>
           最新を読み込む
         </button>
@@ -106,9 +106,9 @@ function PendingSettingsProposalBanner({
   );
 }
 
-/** デフォルト高さ（`layoutHeight="fill"` のモバイル時のみ max-md: で利用） */
+/** デフォルト高さ（`layoutHeight="fill"` のモバイル時のみ max-md: で利用）。ヘッダー縮小に合わせ 100svh 控除をやや小さく */
 const DEFAULT_CHAT_PANEL_MOBILE_HEIGHT =
-  "max-md:min-h-[min(58dvh,420px)] max-md:max-h-[min(84dvh,min(780px,calc(100svh-10rem)))] max-md:landscape:max-h-[min(68dvh,min(560px,calc(100svh-9rem)))]";
+  "max-md:min-h-[min(58dvh,420px)] max-md:max-h-[min(86dvh,min(780px,calc(100svh-8.25rem)))] max-md:landscape:max-h-[min(70dvh,min(560px,calc(100svh-7.75rem)))]";
 
 /** チャットはプレーンなテキスト表示のため、** や単独の * を読みやすくする */
 /** React Strict Mode 再マウントでも同一 entry の開口 fetch が二重に走らないようにする */
@@ -269,7 +269,7 @@ function UserMessageBubble({
         </div>
       </ResponsiveDialog>
       <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">あなた</span>
-      <div className="max-w-[min(100%,28rem)] rounded-2xl rounded-br-md bg-gradient-to-br from-zinc-800 to-zinc-900 px-4 py-2.5 text-sm text-white shadow-sm dark:from-zinc-200 dark:to-zinc-100 dark:text-zinc-900">
+      <div className="max-w-[min(100%,28rem)] rounded-2xl rounded-br-md bg-gradient-to-br from-zinc-800 to-zinc-900 px-3 py-2 text-[13px] leading-snug text-white shadow-sm sm:px-3.5 sm:py-2.5 sm:text-sm sm:leading-normal dark:from-zinc-200 dark:to-zinc-100 dark:text-zinc-900">
         {editing ? (
           <div className="space-y-2">
             <textarea
@@ -375,7 +375,7 @@ function AssistantBubble({
   return (
     <div className="flex flex-col items-start gap-1">
       <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">AI</span>
-      <div className="max-w-[min(100%,28rem)] rounded-2xl rounded-bl-md border border-zinc-200/80 bg-white px-4 py-2.5 text-sm leading-relaxed text-zinc-900 shadow-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100">
+      <div className="max-w-[min(100%,28rem)] rounded-2xl rounded-bl-md border border-zinc-200/80 bg-white px-3 py-2 text-[13px] leading-snug text-zinc-900 shadow-sm sm:px-3.5 sm:py-2.5 sm:text-sm sm:leading-relaxed dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100">
         <p className="whitespace-pre-wrap">{shown}</p>
         {streaming && <span className="ml-0.5 inline-block h-3 w-0.5 animate-pulse bg-emerald-500 align-middle" />}
       </div>
@@ -557,8 +557,20 @@ export function EntryChat({
         });
         const ct = res.headers.get("content-type") ?? "";
         if (!res.ok) {
-          const data = (await res.json().catch(() => ({}))) as { error?: string };
-          setError(typeof data.error === "string" ? data.error : "開口メッセージの取得に失敗しました");
+          const raw = await res.text();
+          let message: string | undefined;
+          try {
+            const data = JSON.parse(raw) as { error?: unknown };
+            if (typeof data.error === "string" && data.error.trim()) message = data.error;
+          } catch {
+            /* 非 JSON（プロキシの HTML 等） */
+          }
+          setError(
+            message ??
+              (raw.trim()
+                ? `開口メッセージの取得に失敗しました（${res.status}）`
+                : "開口メッセージの取得に失敗しました"),
+          );
           return;
         }
         if (ct.includes("application/json")) {
@@ -574,7 +586,13 @@ export function EntryChat({
           return;
         }
         if (!res.body) {
-          setError("開口メッセージの取得に失敗しました");
+          // 200 でもボディが無い場合がある（プロキシ/ランタイムの制約など）。原因が見えるように情報を出す。
+          const raw = await res.text().catch(() => "");
+          setError(
+            raw.trim()
+              ? `開口メッセージの取得に失敗しました（${res.status} / no body）`
+              : `開口メッセージの取得に失敗しました（${res.status} / no body）`,
+          );
           return;
         }
 
@@ -631,10 +649,11 @@ export function EntryChat({
       : [
           // メッセージ＋入力欄。固定ヘッダー・底ナビ・カード見出し分を calc で控えつつ、dvh/px 上限も緩める
           "min-h-[min(58dvh,420px)]",
-          "max-h-[min(84dvh,min(780px,calc(100svh-10rem)))]",
-          "landscape:max-h-[min(68dvh,min(560px,calc(100svh-9rem)))]",
+          "max-h-[min(86dvh,min(780px,calc(100svh-8.25rem)))]",
+          "landscape:max-h-[min(70dvh,min(560px,calc(100svh-7.75rem)))]",
           "md:min-h-[min(60dvh,460px)]",
-          "md:max-h-[min(86dvh,min(820px,calc(100svh-11rem)))]",
+          // タブレット幅はチャット縦をやや多めに（1024px 未満）
+          "md:max-lg:max-h-[min(88dvh,min(840px,calc(100svh-9.5rem)))]",
           "md:landscape:max-h-[min(72dvh,min(600px,calc(100svh-9.5rem)))]",
           "lg:min-h-[min(68dvh,520px)]",
           "lg:max-h-[min(90dvh,min(900px,calc(100svh-11.5rem)))]",
@@ -1002,7 +1021,7 @@ export function EntryChat({
       <>
         <div
           ref={messagesScrollRef}
-          className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-3 py-4 sm:px-4"
+          className="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain px-2 py-2 sm:space-y-2.5 sm:px-3 sm:py-3 lg:space-y-4 lg:px-4 lg:py-4"
         >
           {messages.length === 0 && !streaming && !busy && (
             <p className="rounded-xl bg-zinc-100/80 px-3 py-2 text-center text-xs text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
@@ -1077,13 +1096,13 @@ export function EntryChat({
           {streaming && <AssistantBubble content={streaming} streaming />}
         </div>
 
-        <div className="shrink-0 border-t border-zinc-100 bg-zinc-50/95 p-3 dark:border-zinc-800 dark:bg-zinc-900/90">
-          <div className="flex gap-2">
+        <div className="shrink-0 border-t border-zinc-100 bg-zinc-50/95 p-2 sm:p-2.5 lg:p-3 dark:border-zinc-800 dark:bg-zinc-900/90">
+          <div className="flex gap-1.5 sm:gap-2">
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              rows={variant === "compact" ? 2 : 3}
-              className="min-h-[2.75rem] flex-1 resize-none rounded-xl border border-zinc-200 bg-white px-3 py-2 text-[13px] text-zinc-900 shadow-inner outline-none ring-emerald-500/30 placeholder:text-zinc-400 focus:border-emerald-500/50 focus:ring-2 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50"
+              rows={variant === "compact" ? 2 : 2}
+              className="min-h-[2.5rem] flex-1 resize-none rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-[13px] text-zinc-900 shadow-inner outline-none ring-emerald-500/30 placeholder:text-zinc-400 focus:border-emerald-500/50 focus:ring-2 sm:min-h-[2.75rem] sm:rounded-xl sm:px-3 sm:py-2 lg:min-h-[2.75rem] dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50"
               placeholder="気づいたこと、感情、今日の予定とのこと…"
               disabled={busy}
               onKeyDown={(e) => {
@@ -1099,7 +1118,7 @@ export function EntryChat({
               type="button"
               disabled={busy || !input.trim()}
               onClick={() => void send()}
-              className="min-h-12 min-w-[4.5rem] shrink-0 self-end rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-40 dark:bg-emerald-500 dark:hover:bg-emerald-600"
+              className="min-h-10 min-w-[4rem] shrink-0 self-end rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-40 sm:min-h-12 sm:min-w-[4.5rem] sm:rounded-xl sm:px-4 sm:py-2.5 sm:text-sm dark:bg-emerald-500 dark:hover:bg-emerald-600"
             >
               送信
             </button>
@@ -1122,16 +1141,16 @@ export function EntryChat({
               .join(" ")
       }
     >
-      <div className="shrink-0 border-b border-zinc-100 bg-zinc-50/90 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/80">
+      <div className="shrink-0 border-b border-zinc-100 bg-zinc-50/90 px-3 py-2 sm:px-3.5 sm:py-2.5 lg:px-4 lg:py-3 dark:border-zinc-800 dark:bg-zinc-900/80">
         {conversationAccordion && variant === "default" ? (
-          <div className="flex min-w-0 flex-col gap-3">
+          <div className="flex min-w-0 flex-col gap-2 sm:gap-2.5 lg:gap-3">
             <div className="min-w-0">
-              <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">振り返りチャット</h2>
-              <p className="mt-0.5 text-xs text-zinc-500">
+              <h2 className="text-xs font-semibold text-zinc-900 sm:text-sm dark:text-zinc-50">振り返りチャット</h2>
+              <p className="mt-0.5 text-[11px] text-zinc-500 sm:text-xs">
                 プロフィール・カレンダーの文脈を踏まえて深掘りします。
               </p>
             </div>
-            <div className="flex flex-wrap items-stretch justify-between gap-3 border-t border-zinc-200/70 pt-3 dark:border-zinc-700/80">
+            <div className="flex flex-wrap items-stretch justify-between gap-2 border-t border-zinc-200/70 pt-2 sm:gap-3 sm:pt-3 dark:border-zinc-700/80">
               <button
                 type="button"
                 id="entry-chat-accordion-trigger"
@@ -1139,7 +1158,7 @@ export function EntryChat({
                 aria-controls="entry-chat-conversation-panel"
                 disabled={busy}
                 onClick={() => setConversationOpen((o) => !o)}
-                className="inline-flex min-h-10 min-w-[8.5rem] flex-1 items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 text-[11px] font-medium text-zinc-800 shadow-sm outline-none ring-emerald-500/25 transition hover:border-zinc-300 hover:bg-zinc-50 focus-visible:ring-2 disabled:opacity-50 sm:flex-none dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-500 dark:hover:bg-zinc-800"
+                className="inline-flex min-h-9 min-w-[8rem] flex-1 items-center justify-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 text-[11px] font-medium text-zinc-800 shadow-sm outline-none ring-emerald-500/25 transition hover:border-zinc-300 hover:bg-zinc-50 focus-visible:ring-2 disabled:opacity-50 sm:min-h-10 sm:min-w-[8.5rem] sm:gap-2 sm:px-3 sm:flex-none dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-500 dark:hover:bg-zinc-800"
               >
                 {conversationOpen ? "会話を閉じる" : "会話を開く"}
               </button>
@@ -1148,7 +1167,7 @@ export function EntryChat({
                   type="button"
                   disabled={busy}
                   onClick={() => void deleteThread()}
-                  className="inline-flex min-h-10 shrink-0 items-center justify-center rounded-lg border border-red-200 bg-red-50/90 px-3 text-[11px] font-medium text-red-800 shadow-sm outline-none ring-red-500/20 transition hover:bg-red-100/90 focus-visible:ring-2 disabled:opacity-50 dark:border-red-900/60 dark:bg-red-950/50 dark:text-red-100 dark:hover:bg-red-950/80"
+                  className="inline-flex min-h-9 shrink-0 items-center justify-center rounded-lg border border-red-200 bg-red-50/90 px-2.5 text-[11px] font-medium text-red-800 shadow-sm outline-none ring-red-500/20 transition hover:bg-red-100/90 focus-visible:ring-2 disabled:opacity-50 sm:min-h-10 sm:px-3 dark:border-red-900/60 dark:bg-red-950/50 dark:text-red-100 dark:hover:bg-red-950/80"
                 >
                   全削除
                 </button>
@@ -1156,10 +1175,10 @@ export function EntryChat({
             </div>
           </div>
         ) : (
-          <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start justify-between gap-2 sm:gap-3 lg:gap-4">
             <div className="min-w-0 flex-1">
-              <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">振り返りチャット</h2>
-              <p className="mt-0.5 text-xs text-zinc-500">
+              <h2 className="text-xs font-semibold text-zinc-900 sm:text-sm dark:text-zinc-50">振り返りチャット</h2>
+              <p className="mt-0.5 text-[11px] text-zinc-500 sm:text-xs">
                 プロフィール・カレンダーの文脈を踏まえて深掘りします。
               </p>
             </div>
@@ -1168,7 +1187,7 @@ export function EntryChat({
                 type="button"
                 disabled={busy}
                 onClick={() => void deleteThread()}
-                className="inline-flex min-h-10 shrink-0 items-center justify-center rounded-lg border border-red-200 bg-red-50/90 px-3 text-[11px] font-medium text-red-800 shadow-sm outline-none ring-red-500/20 transition hover:bg-red-100/90 focus-visible:ring-2 disabled:opacity-50 dark:border-red-900/60 dark:bg-red-950/50 dark:text-red-100 dark:hover:bg-red-950/80"
+                className="inline-flex min-h-9 shrink-0 items-center justify-center rounded-lg border border-red-200 bg-red-50/90 px-2.5 text-[11px] font-medium text-red-800 shadow-sm outline-none ring-red-500/20 transition hover:bg-red-100/90 focus-visible:ring-2 disabled:opacity-50 sm:min-h-10 sm:px-3 dark:border-red-900/60 dark:bg-red-950/50 dark:text-red-100 dark:hover:bg-red-950/80"
               >
                 全削除
               </button>
@@ -1178,14 +1197,14 @@ export function EntryChat({
       </div>
 
       {error && (!accordionLayout || !conversationOpen) && (
-        <p className="shrink-0 border-b border-red-100 bg-red-50 px-4 py-2 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300">
+        <p className="shrink-0 border-b border-red-100 bg-red-50 px-3 py-1.5 text-[11px] text-red-700 sm:px-4 sm:py-2 sm:text-xs dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300">
           {error}
         </p>
       )}
 
       {chatSecurityNoticeJa && !securityBannerDismissed && (!accordionLayout || !conversationOpen) && (
-        <div className="shrink-0 border-b border-amber-200/90 bg-amber-50/95 px-4 py-2 dark:border-amber-900/40 dark:bg-amber-950/50">
-          <p className="text-xs leading-relaxed text-amber-950 dark:text-amber-100">{chatSecurityNoticeJa}</p>
+        <div className="shrink-0 border-b border-amber-200/90 bg-amber-50/95 px-3 py-1.5 dark:border-amber-900/40 dark:bg-amber-950/50 sm:px-4 sm:py-2">
+          <p className="text-[11px] leading-snug text-amber-950 sm:text-xs sm:leading-relaxed dark:text-amber-100">{chatSecurityNoticeJa}</p>
           <div className="mt-1.5 flex flex-wrap gap-3 text-[11px] text-amber-900/90 dark:text-amber-200/90">
             <button
               type="button"
@@ -1223,8 +1242,8 @@ export function EntryChat({
           zClass="z-[58]"
           panelClassName="min-h-0 w-full max-w-lg"
         >
-          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900">
-            <h2 id="entry-chat-island-title" className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-zinc-200 bg-zinc-50 px-3 py-2 sm:px-4 sm:py-3 dark:border-zinc-800 dark:bg-zinc-900">
+            <h2 id="entry-chat-island-title" className="text-xs font-semibold text-zinc-900 sm:text-sm dark:text-zinc-50">
               振り返りチャット
             </h2>
             <button

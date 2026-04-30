@@ -42,7 +42,10 @@ import {
   ORCHESTRATOR_DAY_CALENDAR_HEADING,
 } from "@/lib/time/entry-temporal-context";
 import { inferCalendarEventCategory } from "@/lib/calendar-opening-infer-event";
-import { resolveJapaneseHolidayNameForEntry } from "@/lib/jp-holiday";
+import {
+  filterCalendarEventsForAiNationalHolidaySanity,
+  resolveJapaneseHolidayNameForEntry,
+} from "@/lib/jp-holiday";
 import { AppLogScope, newCorrelationId, scheduleAppLog } from "@/lib/server/app-log";
 import { DEFAULT_WEATHER_LATITUDE, DEFAULT_WEATHER_LONGITUDE } from "@/lib/location-defaults";
 import {
@@ -81,8 +84,12 @@ const OPENING_TOOL_USER_FALLBACK = " ";
 
 const ORCHESTRATOR_TOOL_ROUND_MAX_TOKENS = 2048;
 const ORCHESTRATOR_STREAM_MAX_TOKENS = 2048;
-/** 開口の最終ストリーム: 短文でも `max_completion_tokens` が推論と表示で割られるモデル向けに余裕を確保 */
-const ORCHESTRATOR_STREAM_MAX_TOKENS_OPENING = 4096;
+/**
+ * 開口の最終ストリーム上限。
+ * gpt-5 系などは推論に `max_completion_tokens` を割くため、表示が途中で切れないようやや多めに取る。
+ * （実際の長さはプロンプトで 2〜6 文程度に抑える）
+ */
+const ORCHESTRATOR_STREAM_MAX_TOKENS_OPENING = 8192;
 const DIARY_BODY_MAX_CHARS_ORCHESTRATOR = 12000;
 
 // --- MBTI routing hints ---
@@ -452,8 +459,11 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     fetchCalendarEventsForDay(userId, entryDateYmd),
   ]);
   const calendarAvailable = isCalendarToolEligible(calendarRes);
+  const calendarEventsForOrchestrator = calendarRes.ok
+    ? filterCalendarEventsForAiNationalHolidaySanity(entryDateYmd, calendarRes.events)
+    : [];
   const holidaySignal =
-    calendarRes.ok && calendarRes.events.length > 0 ? detectHolidaySignal(calendarRes.events) : null;
+    calendarEventsForOrchestrator.length > 0 ? detectHolidaySignal(calendarEventsForOrchestrator) : null;
   const calendarHolidayTitle =
     holidaySignal?.hasHolidayLikeAllDay ? (holidaySignal.titles[0] ?? null) : null;
   const jpHolidayNameJa = resolveJapaneseHolidayNameForEntry(entryDateYmd, calendarHolidayTitle);
@@ -514,9 +524,9 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
 
   let calendarOrderedEvIdx: number[] | undefined;
   let openingCalendarPriorityJa = "";
-  if (isOpening && calendarRes.ok && calendarRes.events.length > 0) {
+  if (isOpening && calendarRes.ok && calendarEventsForOrchestrator.length > 0) {
     const sco = scoreOpeningTopic({
-      dayEvents: calendarRes.events,
+      dayEvents: calendarEventsForOrchestrator,
       occupationRole: profile?.occupationRole ?? "",
       calendarOpening: profile?.calendarOpening,
       profileSignals: profile
@@ -546,7 +556,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
       entryId,
       threadId: threadId ?? null,
       entryDateYmd,
-      calendarEventCount: calendarRes.events.length,
+      calendarEventCount: calendarEventsForOrchestrator.length,
       jpHolidayNameJa,
       calendarHolidaySignalTitle: calendarHolidayTitle,
       entryIsEffectiveToday: diffCalendarDaysInZone(entryDateYmd, todayYmd, userTimeZone) === 0,
@@ -571,7 +581,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
           }
         : null,
       orderedEvIdxHead: sco.orderedEvIdx.slice(0, 12),
-      eventCategoriesSample: calendarRes.events.slice(0, 8).map((ev, i) => ({
+      eventCategoriesSample: calendarEventsForOrchestrator.slice(0, 8).map((ev, i) => ({
         i,
         title: ev.title?.slice(0, 80) ?? "",
         start: ev.start,
@@ -586,7 +596,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
       entryDateYmd,
       calendarOk: calendarRes.ok,
       calendarFailReason: calendarRes.ok ? undefined : calendarRes.reason,
-      calendarEventCount: calendarRes.ok ? calendarRes.events.length : 0,
+      calendarEventCount: calendarRes.ok ? calendarEventsForOrchestrator.length : 0,
       jpHolidayNameJa,
       calendarHolidaySignalTitle: calendarHolidayTitle,
       primary: null,
@@ -624,13 +634,13 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
   const holidayGuardBlock = jpHolidayNameJa
     ? [
         "## 祝日・休みの可能性（重要）",
-        `このエントリ日（${entryDateYmd}）の祝日/休日シグナル: 「${jpHolidayNameJa}」`,
+        `このエントリ日（${entryDateYmd}）の祝日/休日シグナル（内閣府 syukujitsu.csv バンドル）: 「${jpHolidayNameJa}」`,
         "ルール: 時間割や推測があっても「講義があった」と断定しない。必要なら短く確認し、ユーザーが講義があったと言った場合にのみ講義の話題へ進む。",
         "上記の名前以外の祝日名をこの日に言い換えない（前日の祝日を当日にすり替えない）。",
       ].join("\n")
     : [
         "## 国民の祝日（このエントリ日）",
-        `対象日 ${entryDateYmd} は、アプリ内の祝日判定（日本の祝日ライブラリおよび全日・祝日っぽいカレンダーイベント）では **祝日シグナルなし**。`,
+        `対象日 ${entryDateYmd} は、内閣府公開の祝日 CSV（syukujitsu.csv）由来バンドルでは **祝日・休日ラベルなし**。カレンダー一覧から、日付と整合しない国民祝日名の終日行はサーバ側で除外済み。`,
         "このブロックがあるときは、モデルは **いかなる国民の祝日名もこの日に付けない**（例: 4月30日を「昭和の日」と言わない）。前日が祝日でも名前言及を当日に移さない。",
       ].join("\n");
   let systemBlocks = [
@@ -682,7 +692,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
           {
             hasDiaryBody: rawBody.length > 0,
             calendarLinked: calendarRes.ok,
-            calendarEventCount: calendarRes.ok ? calendarRes.events.length : 0,
+            calendarEventCount: calendarRes.ok ? calendarEventsForOrchestrator.length : 0,
             hasTimetableLecturesToday,
             holidayNameJa: jpHolidayNameJa,
           },
@@ -699,7 +709,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
       : "",
     calendarRes.ok
       ? `${ORCHESTRATOR_DAY_CALENDAR_HEADING}\n${formatOpeningDayCalendarBrief(
-          calendarRes.events,
+          calendarEventsForOrchestrator,
           calendarOrderedEvIdx,
           userTimeZone,
           profile?.calendarOpening,
