@@ -101,6 +101,7 @@ export async function postAiOpening(req: NextRequest): Promise<Response> {
   const started = Date.now();
   const serverNow = new Date();
   const orchestratorNow = resolveOrchestratorClockNow(serverNow, parsed.data.clientNow);
+  const streamMode = req.nextUrl.searchParams.get("stream") !== "0";
 
   const [dayCtx, userMsgCount] = await Promise.all([
     getUserEffectiveDayContext(session.user.id),
@@ -297,6 +298,156 @@ export async function postAiOpening(req: NextRequest): Promise<Response> {
   let assistantDisplayed = "";
   const abortSignal = req.signal;
 
+  if (!streamMode) {
+    try {
+      for await (const part of stream) {
+        const delta = part.choices[0]?.delta?.content ?? "";
+        if (delta) assistantText += delta;
+      }
+
+      const storedAssistant = stripAssistantMetaEchoPrefix(assistantText);
+      const latencyMs = Date.now() - started;
+      const assistant = await prisma.chatMessage.update({
+        where: { id: assistantMessageId },
+        data: {
+          content: storedAssistant,
+          model: orchestratorModel,
+          latencyMs,
+          tokenEstimate: Math.ceil(storedAssistant.length / 4),
+          agentName: "orchestrator",
+        },
+      });
+
+      if (entry.encryptionMode === "STANDARD") {
+        void upsertTextEmbedding(session.user.id, "CHAT_MESSAGE", assistant.id, storedAssistant).catch(() => {});
+      }
+
+      await incrementChat(session.user.id);
+      await incrementOrchestratorCalls(session.user.id);
+
+      await prisma.auditLog.create({
+        data: {
+          userId: session.user.id,
+          entryId: entry.id,
+          action: "ai_orchestrator_opening_complete",
+          metadata: {
+            threadId,
+            model: orchestratorModel,
+            latencyMs,
+            agentsUsed,
+            promptVersion: PROMPT_VERSIONS.reflective_chat,
+          },
+        },
+      });
+
+      await prisma.aIArtifact.create({
+        data: {
+          userId: session.user.id,
+          entryId: entry.id,
+          kind: "CHAT_MESSAGE",
+          promptVersion: PROMPT_VERSIONS.reflective_chat,
+          model: orchestratorModel,
+          latencyMs,
+          tokenEstimate: assistant.tokenEstimate,
+          metadata: {
+            threadId,
+            assistantMessageId: assistant.id,
+            agentsUsed,
+            mas: true,
+            isOpening: true,
+            streamMode: "json_fallback",
+          },
+        },
+      });
+
+      triggerSupervisorAsync({
+        userId: session.user.id,
+        threadId,
+        agentsUsed,
+        recentMessages: [{ role: "assistant", content: storedAssistant }],
+        personaInstructions,
+        mbtiHint: mbtiHint || undefined,
+      });
+
+      const tNotes = await prisma.chatThread.findUnique({
+        where: { id: threadId },
+        select: { conversationNotes: true },
+      });
+      const cn = (tNotes?.conversationNotes as Record<string, unknown>) ?? {};
+      const settingsProposalSummary =
+        typeof cn.lastSettingsProposalSummary === "string" ? cn.lastSettingsProposalSummary : null;
+
+      const secPayload = buildSecurityReviewPayload({
+        messageId: assistant.id,
+        userId: session.user.id,
+        threadId,
+        entryId: entry.id,
+        userMessage: "",
+        assistantContent: storedAssistant,
+        agentsUsed,
+        settingsProposalSummary,
+      });
+      if (secPayload) scheduleSecurityReview(secPayload);
+
+      scheduleAppLog(
+        AppLogScope.opening,
+        "info",
+        "opening_json_complete",
+        {
+          userId: session.user.id,
+          entryId: entry.id,
+          threadId,
+          entryDateYmd: entry.entryDateYmd,
+          latencyMs,
+          model: orchestratorModel,
+          agentsUsed,
+          assistantChars: storedAssistant.length,
+        },
+        { correlationId },
+      );
+
+      // 記憶抽出などの重い処理はバックグラウンドに回す（失敗してもチャットの応答性を優先）。
+      void (async () => {
+        const entryForMemory = await prisma.dailyEntry.findUnique({
+          where: { id: entry.id },
+          select: { body: true },
+        });
+        await runMasMemoryExtraction({
+          userId: session.user.id,
+          entryId: entry.id,
+          entryDateYmd: entry.entryDateYmd,
+          encryptionMode: entry.encryptionMode,
+          diaryBody: entryForMemory?.body ?? entry.body,
+          userMessage: "",
+          assistantMessage: storedAssistant,
+          recentTurns: [{ role: "assistant" as const, content: storedAssistant }],
+        });
+      })().catch(() => {});
+
+      return jsonResponse({ threadId, assistant: storedAssistant, model: orchestratorModel }, 200);
+    } catch (e) {
+      scheduleAppLog(
+        AppLogScope.opening,
+        "error",
+        "opening_json_error",
+        {
+          userId: session.user.id,
+          entryId: entry.id,
+          threadId,
+          assistantMessageId,
+          err: e instanceof Error ? e.message : String(e).slice(0, 500),
+        },
+        { correlationId },
+      );
+      await prisma.chatMessage
+        .deleteMany({
+          where: { id: assistantMessageId, model: OPENING_PENDING_MODEL },
+        })
+        .catch(() => {});
+      return jsonResponse({ error: "開口メッセージの生成に失敗しました" }, 500);
+    }
+  }
+
   const readable = new ReadableStream({
     async start(controller) {
       let closed = false;
@@ -486,6 +637,7 @@ export async function postAiOpening(req: NextRequest): Promise<Response> {
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
       "X-Accel-Buffering": "no",
+      "X-Correlation-Id": correlationId,
     },
   });
 }

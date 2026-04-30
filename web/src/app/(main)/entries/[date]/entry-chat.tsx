@@ -550,12 +550,23 @@ export function EntryChat({
       setBusy(true);
       setStreaming("");
       try {
-        const res = await fetch("/api/ai/chat/opening", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ entryId, clientNow: new Date().toISOString() }),
-        });
-        const ct = res.headers.get("content-type") ?? "";
+        const doRequest = async (stream: boolean) => {
+          const url = stream ? "/api/ai/chat/opening" : "/api/ai/chat/opening?stream=0";
+          return await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ entryId, clientNow: new Date().toISOString() }),
+          });
+        };
+
+        let res = await doRequest(true);
+        let ct = res.headers.get("content-type") ?? "";
+
+        // ストリーミングが無い/使えない環境（プロキシの制約等）では JSON フォールバックを試す
+        if (res.ok && !ct.includes("application/json") && !res.body) {
+          res = await doRequest(false);
+          ct = res.headers.get("content-type") ?? "";
+        }
         if (!res.ok) {
           const raw = await res.text();
           let message: string | undefined;
@@ -578,8 +589,13 @@ export function EntryChat({
             skipped?: boolean;
             threadId?: string;
             openingInProgress?: boolean;
+            assistant?: string;
           };
           if (data.skipped && data.threadId) {
+            setTid(data.threadId);
+            router.refresh();
+          }
+          if (data.threadId && typeof data.assistant === "string" && data.assistant.trim()) {
             setTid(data.threadId);
             router.refresh();
           }
@@ -634,8 +650,9 @@ export function EntryChat({
         }
         setStreaming("");
         router.refresh();
-      } catch {
-        setError("通信に失敗しました。接続やログイン状態を確認してください。");
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setError(`通信に失敗しました（${msg.slice(0, 120)}）`);
       } finally {
         entryOpeningInFlight.delete(entryId);
         setBusy(false);
