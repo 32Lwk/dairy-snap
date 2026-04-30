@@ -805,7 +805,7 @@ git log -1 --oneline origin/main
 |----------|------------|
 | `3a8a28a` | feat(web): chat-driven settings patch + user-day boundary |
 | `52235b5` | feat(web): holiday guard + faster streaming post-processing |
-| `c56d51b` | feat(web): app logging, vitest calendar tests, timetable editor from chat |
+| `2d0beb4` | feat(web): app logging, vitest calendar tests, timetable editor from chat |
 
 ### 概要（本日の変更の全体像）
 
