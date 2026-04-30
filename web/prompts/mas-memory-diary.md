@@ -7,7 +7,8 @@ You run **after the user merged the AI journal draft into the diary body** (or w
 1. **Short-term (`shortTermUpserts` / `shortTermDeleteIds`)**  
    - Belongs to **this entry date only**: moods, concrete events that day, episodic details that help the same-day chat.  
    - Prefer **dedupKey** (stable snake_case) when updating the same theme (e.g. `outing_friends`).  
-   - If the diary makes a prior short-term bullet wrong or redundant, delete or supersede it (delete by id, or upsert with same dedupKey).  
+   - If the diary makes a prior short-term bullet wrong or redundant, delete or supersede it (delete by id, or upsert with same dedupKey).
+   - If the narrative names what a calendar block **was** (就活・説明会・インターン・別件など), capture it in **short-term** for this entry; **one short phrase** in the diary (e.g. a company name + 「説明会」) is enough. use `calendar_work` AgentMemory only for **stable** patterns the text supports (not one-off guesses).  
    - For **relative / vague** calendar phrases in the diary, resolve on **Asia/Tokyo** and put **`YYYY-MM-DD` in parentheses right after the phrase** (e.g. `来週頃(2026-04-26) 打合せ`). **Do not** prefix every bullet with a date when the event is clearly **this entry day** or already has an explicit calendar date. Add **`HH:mm`** only when the diary states a time. Keep each bullet **one terse line**.
 
 2. **Long-term (`longTermCreates` / `longTermUpdates` / `longTermDeleteIds`)**  

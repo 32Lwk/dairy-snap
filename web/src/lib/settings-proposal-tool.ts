@@ -1,5 +1,10 @@
 import { z } from "zod";
-import type { CalendarOpeningCategory, CalendarOpeningRule, CalendarOpeningSettings } from "@/lib/user-settings";
+import type {
+  CalendarCategoryByCalendarIdValue,
+  CalendarOpeningCategory,
+  CalendarOpeningRule,
+  CalendarOpeningSettings,
+} from "@/lib/user-settings";
 import { CALENDAR_OPENING_BUILTIN_IDS } from "@/lib/user-settings";
 import {
   MAX_DAY_BOUNDARY_END_TIME,
@@ -21,6 +26,14 @@ function isValidCalendarOpeningCategory(s: string): boolean {
   return /^usercat:[a-z0-9_]{1,32}$/.test(s);
 }
 
+const calendarCategoryByCalendarIdPatchValueSchema = z.union([
+  z.string().max(48).refine(isValidCalendarOpeningCategory, "無効なカテゴリです"),
+  z
+    .array(z.string().max(48).refine(isValidCalendarOpeningCategory, "無効なカテゴリです"))
+    .min(1)
+    .max(8),
+]);
+
 const calendarOpeningRuleSchema = z.object({
   kind: ruleKindSchema,
   value: z.string().min(1).max(120),
@@ -33,7 +46,7 @@ export const calendarOpeningPatchSchema = z
   .object({
     rules: z.array(calendarOpeningRuleSchema).max(MAX_PROPOSE_RULES).optional(),
     calendarCategoryById: z
-      .record(z.string().max(400), z.string().max(48).refine(isValidCalendarOpeningCategory, "無効なカテゴリです"))
+      .record(z.string().max(400), calendarCategoryByCalendarIdPatchValueSchema)
       .optional()
       .refine((rec) => rec == null || Object.keys(rec).length <= MAX_PROPOSE_CALENDAR_ID_KEYS, {
         message: "calendarCategoryById の件数が多すぎます",
@@ -112,8 +125,8 @@ export function mergeCalendarOpeningPatch(
   if (patch.calendarCategoryById && Object.keys(patch.calendarCategoryById).length > 0) {
     out.calendarCategoryById = {
       ...(out.calendarCategoryById ?? {}),
-      ...patch.calendarCategoryById,
-    } as Record<string, CalendarOpeningCategory>;
+      ...(patch.calendarCategoryById as Record<string, CalendarCategoryByCalendarIdValue>),
+    };
   }
   if (patch.categoryMultiplierById && Object.keys(patch.categoryMultiplierById).length > 0) {
     const m = { ...(out.categoryMultiplierById ?? {}) } as Record<string, number>;

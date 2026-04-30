@@ -6,8 +6,9 @@ import {
   normalizeCalendarOpeningPriorityOrder,
   PARTTIME_CALENDAR_NAME_SCORE_BOOST,
   pickWinningCalendarCategory,
-  resolveCalendarDefaultCategoryForScoring,
+  resolveCalendarDefaultCategoriesForScoring,
   SCHOOL_CALENDAR_NAME_SCORE_BOOST,
+  shouldApplyCalendarNameBoostForCategory,
   suggestsBirthdayCalendarName,
   suggestsParttimeCalendarName,
   suggestsSchoolCalendarName,
@@ -46,12 +47,12 @@ export function inferCalendarEventCategory(
   const add = (cat: CalendarOpeningCategory, w: number) => {
     scores.set(cat, (scores.get(cat) ?? 0) + w);
   };
-  const calDefault = resolveCalendarDefaultCategoryForScoring(
+  const calDefaults = resolveCalendarDefaultCategoriesForScoring(
     ev.calendarId,
     ev.calendarName,
     settings?.calendarCategoryById,
   );
-  if (calDefault) add(calDefault, CALENDAR_DEFAULT_CATEGORY_WEIGHT);
+  for (const calDefault of calDefaults) add(calDefault, CALENDAR_DEFAULT_CATEGORY_WEIGHT);
   for (const r of rules) {
     const w = typeof r.weight === "number" ? r.weight : 5;
     const v = (r.value ?? "").toLowerCase();
@@ -78,9 +79,15 @@ export function inferCalendarEventCategory(
     }
   }
   addCalendarOpeningBuiltinTextHints(haystack, add);
-  if (suggestsParttimeCalendarName(ev.calendarName)) add("parttime", PARTTIME_CALENDAR_NAME_SCORE_BOOST);
-  if (suggestsBirthdayCalendarName(ev.calendarName)) add("birthday", BIRTHDAY_CALENDAR_NAME_SCORE_BOOST);
-  if (suggestsSchoolCalendarName(ev.calendarName)) add("school", SCHOOL_CALENDAR_NAME_SCORE_BOOST);
+  if (shouldApplyCalendarNameBoostForCategory("parttime", calDefaults) && suggestsParttimeCalendarName(ev.calendarName)) {
+    add("parttime", PARTTIME_CALENDAR_NAME_SCORE_BOOST);
+  }
+  if (shouldApplyCalendarNameBoostForCategory("birthday", calDefaults) && suggestsBirthdayCalendarName(ev.calendarName)) {
+    add("birthday", BIRTHDAY_CALENDAR_NAME_SCORE_BOOST);
+  }
+  if (shouldApplyCalendarNameBoostForCategory("school", calDefaults) && suggestsSchoolCalendarName(ev.calendarName)) {
+    add("school", SCHOOL_CALENDAR_NAME_SCORE_BOOST);
+  }
   add("other", 1);
   return pickWinningCalendarCategory(scores, priority);
 }

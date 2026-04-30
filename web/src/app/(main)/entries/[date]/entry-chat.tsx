@@ -504,7 +504,7 @@ export function EntryChat({
     setJournalDraftPanelRefreshKey(0);
   }, [entryId, initialThreadId]);
 
-  // Keep autoscroll inside the message pane only (`scrollIntoView` can scroll the window).
+  // メッセージ枠内で末尾へ（fill でも md+ は親高さに合わせたうえで内部スクロール）
   useEffect(() => {
     const el = messagesScrollRef.current;
     if (!el) return;
@@ -1114,12 +1114,12 @@ export function EntryChat({
         </div>
 
         <div className="shrink-0 border-t border-zinc-100 bg-zinc-50/95 p-2 sm:p-2.5 lg:p-3 dark:border-zinc-800 dark:bg-zinc-900/90">
-          <div className="flex gap-1.5 sm:gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2">
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
               rows={variant === "compact" ? 2 : 2}
-              className="min-h-[2.5rem] flex-1 resize-none rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-[13px] text-zinc-900 shadow-inner outline-none ring-emerald-500/30 placeholder:text-zinc-400 focus:border-emerald-500/50 focus:ring-2 sm:min-h-[2.75rem] sm:rounded-xl sm:px-3 sm:py-2 lg:min-h-[2.75rem] dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50"
+              className="entry-chat-compose-textarea min-h-[2.5rem] flex-1 resize-none rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-zinc-900 shadow-inner outline-none ring-emerald-500/30 placeholder:text-zinc-400 focus:border-emerald-500/50 focus:ring-2 sm:min-h-[2.75rem] sm:rounded-xl sm:px-3 sm:py-2 lg:min-h-[2.75rem] dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50"
               placeholder="気づいたこと、感情、今日の予定とのこと…"
               disabled={busy}
               onKeyDown={(e) => {
@@ -1135,7 +1135,7 @@ export function EntryChat({
               type="button"
               disabled={busy || !input.trim()}
               onClick={() => void send()}
-              className="min-h-10 min-w-[4rem] shrink-0 self-end rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-40 sm:min-h-12 sm:min-w-[4.5rem] sm:rounded-xl sm:px-4 sm:py-2.5 sm:text-sm dark:bg-emerald-500 dark:hover:bg-emerald-600"
+              className="min-h-10 min-w-[4rem] shrink-0 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-40 sm:min-h-12 sm:min-w-[4.5rem] sm:rounded-xl sm:px-4 sm:py-2.5 sm:text-sm dark:bg-emerald-500 dark:hover:bg-emerald-600"
             >
               送信
             </button>
@@ -1149,7 +1149,7 @@ export function EntryChat({
     <section
       className={
         layoutHeight === "fill" && variant === "default"
-          ? "flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-zinc-200/90 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
+          ? "flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-zinc-200/90 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
           : [
               "overflow-hidden rounded-2xl border border-zinc-200/90 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950",
               conversationAccordion && variant === "default" ? "flex min-h-0 flex-col" : "",

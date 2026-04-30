@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { APP_HEADER_TITLE, APP_HEADER_TOOLBAR_INNER, APP_MAIN_PT_BELOW_FIXED_HEADER } from "@/lib/app-header-toolbar";
 import { getResolvedAuthUser } from "@/lib/server/resolved-auth-user";
 import { getCalendarConnectionSummary } from "@/server/calendar";
 import { AppleReconnectButton } from "./apple-reconnect";
@@ -18,12 +19,14 @@ export default async function SettingsPage() {
   const email = r.authSession.user?.email ?? null;
 
   return (
-    <div className="mx-auto w-full min-w-0 max-w-lg px-4 pb-10 pt-[calc(3.5rem+env(safe-area-inset-top,0px))] sm:max-w-2xl sm:px-6 md:max-w-3xl md:pb-12 md:pt-[calc(3.75rem+env(safe-area-inset-top,0px))] lg:max-w-4xl lg:px-10 xl:max-w-5xl 2xl:max-w-6xl">
+    <div
+      className={`mx-auto w-full min-w-0 max-w-lg px-4 pb-10 sm:max-w-2xl sm:px-6 md:max-w-3xl md:pb-12 lg:max-w-4xl lg:px-10 xl:max-w-5xl 2xl:max-w-6xl ${APP_MAIN_PT_BELOW_FIXED_HEADER}`}
+    >
       <header className="fixed left-0 right-0 top-0 z-30 border-b border-zinc-200/90 bg-white/95 backdrop-blur-md dark:border-zinc-800/90 dark:bg-zinc-950/95">
-        <div className="mx-auto flex w-full min-w-0 max-w-lg items-center justify-between gap-3 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] sm:max-w-2xl sm:px-6 md:max-w-3xl lg:max-w-4xl lg:px-10 xl:max-w-5xl 2xl:max-w-6xl">
-          <h1 className="min-w-0 flex-1 truncate text-2xl font-bold leading-none tracking-tight text-zinc-900 dark:text-zinc-50 lg:text-3xl">
-            設定
-          </h1>
+        <div
+          className={`${APP_HEADER_TOOLBAR_INNER} max-w-lg sm:max-w-2xl md:max-w-3xl lg:max-w-4xl xl:max-w-5xl 2xl:max-w-6xl`}
+        >
+          <h1 className={APP_HEADER_TITLE}>設定</h1>
         </div>
       </header>
 

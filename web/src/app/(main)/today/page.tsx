@@ -11,6 +11,8 @@ import {
   formatPendingSettingsChangeSummaryJa,
   type NormalizedCalendarOpeningPatch,
 } from "@/lib/settings-proposal-tool";
+import { APP_HEADER_TITLE_INLINE, APP_HEADER_TOOLBAR_INNER } from "@/lib/app-header-toolbar";
+import { TodayJournalDraftProvider, TodayMobileJournalDraftHeaderButton } from "./today-journal-draft-bridge";
 import { TodayMainGrid } from "./today-main-grid";
 
 export default async function TodayPage() {
@@ -60,64 +62,70 @@ export default async function TodayPage() {
     (chatThread?.messages ?? []).map((m) => ({ role: m.role, content: m.content })),
   );
 
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <header className="sticky top-0 z-30 w-full shrink-0 border-b border-zinc-200/90 bg-white/95 backdrop-blur-md dark:border-zinc-800/90 dark:bg-zinc-950/95">
-        <div className="mx-auto flex w-full max-w-5xl flex-wrap items-start justify-between gap-2 px-3 pb-2 pt-[max(0.5rem,env(safe-area-inset-top))] sm:px-4 md:px-5 md:pb-2.5 lg:max-w-6xl lg:px-6 lg:pb-3 lg:pt-[max(0.75rem,env(safe-area-inset-top))]">
-          <div className="min-w-0">
-            <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-500 sm:text-xs">今日</p>
-            <h1 className="mt-0.5 text-xl font-bold tracking-tight text-zinc-900 sm:text-2xl md:mt-1 dark:text-zinc-50">
-              {ymd}
-            </h1>
-            {dayCtx.calendarYmd !== ymd ? (
-              <p className="mt-1.5 max-w-xl text-[11px] leading-snug text-zinc-500 sm:mt-2 sm:text-xs sm:leading-relaxed dark:text-zinc-400">
-                いま開いているのは{" "}
-                <span className="font-medium text-zinc-700 dark:text-zinc-300">{ymd}</span> の振り返りです（設定どおり「まだ前日の続き」）。
-                カレンダーでは今日は{" "}
-                <span className="font-medium text-zinc-700 dark:text-zinc-300">{dayCtx.calendarYmd}</span> です。
-                <Link
-                  href={`/entries/${dayCtx.calendarYmd}`}
-                  className="ml-1.5 font-medium text-emerald-700 underline decoration-emerald-600/40 underline-offset-2 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300"
-                >
-                  カレンダー上の「今日」のエントリを開く
-                </Link>
-              </p>
-            ) : null}
-          </div>
-        </div>
-      </header>
+  const hasSavedBody = (entry.body ?? "").trim().length > 0;
 
-      <div className="mx-auto flex min-h-0 w-full flex-1 flex-col px-3 pb-4 sm:px-4 md:max-w-5xl md:px-5 md:pb-5 lg:max-w-6xl lg:px-6 lg:pb-6">
-        <TodayMainGrid
-          entryId={entry.id}
-          entryDateYmd={ymd}
-          diaryBody={entry.body ?? ""}
-          photosDailyQuota={{ remaining, dailyLimit, resetAt: resetAtIso }}
-          chatSecurityNoticeJa={chatSecurityNoticeJa}
-          pendingSettingsSummaryJa={pendingSettingsSummaryJa}
-          images={(entry.images ?? []).map((i) => ({
-            id: i.id,
-            mimeType: i.mimeType,
-            byteSize: i.byteSize,
-            rotationQuarterTurns: i.rotationQuarterTurns,
-            caption: i.caption,
-          }))}
-          initialThreadId={chatThread?.id ?? null}
-          initialMessages={
-            chatThread?.messages.map((m) => ({
-              id: m.id,
-              role: m.role,
-              content: m.content,
-              model: m.model,
-            })) ?? []
-          }
-          latitude={entry.latitude}
-          longitude={entry.longitude}
-          weatherJson={entry.weatherJson}
-          initialPlutchikAnalysis={entry.plutchikAnalysis}
-          transcriptCharCount={transcriptMeta.charCount}
-        />
+  return (
+    <TodayJournalDraftProvider>
+      <div className="flex min-h-0 flex-1 flex-col">
+        <header className="sticky top-0 z-30 w-full shrink-0 border-b border-zinc-200/90 bg-white/95 backdrop-blur-md dark:border-zinc-800/90 dark:bg-zinc-950/95">
+          <div className={`${APP_HEADER_TOOLBAR_INNER} max-w-5xl lg:max-w-6xl`}>
+            <div className="flex min-h-9 min-w-0 flex-1 items-center gap-2">
+              <span className="shrink-0 text-xs font-medium uppercase tracking-wide text-zinc-500">今日</span>
+              <h1 className={APP_HEADER_TITLE_INLINE}>{ymd}</h1>
+            </div>
+            {!hasSavedBody ? <TodayMobileJournalDraftHeaderButton /> : null}
+          </div>
+        </header>
+
+        {dayCtx.calendarYmd !== ymd ? (
+          <div className="mx-auto w-full max-w-5xl px-4 pt-2 sm:px-6 lg:max-w-6xl lg:px-10">
+            <p className="max-w-xl text-[11px] leading-snug text-zinc-500 sm:text-xs sm:leading-relaxed dark:text-zinc-400">
+              いま開いているのは{" "}
+              <span className="font-medium text-zinc-700 dark:text-zinc-300">{ymd}</span> の振り返りです（設定どおり「まだ前日の続き」）。
+              カレンダーでは今日は{" "}
+              <span className="font-medium text-zinc-700 dark:text-zinc-300">{dayCtx.calendarYmd}</span> です。
+              <Link
+                href={`/entries/${dayCtx.calendarYmd}`}
+                className="ml-1.5 font-medium text-emerald-700 underline decoration-emerald-600/40 underline-offset-2 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300"
+              >
+                カレンダー上の「今日」のエントリを開く
+              </Link>
+            </p>
+          </div>
+        ) : null}
+
+        <div className="mx-auto flex min-h-0 w-full flex-1 flex-col px-4 pb-4 sm:px-6 md:max-w-5xl md:pb-5 lg:max-w-6xl lg:px-10 lg:pb-6">
+          <TodayMainGrid
+            entryId={entry.id}
+            entryDateYmd={ymd}
+            diaryBody={entry.body ?? ""}
+            photosDailyQuota={{ remaining, dailyLimit, resetAt: resetAtIso }}
+            chatSecurityNoticeJa={chatSecurityNoticeJa}
+            pendingSettingsSummaryJa={pendingSettingsSummaryJa}
+            images={(entry.images ?? []).map((i) => ({
+              id: i.id,
+              mimeType: i.mimeType,
+              byteSize: i.byteSize,
+              rotationQuarterTurns: i.rotationQuarterTurns,
+              caption: i.caption,
+            }))}
+            initialThreadId={chatThread?.id ?? null}
+            initialMessages={
+              chatThread?.messages.map((m) => ({
+                id: m.id,
+                role: m.role,
+                content: m.content,
+                model: m.model,
+              })) ?? []
+            }
+            latitude={entry.latitude}
+            longitude={entry.longitude}
+            weatherJson={entry.weatherJson}
+            initialPlutchikAnalysis={entry.plutchikAnalysis}
+            transcriptCharCount={transcriptMeta.charCount}
+          />
+        </div>
       </div>
-    </div>
+    </TodayJournalDraftProvider>
   );
 }

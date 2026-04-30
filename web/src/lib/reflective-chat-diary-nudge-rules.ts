@@ -112,15 +112,26 @@ export function assistantHintsJournalDraftFollowup(assistantText: string): boole
 
 export type JournalDraftMaterialTier = "rich" | "thin" | "empty";
 
+/**
+ * カレンダー分類の確認（就活か・面接か等）への**短い答え**は、10文字未満でも日記・記憶の材料になり得る。
+ */
+function isShortScheduleClarificationReply(s: string): boolean {
+  const t = s.trim();
+  if (t.length < 2 || t.length > 36) return false;
+  return /就活|面接|説明会|会社説明|インターン|選考|採用|OB|OG|キックオフ|別件|私用|業務|打ち?合わせ|打合せ|面談|一次|二次|1次|2次|エントリー|ES|リクルート|内定|落ち|通過/u.test(
+    t,
+  );
+}
+
 /** 日記草案に使える「中身のある」ユーザー発言か（短文の相槌は除外） */
 export function isSubstantiveUserJournalLine(raw: string): boolean {
   const s = raw.replace(/\u3000/g, " ").trim();
   if (!s) return false;
-  if (s.length < 10) return false;
   if (userMessageIsShortDiaryAffirmation(s)) return false;
   if (/^(はい|ええ|うん|ありがとう|ありがとうございます|了解|承知|承知しました|OK|オッケー|なるほど|そうですね)([。!！…\s]+)?$/iu.test(s)) {
     return false;
   }
+  if (s.length < 10) return isShortScheduleClarificationReply(s);
   return true;
 }
 

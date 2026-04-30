@@ -185,6 +185,8 @@ export function JournalDraftPanel({
   onApplied,
   variant = "chat-footer",
   autoGenerateKey,
+  /** 今日ページヘッダー「草案を作成」など。手動「会話から草案を生成」と同じ分岐（弱材料は確認ダイアログ）。 */
+  userUiGenerateKey = 0,
   initialPlutchikAnalysis = null,
   transcriptCharCount = 0,
   journalDraftRefreshKey = 0,
@@ -195,6 +197,8 @@ export function JournalDraftPanel({
   seedTagsWhenNoDraftCache = "",
   /** false のときカード UI を出さずモーダルのみ（本文ありエントリ用ホスト） */
   showChrome = true,
+  /** standalone かつスマホ: カード型クロームのみ非表示（プレビュー等のモーダルはそのまま） */
+  hideStandaloneChromeOnMobile = false,
   /** 保存済みエントリ本文。草案キャッシュが無いときプレビュー左欄に参考表示する */
   savedEntryBodyForPreview = "",
 }: {
@@ -209,6 +213,8 @@ export function JournalDraftPanel({
   variant?: "chat-footer" | "inset" | "standalone";
   /** Increment from parent (e.g. after chat SSE) to run the same flow as the generate button. */
   autoGenerateKey?: number;
+  /** UI からの明示操作（チャット完了の自動キーとは別）。未指定は 0。 */
+  userUiGenerateKey?: number;
   /** サーバーから渡す `DailyEntry.plutchikAnalysis` */
   initialPlutchikAnalysis?: unknown | null;
   /** 会話転写の文字数（`buildEntryChatTranscript` と同一基準）。 */
@@ -219,6 +225,7 @@ export function JournalDraftPanel({
   seedTitleWhenNoDraftCache?: string;
   seedTagsWhenNoDraftCache?: string;
   showChrome?: boolean;
+  hideStandaloneChromeOnMobile?: boolean;
   savedEntryBodyForPreview?: string;
 }) {
   const router = useRouter();
@@ -233,6 +240,7 @@ export function JournalDraftPanel({
   }, [onApplied, router]);
   const titleId = useId();
   const lastAutoKey = useRef(0);
+  const lastUserUiGenerateKey = useRef(0);
   const lastOpenPreviewSignal = useRef(0);
 
   const [draft, setDraft] = useState<string | null>(null);
@@ -303,6 +311,10 @@ export function JournalDraftPanel({
       locationNote: w.locationNote,
     };
   }, [weatherJson]);
+
+  useEffect(() => {
+    lastUserUiGenerateKey.current = 0;
+  }, [entryId, threadId]);
 
   useEffect(() => {
     if (!threadId) {
@@ -437,7 +449,7 @@ export function JournalDraftPanel({
   );
 
   const requestGenerate = useCallback(
-    async (opts?: { viaAutoKey?: number }) => {
+    async (opts?: { viaAutoKey?: number; allowWeakMaterialPrompt?: boolean }) => {
       if (!threadId) return;
       setError(null);
       let m = journalMaterial;
@@ -454,7 +466,9 @@ export function JournalDraftPanel({
         }
       }
       if (m && m.tier !== "rich") {
-        if (opts?.viaAutoKey !== undefined) {
+        const blockWeakAuto =
+          opts?.viaAutoKey !== undefined && opts.allowWeakMaterialPrompt !== true;
+        if (blockWeakAuto) {
           return;
         }
         setWeakGenerateDialog({ reasonJa: m.reasonJa, tier: m.tier });
@@ -471,6 +485,13 @@ export function JournalDraftPanel({
     lastAutoKey.current = k;
     void requestGenerate({ viaAutoKey: k });
   }, [autoGenerateKey, threadId, requestGenerate]);
+
+  useEffect(() => {
+    const k = userUiGenerateKey ?? 0;
+    if (k <= 0 || k === lastUserUiGenerateKey.current || !threadId) return;
+    lastUserUiGenerateKey.current = k;
+    void requestGenerate({ allowWeakMaterialPrompt: true });
+  }, [userUiGenerateKey, threadId, requestGenerate]);
 
   async function runPlutchikAnalysis() {
     if (!threadId || !canRunPlutchik) return;
@@ -578,7 +599,14 @@ export function JournalDraftPanel({
       ) : null}
 
       {showChrome ? (
-        <div className={shell}>
+        <div
+          className={[
+            shell,
+            hideStandaloneChromeOnMobile && variant === "standalone" ? "max-md:hidden" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+        >
           <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">AI 日記（草案）</h3>
 
           {!canUseThread && (

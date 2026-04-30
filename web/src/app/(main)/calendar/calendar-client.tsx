@@ -21,9 +21,11 @@ import {
   type CalendarOpeningSettings,
   type CalendarWeekStartDay,
   calendarOpeningCategoryOptions,
+  compactCalendarCategoryAssignment,
   labelToUserCategoryId,
-  lookupCalendarCategoryById,
+  lookupCalendarCategoriesById,
   lookupCalendarDisplayLabelById,
+  MAX_CALENDAR_DEFAULT_CATEGORIES_PER_CALENDAR,
   normalizeCalendarGridDisplay,
   resolveCalendarDisplayNameForUser,
   stripCalendarOpeningCustomLabel,
@@ -36,6 +38,7 @@ import {
   LOCAL_SETTINGS_SAVED_EVENT,
   REMOTE_SETTINGS_UPDATED_EVENT,
 } from "@/lib/settings-sync-client";
+import { APP_HEADER_TITLE, APP_HEADER_TOOLBAR_BUTTON, APP_HEADER_TOOLBAR_INNER } from "@/lib/app-header-toolbar";
 import { MonthList, invalidateMonthListEventsCache, peekMonthListEventsCache } from "./month-list";
 import { MonthGrid, invalidateMonthGridEventsCache, peekMonthEventsCache } from "./month-grid";
 import { UpcomingGoogleEvents } from "./upcoming-google-events";
@@ -929,15 +932,13 @@ export function CalendarClient(props: {
   return (
     <>
       <header className="fixed left-0 right-0 top-0 z-30 border-b border-zinc-200/90 bg-white/95 backdrop-blur-md dark:border-zinc-800/90 dark:bg-zinc-950/95">
-        <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] md:max-w-2xl lg:max-w-5xl xl:max-w-6xl">
-          <h1 className="min-w-0 flex-1 truncate text-2xl font-bold leading-none text-zinc-900 dark:text-zinc-50">
-            カレンダー
-          </h1>
+        <div className={`${APP_HEADER_TOOLBAR_INNER} max-w-3xl lg:max-w-5xl xl:max-w-6xl`}>
+          <h1 className={APP_HEADER_TITLE}>カレンダー</h1>
           <div className="flex shrink-0 items-center gap-2">
             <button
               type="button"
               onClick={() => setSettingsOpen(true)}
-              className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-3 text-sm font-medium leading-none text-zinc-700 shadow-sm transition-colors hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:border-zinc-600 dark:hover:bg-zinc-900"
+              className={APP_HEADER_TOOLBAR_BUTTON}
               aria-expanded={settingsOpen}
               aria-haspopup="dialog"
               aria-controls="calendar-display-settings-dialog"
@@ -964,7 +965,7 @@ export function CalendarClient(props: {
               aria-expanded={searchOpen}
               aria-haspopup="dialog"
               aria-controls="calendar-search-dialog"
-              className="inline-flex h-10 items-center justify-center rounded-xl border border-zinc-200 bg-white px-3 text-sm font-medium leading-none text-zinc-700 shadow-sm transition-colors hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:border-zinc-600 dark:hover:bg-zinc-900"
+              className={APP_HEADER_TOOLBAR_BUTTON}
             >
               検索
             </button>
@@ -972,15 +973,15 @@ export function CalendarClient(props: {
         </div>
       </header>
 
-      <div className="mt-2 flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,7fr)_minmax(0,3fr)] lg:items-start lg:gap-8">
-        <div className="order-2 min-w-0 space-y-4 lg:order-1 lg:min-w-0">
-          <div className="space-y-1.5">
-        <p className="text-[11px] font-medium text-zinc-600 dark:text-zinc-300">表示の絞り込み</p>
+      <div className="mt-1 flex min-w-0 flex-col gap-1.5 sm:mt-2 sm:gap-3 lg:mt-1 lg:grid lg:grid-cols-[minmax(0,7fr)_minmax(0,3fr)] lg:items-start lg:gap-3">
+        <div className="order-2 min-w-0 max-w-full space-y-1.5 sm:space-y-3 lg:order-1 lg:min-w-0 lg:space-y-1.5">
+          <div className="space-y-0.5 sm:space-y-1.5 lg:space-y-0.5">
+        <p className="text-[10px] font-medium text-zinc-600 sm:text-[11px] dark:text-zinc-300">表示の絞り込み</p>
         <div
-          className="-mx-4 overflow-x-auto overflow-y-hidden px-4 pb-0.5 [-webkit-overflow-scrolling:touch] [scrollbar-width:thin] sm:-mx-0 sm:px-0"
+          className="-mx-3 max-w-[100vw] overflow-x-auto overflow-y-hidden px-3 pb-0.5 [-webkit-overflow-scrolling:touch] [scrollbar-width:thin] sm:-mx-0 sm:max-w-none sm:px-0"
           aria-label="表示の絞り込み（横にスクロール）"
         >
-          <div className="flex w-max flex-nowrap gap-2">
+          <div className="flex w-max max-w-none flex-nowrap gap-1 sm:gap-1.5 md:gap-2 lg:gap-1">
             <button
               type="button"
               onClick={() => {
@@ -988,7 +989,7 @@ export function CalendarClient(props: {
                 setSelectedCats([]);
               }}
               className={[
-                "shrink-0 rounded-full border px-3 py-1 text-xs font-medium",
+                "shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium sm:px-3 sm:py-1 sm:text-xs",
                 noDisplayFilter
                   ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900"
                   : "border-zinc-200 bg-white text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200",
@@ -1008,7 +1009,7 @@ export function CalendarClient(props: {
                     );
                   }}
                   className={[
-                    "max-w-[11rem] shrink-0 truncate rounded-full border px-3 py-1 text-xs font-medium",
+                    "max-w-[11rem] shrink-0 truncate rounded-full border px-2 py-0.5 text-[10px] font-medium sm:px-3 sm:py-1 sm:text-xs",
                     on
                       ? "border-emerald-600 bg-emerald-50 text-emerald-900 dark:border-emerald-500 dark:bg-emerald-950/40 dark:text-emerald-100"
                       : "border-zinc-200 bg-white text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200",
@@ -1033,9 +1034,10 @@ export function CalendarClient(props: {
                   onClick={() => {
                     setSelectedCats((prev) => (prev.includes(c.id) ? prev.filter((x) => x !== c.id) : [...prev, c.id]));
                   }}
-                  className={["shrink-0 rounded-full border px-3 py-1 text-xs font-medium", on ? selectedCls : idleCls].join(
-                    " ",
-                  )}
+                  className={[
+                    "shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium sm:px-3 sm:py-1 sm:text-xs",
+                    on ? selectedCls : idleCls,
+                  ].join(" ")}
                 >
                   {c.label}
                 </button>
@@ -1043,9 +1045,6 @@ export function CalendarClient(props: {
             })}
           </div>
         </div>
-        <p className="text-[10px] leading-snug text-zinc-500 dark:text-zinc-400">
-          ※ 表示のみ。Google の予定データは変わりません。月グリッド／リスト・週の始まりなどは右上の「設定」から変更できます。
-        </p>
           </div>
 
           {calendarView === "grid" ? (
@@ -1081,12 +1080,13 @@ export function CalendarClient(props: {
             />
           )}
         </div>
-        <div className="order-1 min-w-0 space-y-4 lg:order-2 lg:min-h-0">
+        <div className="order-1 min-w-0 max-w-full space-y-1 sm:space-y-3 lg:order-2 lg:min-h-0 lg:space-y-1.5">
           <UpcomingGoogleEvents
             key="upcoming-google-events"
             filter={filterSettings}
             calendarHexById={gridDisplay.calendarHexById}
             calendarDisplayLabelById={opening?.calendarDisplayLabelById}
+            calendarOpening={opening}
           />
           {props.selectedDateYmd ? (
             <p className="hidden text-center text-sm text-zinc-600 dark:text-zinc-400 lg:block">
@@ -1298,9 +1298,14 @@ export function CalendarClient(props: {
                     className="mt-1 w-full px-2 py-1.5 text-[13px] font-medium"
                   >
                     {calendarsForUi.map((cal) => {
-                      const catId = lookupCalendarCategoryById(opening?.calendarCategoryById, cal.calendarId);
+                      const catIds = lookupCalendarCategoriesById(opening?.calendarCategoryById, cal.calendarId);
+                      const labels = catIds.map((id) => catOptions.find((c) => c.id === id)?.label ?? String(id));
                       const catLabel =
-                        catId != null ? (catOptions.find((c) => c.id === catId)?.label ?? String(catId)) : null;
+                        labels.length === 0
+                          ? null
+                          : labels.length <= 2
+                            ? labels.join("・")
+                            : `${labels.slice(0, 2).join("・")} ほか${labels.length - 2}`;
                       const hasColor = Boolean(gridDisplay.calendarHexById[cal.calendarId]);
                       const chunks: string[] = [];
                       if (catLabel) chunks.push(`(${catLabel})`);
@@ -1376,38 +1381,56 @@ export function CalendarClient(props: {
                       <p className="mt-1 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
                         「自動」は分類ルールを主に、プロフィールでスコアを少し寄せます。色付きチップは保存した
                         <span className="font-medium text-zinc-600 dark:text-zinc-300">カレンダー既定の分類</span>
-                        （チャットAIの即時判定ではありません）。加算は
+                        （チャットAIの即時判定ではありません）。複数選ぶと
+                        <span className="font-medium text-zinc-600 dark:text-zinc-300">それぞれに同じ強さ</span>
+                        でスコアに載ります。加算は
                         <span className="font-medium text-zinc-600 dark:text-zinc-300">分類ルールの「カレンダー」一致</span>
                         より弱いです。
                       </p>
                       <div
                         className="mt-2 flex flex-wrap gap-2"
-                        role="radiogroup"
+                        role="group"
                         aria-labelledby="calendar-assign-category-label"
                       >
                         {(() => {
                           const calId = activeCalendar.calendarId;
-                          const assigned = lookupCalendarCategoryById(opening?.calendarCategoryById, calId);
-                          const autoOn = !assigned;
-                          const setCategoryForCal = (cat: CalendarOpeningCategory | null) => {
+                          const assignedList = lookupCalendarCategoriesById(opening?.calendarCategoryById, calId);
+                          const assignedSet = new Set(assignedList);
+                          const autoOn = assignedList.length === 0;
+                          const commitCategories = (cats: CalendarOpeningCategory[]) => {
                             setOpening((prev) => {
                               const next: CalendarOpeningSettings = { ...(prev ?? {}) };
                               const map = { ...(next.calendarCategoryById ?? {}) };
-                              if (cat == null) delete map[calId];
-                              else map[calId] = cat;
+                              const compact = compactCalendarCategoryAssignment(cats);
+                              if (compact == null) delete map[calId];
+                              else map[calId] = compact;
                               if (Object.keys(map).length === 0) delete next.calendarCategoryById;
                               else next.calendarCategoryById = map;
                               return next;
                             });
                           };
+                          const toggleCategory = (cat: CalendarOpeningCategory) => {
+                            setErr(null);
+                            if (assignedList.includes(cat)) {
+                              commitCategories(assignedList.filter((c) => c !== cat));
+                              return;
+                            }
+                            if (assignedList.length >= MAX_CALENDAR_DEFAULT_CATEGORIES_PER_CALENDAR) {
+                              setErr(`カレンダー既定は${MAX_CALENDAR_DEFAULT_CATEGORIES_PER_CALENDAR}件までです`);
+                              return;
+                            }
+                            commitCategories([...assignedList, cat]);
+                          };
                           return (
                             <>
                               <button
                                 type="button"
-                                role="radio"
-                                aria-checked={autoOn}
+                                aria-pressed={autoOn}
                                 disabled={busy}
-                                onClick={() => setCategoryForCal(null)}
+                                onClick={() => {
+                                  setErr(null);
+                                  commitCategories([]);
+                                }}
                                 className={[
                                   "rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors",
                                   autoOn
@@ -1418,7 +1441,7 @@ export function CalendarClient(props: {
                                 固定しない（自動判定）
                               </button>
                               {catOptions.map((c) => {
-                                const on = assigned === c.id;
+                                const on = assignedSet.has(c.id);
                                 const selectedCls = c.custom
                                   ? "border-violet-600 bg-violet-50 text-violet-900 dark:border-violet-500 dark:bg-violet-950/40 dark:text-violet-100"
                                   : "border-blue-600 bg-blue-50 text-blue-900 dark:border-blue-500 dark:bg-blue-950/40 dark:text-blue-100";
@@ -1428,10 +1451,9 @@ export function CalendarClient(props: {
                                   <span key={c.id} className="inline-flex items-center gap-0.5">
                                     <button
                                       type="button"
-                                      role="radio"
-                                      aria-checked={on}
+                                      aria-pressed={on}
                                       disabled={busy}
-                                      onClick={() => setCategoryForCal(c.id)}
+                                      onClick={() => toggleCategory(c.id)}
                                       className={["rounded-full border px-2.5 py-0.5 text-xs font-medium", on ? selectedCls : idleCls].join(
                                         " ",
                                       )}
@@ -1485,7 +1507,9 @@ export function CalendarClient(props: {
                         })()}
                       </div>
                       {activeCalendar &&
-                      lookupCalendarCategoryById(opening?.calendarCategoryById, activeCalendar.calendarId) === "hobby" &&
+                      lookupCalendarCategoriesById(opening?.calendarCategoryById, activeCalendar.calendarId).includes(
+                        "hobby",
+                      ) &&
                       suggestsParttimeCalendarName(
                         (opts?.calendars ?? []).find((c) => c.calendarId === activeCalendar.calendarId)
                           ?.calendarName ?? activeCalendar.calendarName,
@@ -1500,15 +1524,21 @@ export function CalendarClient(props: {
                           <button
                             type="button"
                             disabled={busy}
-                            onClick={() =>
+                            onClick={() => {
+                              const list = lookupCalendarCategoriesById(
+                                opening?.calendarCategoryById,
+                                activeCalendar.calendarId,
+                              );
+                              const nextCats = [...new Set(list.map((c) => (c === "hobby" ? "parttime" : c)))];
+                              const compact = compactCalendarCategoryAssignment(nextCats);
                               void saveCalendarOpening({
                                 ...(opening ?? {}),
                                 calendarCategoryById: {
                                   ...(opening?.calendarCategoryById ?? {}),
-                                  [activeCalendar.calendarId]: "parttime",
+                                  [activeCalendar.calendarId]: compact ?? "parttime",
                                 },
-                              })
-                            }
+                              });
+                            }}
                             className="mt-2 rounded-md border border-amber-400 bg-white px-2.5 py-1 text-sm font-medium text-amber-950 hover:bg-amber-100/80 disabled:opacity-50 dark:border-amber-800/60 dark:bg-zinc-950 dark:text-amber-100 dark:hover:bg-amber-950/40"
                           >
                             バイト/シフトに直して保存
@@ -1535,7 +1565,8 @@ export function CalendarClient(props: {
                         </button>
                       </div>
                       <p className="mt-2 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-                        1つだけ選べます。「固定しない」はキーワード・ルール優先で毎回推定します。細かいルールは「設定（全体）」の開口トピック（日記チャット）から追加できます。
+                        複数チップをオンにするとその分だけ既定が重なります（最大{MAX_CALENDAR_DEFAULT_CATEGORIES_PER_CALENDAR}
+                        件）。「固定しない」はキーワード・ルール優先で毎回推定します。細かいルールは「設定（全体）」の開口トピック（日記チャット）から追加できます。
                       </p>
                       <div className="mt-2 flex flex-wrap gap-2">
                         <button
@@ -1649,7 +1680,7 @@ export function CalendarClient(props: {
                                       >
                                         同タイトル一括
                                         <FancySelect
-                                          key={`bulk-${calId}-${lookupCalendarCategoryById(opening?.calendarCategoryById, calId) ?? "_"}-${g.titleKey}`}
+                                          key={`bulk-${calId}-${lookupCalendarCategoriesById(opening?.calendarCategoryById, calId).join(",") || "_"}-${g.titleKey}`}
                                           disabled={busy || missingId}
                                           defaultValue={groupSuggested}
                                           onChange={(e) => {

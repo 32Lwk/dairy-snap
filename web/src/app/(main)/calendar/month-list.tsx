@@ -179,20 +179,24 @@ export function MonthList({
 
   return (
     <>
-      <h2 className="mb-3 mt-8 text-sm font-semibold text-zinc-800 dark:text-zinc-200">日記エントリ（月）リスト</h2>
-      <div className="mb-4 flex items-center justify-between">
+      <h2 className="mb-2 mt-3 text-xs font-semibold text-zinc-800 sm:mb-3 sm:mt-6 sm:text-sm lg:mb-2 lg:mt-5 dark:text-zinc-200">
+        日記エントリ（月）リスト
+      </h2>
+      <div className="mb-2 flex min-w-0 flex-wrap items-center justify-between gap-2 sm:mb-3 lg:mb-2 lg:gap-1.5">
         <Link
           href={`/calendar/${prevYm}-01`}
           scroll={false}
-          className="rounded-lg border border-zinc-200 px-3 py-1 text-sm dark:border-zinc-700"
+          className="shrink-0 rounded-lg border border-zinc-200 px-2.5 py-1 text-xs sm:px-3 sm:text-sm dark:border-zinc-700"
         >
           前月
         </Link>
-        <span className="font-medium text-zinc-800 dark:text-zinc-200">{ym}</span>
+        <span className="min-w-0 shrink truncate text-center text-sm font-medium text-zinc-800 dark:text-zinc-200">
+          {ym}
+        </span>
         <Link
           href={`/calendar/${nextYm}-01`}
           scroll={false}
-          className="rounded-lg border border-zinc-200 px-3 py-1 text-sm dark:border-zinc-700"
+          className="shrink-0 rounded-lg border border-zinc-200 px-2.5 py-1 text-xs sm:px-3 sm:text-sm dark:border-zinc-700"
         >
           翌月
         </Link>
@@ -211,7 +215,7 @@ export function MonthList({
                 href={`/calendar/${ymd}`}
                 onClick={onDayActivate ? (e) => onDayActivate(ymd, e) : undefined}
                 className={[
-                  "flex min-h-12 flex-col gap-1 rounded-xl border px-3 py-2 text-left transition-colors",
+                  "flex min-h-12 min-w-0 flex-col gap-1 overflow-hidden rounded-xl border px-2.5 py-2 text-left transition-colors sm:px-3",
                   has
                     ? "border-blue-300 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/50"
                     : "border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950",
@@ -219,8 +223,8 @@ export function MonthList({
                   isSelected ? "ring-2 ring-emerald-500/80 dark:ring-emerald-400/80" : "",
                 ].join(" ")}
               >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-semibold tabular-nums text-zinc-900 dark:text-zinc-50">
+                <div className="flex min-w-0 items-center justify-between gap-2">
+                  <span className="min-w-0 truncate text-xs font-semibold tabular-nums text-zinc-900 dark:text-zinc-50 sm:text-sm">
                     {ymd}（{day}日）
                   </span>
                   {evs.length > 0 ? (

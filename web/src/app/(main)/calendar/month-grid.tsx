@@ -192,7 +192,8 @@ export function MonthGrid({
   const weekLabels = Array.from({ length: 7 }, (_, i) => WEEK_LABELS_JA[(weekStartsOn + i) % 7]);
   const maxEv = Math.min(5, Math.max(1, maxEventsPerCell));
   const tooltipMaxTitles = Math.min(12, Math.max(maxEv + 2, 6));
-  const cellMinHeight = Math.max(88, 40 + maxEv * 22);
+  /** 狭い幅ではセル高を抑え、min-w-0 で 7 列が親からはみ出さないようにする */
+  const cellMinHeight = Math.max(72, 34 + maxEv * 20);
 
   const cells: { day: number; ymd: string }[] = useMemo(() => {
     const arr: { day: number; ymd: string }[] = [];
@@ -205,26 +206,30 @@ export function MonthGrid({
 
   return (
     <>
-      <h2 className="mb-3 mt-8 text-sm font-semibold text-zinc-800 dark:text-zinc-200">日記エントリ（月）＋予定</h2>
-      <div className="mb-4 flex items-center justify-between">
+      <h2 className="mb-2 mt-3 text-xs font-semibold text-zinc-800 sm:mb-3 sm:mt-6 sm:text-sm lg:mb-2 lg:mt-5 dark:text-zinc-200">
+        日記エントリ（月）＋予定
+      </h2>
+      <div className="mb-2 flex min-w-0 flex-wrap items-center justify-between gap-2 sm:mb-3 lg:mb-2 lg:gap-1.5">
         <Link
           href={`/calendar/${prevYm}-01`}
           scroll={false}
-          className="rounded-lg border border-zinc-200 px-3 py-1 text-sm dark:border-zinc-700"
+          className="shrink-0 rounded-lg border border-zinc-200 px-2.5 py-1 text-xs sm:px-3 sm:text-sm dark:border-zinc-700"
         >
           前月
         </Link>
-        <span className="font-medium text-zinc-800 dark:text-zinc-200">{ym}</span>
+        <span className="min-w-0 shrink truncate text-center text-sm font-medium text-zinc-800 dark:text-zinc-200">
+          {ym}
+        </span>
         <Link
           href={`/calendar/${nextYm}-01`}
           scroll={false}
-          className="rounded-lg border border-zinc-200 px-3 py-1 text-sm dark:border-zinc-700"
+          className="shrink-0 rounded-lg border border-zinc-200 px-2.5 py-1 text-xs sm:px-3 sm:text-sm dark:border-zinc-700"
         >
           翌月
         </Link>
       </div>
 
-      <div className="grid grid-cols-7 gap-1 text-center text-xs font-medium text-zinc-500">
+      <div className="grid min-w-0 grid-cols-7 gap-0.5 text-center text-[10px] font-medium text-zinc-500 sm:gap-1 sm:text-xs">
         {weekLabels.map((w, i) => (
           <div key={`${i}-${w}`} className="py-1">
             {w}
@@ -258,7 +263,7 @@ export function MonthGrid({
               onClick={onDayActivate ? (e) => onDayActivate(ymd, e) : undefined}
               title={titleLines}
               className={[
-                "group block rounded-lg border px-2 py-2 text-left",
+                "group block min-w-0 overflow-hidden rounded-md border px-1 py-1.5 text-left sm:rounded-lg sm:px-2 sm:py-2",
                 has
                   ? "border-blue-300 bg-blue-50 text-blue-900 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-100"
                   : "border-zinc-100 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-900",
@@ -268,10 +273,10 @@ export function MonthGrid({
               style={{ minHeight: cellMinHeight }}
             >
               <div className="flex h-full min-h-0 flex-col">
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="text-sm font-semibold tabular-nums">{day}</span>
+                <div className="flex min-w-0 items-baseline justify-between gap-1">
+                  <span className="text-xs font-semibold tabular-nums sm:text-sm">{day}</span>
                   {evs.length ? (
-                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
+                    <span className="shrink-0 rounded-full bg-emerald-100 px-1 py-0.5 text-[9px] font-semibold text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200 sm:px-2 sm:text-[10px]">
                       {evs.length}
                     </span>
                   ) : null}
@@ -279,7 +284,7 @@ export function MonthGrid({
 
                 <div className="mt-1 min-h-0 flex-1">
                   {evs.length ? (
-                    <ul className="space-y-0.5 text-[11px] leading-snug text-zinc-600 dark:text-zinc-300">
+                    <ul className="space-y-0.5 text-[9px] leading-snug text-zinc-600 dark:text-zinc-300 sm:text-[11px]">
                       {shown.map((e, idx) => (
                         <li key={`${ymd}-ev-${idx}`} className="flex items-start gap-1.5">
                           <span
@@ -312,8 +317,8 @@ export function MonthGrid({
         })}
       </div>
 
-      <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
-        各日をクリックするとその日の概要がモーダルで開きます（Ctrl を押しながらクリック・マウス中クリックで新しいタブに開けます）。日記本文・画像はエントリページから開けます。
+      <p className="mt-2 hidden text-[10px] leading-snug text-zinc-500 sm:mt-3 sm:text-xs lg:mt-2 lg:block dark:text-zinc-400">
+        各日タップで概要モーダル（Ctrl+クリックで新規タブ）。本文・画像はエントリページから。
       </p>
     </>
   );

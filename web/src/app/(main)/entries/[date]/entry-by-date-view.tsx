@@ -4,6 +4,11 @@ import type { ComponentProps } from "react";
 import { useState } from "react";
 import Link from "next/link";
 import { useEntriesNavDrawer } from "@/components/entries-nav-layout-shell";
+import {
+  APP_HEADER_TITLE,
+  APP_HEADER_TOOLBAR_INNER,
+  APP_MAIN_PT_BELOW_FIXED_HEADER,
+} from "@/lib/app-header-toolbar";
 import { EntryByDateMainGrid } from "./entry-by-date-main-grid";
 import { EntryTitleWithEdit } from "./entry-title-with-edit";
 
@@ -26,53 +31,51 @@ export function EntryByDateView(
   const { openNav, isOpen } = useEntriesNavDrawer();
 
   return (
-    <div className="mx-auto w-full px-4 pb-6 pt-[calc(4.5rem+env(safe-area-inset-top,0px))] md:max-w-5xl md:px-5 md:pt-[calc(4.75rem+env(safe-area-inset-top,0px))] lg:max-w-6xl lg:px-6">
+    <div
+      className={`mx-auto w-full px-4 pb-6 sm:px-6 md:max-w-5xl lg:max-w-6xl lg:px-10 ${APP_MAIN_PT_BELOW_FIXED_HEADER}`}
+    >
       <header className="fixed left-0 right-0 top-0 z-30 border-b border-zinc-200/90 bg-white/95 backdrop-blur-md dark:border-zinc-800/90 dark:bg-zinc-950/95">
-        <div className="mx-auto flex w-full max-w-5xl flex-wrap items-start justify-between gap-2 px-4 pb-2 pt-[max(0.5rem,env(safe-area-inset-top))] md:px-5 lg:max-w-6xl lg:px-6">
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-              <Link
-                href={`/calendar/${date}`}
-                className="hidden text-xs font-medium text-emerald-700 hover:underline dark:text-emerald-400 lg:inline"
-              >
-                ← カレンダー
-              </Link>
-              <button
-                type="button"
-                onClick={openNav}
-                className="text-xs font-medium text-emerald-700 underline decoration-emerald-700/30 underline-offset-2 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300 lg:hidden"
-                aria-expanded={isOpen}
-                aria-controls="entries-nav-drawer"
-              >
-                エントリ一覧
-              </button>
-            </div>
-
-            <h1 className="mt-1.5 text-xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
-              {date}
-            </h1>
-
-            <div className="mt-1 flex items-start justify-end gap-2 md:items-center">
-              <p
-                className={`min-w-0 flex-1 text-base leading-snug ${
-                  initialTitle.trim()
-                    ? "text-zinc-700 dark:text-zinc-300"
-                    : "italic text-zinc-400 dark:text-zinc-500"
-                }`}
-              >
-                {initialTitle.trim() ? initialTitle : "タイトル未設定"}
-              </p>
-              <EntryTitleWithEdit
-                entryId={entryId}
-                initialTitle={initialTitle}
-                onOpenJournalPreview={() => setJournalDraftOpenPreviewSignal((n) => n + 1)}
-              />
-            </div>
-
-            {mood ? <p className="text-sm text-zinc-500">気分: {mood}</p> : null}
+        <div className={`${APP_HEADER_TOOLBAR_INNER} max-w-5xl lg:max-w-6xl`}>
+          <div className="flex min-h-9 min-w-0 flex-1 items-center gap-x-3">
+            <Link
+              href={`/calendar/${date}`}
+              className="hidden shrink-0 text-xs font-medium text-emerald-700 hover:underline dark:text-emerald-400 lg:inline"
+            >
+              ← カレンダー
+            </Link>
+            <button
+              type="button"
+              onClick={openNav}
+              className="shrink-0 text-xs font-medium text-emerald-700 underline decoration-emerald-700/30 underline-offset-2 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300 lg:hidden"
+              aria-expanded={isOpen}
+              aria-controls="entries-nav-drawer"
+            >
+              エントリ一覧
+            </button>
+            <h1 className={APP_HEADER_TITLE}>{date}</h1>
           </div>
         </div>
       </header>
+
+      <div className="mt-3 space-y-2 sm:mt-4">
+        <div className="flex items-start justify-end gap-2 md:items-center">
+          <p
+            className={`min-w-0 flex-1 text-base leading-snug ${
+              initialTitle.trim()
+                ? "text-zinc-700 dark:text-zinc-300"
+                : "italic text-zinc-400 dark:text-zinc-500"
+            }`}
+          >
+            {initialTitle.trim() ? initialTitle : "タイトル未設定"}
+          </p>
+          <EntryTitleWithEdit
+            entryId={entryId}
+            initialTitle={initialTitle}
+            onOpenJournalPreview={() => setJournalDraftOpenPreviewSignal((n) => n + 1)}
+          />
+        </div>
+        {mood ? <p className="text-sm text-zinc-500">気分: {mood}</p> : null}
+      </div>
 
       <EntryByDateMainGrid
         {...grid}

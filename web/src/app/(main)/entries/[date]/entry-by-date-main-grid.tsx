@@ -80,12 +80,11 @@ export function EntryByDateMainGrid({
       className={[
         "mt-8 grid grid-cols-1 gap-6 sm:gap-7 md:grid-cols-12 md:gap-8 lg:gap-10",
         "md:items-stretch",
-        "md:h-[calc(100svh-11rem-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))]",
-        "md:min-h-[22rem]",
+        "md:min-h-[max(22rem,calc(100svh-11rem-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px)))]",
       ].join(" ")}
     >
       <div className="order-1 min-h-0 md:col-span-7 md:order-1 md:flex md:h-full md:min-h-0 md:flex-col md:overflow-hidden lg:col-span-7">
-        <div className="md:flex md:min-h-0 md:flex-1 md:flex-col">
+        <div className="flex min-h-0 flex-1 flex-col md:min-h-0">
           {hasSavedBody ? (
             <article className="mb-4 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
               <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">本文</h2>
@@ -111,7 +110,13 @@ export function EntryByDateMainGrid({
           />
         </div>
       </div>
-      <div className="order-2 space-y-6 md:col-span-5 md:order-2 md:min-h-0 md:overflow-y-auto md:overscroll-y-contain md:pr-0.5 lg:col-span-5">
+      <div
+        className={[
+          "order-2 space-y-6 md:col-span-5 md:order-2 md:min-h-0 md:overflow-y-auto md:overscroll-y-contain md:pr-0.5 lg:col-span-5",
+          "md:h-[calc(100svh-11rem-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))]",
+          "md:max-h-[calc(100svh-11rem-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))]",
+        ].join(" ")}
+      >
         {!hasSavedBody ? (
           <div className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
             <JournalDraftPanel

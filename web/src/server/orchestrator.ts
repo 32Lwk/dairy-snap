@@ -21,7 +21,13 @@ import {
   resolveDayBoundaryEndTime,
   resolveUserTimeZone,
 } from "@/lib/time/user-day-boundary";
-import { formatOrchestratorStaticProfileBlock, parseUserSettings, type CalendarOpeningSettings } from "@/lib/user-settings";
+import {
+  calendarOpeningCategoryOptions,
+  formatOrchestratorStaticProfileBlock,
+  parseUserSettings,
+  type CalendarOpeningCategory,
+  type CalendarOpeningSettings,
+} from "@/lib/user-settings";
 import { formatAgentPersonaForPrompt } from "@/lib/agent-persona-preferences";
 import { isMbtiType, mbtiDisplayJa } from "@/lib/mbti";
 import { isLoveMbtiType, loveMbtiDisplayJa } from "@/lib/love-mbti";
@@ -172,10 +178,24 @@ function hhmmInUserZoneBrief(isoLike: string, timeZone: string): string {
   }).format(new Date(ms));
 }
 
+/** 開口プロンプト用: 分類ラベルをそのまま見せ、就活系バケットは「確定ではない」と明示する */
 function openingCalendarCategoryTagJa(ev: CalendarEventBrief, calendarOpening: CalendarOpeningSettings | undefined): string {
   const cat = inferCalendarEventCategory(ev, calendarOpening ?? null);
   if (cat === "parttime") return "（バイト/シフト）";
-  if (cat === "job_hunt") return "（就活・業務）";
+  if (cat === "job_hunt") {
+    return "（分類: 就活/面接系・業務も含む／面接・説明会・別件はユーザー確認）";
+  }
+  if ((cat as string).startsWith("usercat:")) {
+    const opts = calendarOpeningCategoryOptions(calendarOpening ?? null);
+    const lab = opts.find((o) => o.id === (cat as CalendarOpeningCategory))?.label?.trim() ?? "";
+    if (!lab) return "";
+    const hint = lab.normalize("NFKC");
+    if (
+      /就活|面接|採用|説明会|企業|インターン|リクルート|選考|キャリア|OB|OG|キックオフ|会社説明|労働|業務/i.test(hint)
+    ) {
+      return `（分類: ${lab}／具体的内容はユーザー確認）`;
+    }
+  }
   return "";
 }
 

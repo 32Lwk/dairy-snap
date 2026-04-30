@@ -6,6 +6,7 @@ import { fetchAppLocalEventsAsBriefs } from "@/server/app-local-calendar";
 import { prisma } from "@/server/db";
 import { notFound, redirect } from "next/navigation";
 import { getUserEffectiveDayContext } from "@/lib/server/user-effective-day";
+import { APP_MAIN_PT_BELOW_FIXED_HEADER } from "@/lib/app-header-toolbar";
 import { CalendarClient } from "../calendar-client";
 
 function monthRange(ym: string): { from: string; to: string } {
@@ -115,7 +116,9 @@ export default async function CalendarByDatePage({
   const prevYm = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`;
   const nextYm = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
   return (
-    <div className="mx-auto max-w-3xl px-4 pb-6 pt-[calc(4.5rem+env(safe-area-inset-top,0px))] md:max-w-2xl md:pt-[calc(4.75rem+env(safe-area-inset-top,0px))] lg:max-w-5xl xl:max-w-6xl">
+    <div
+      className={`mx-auto w-full min-w-0 max-w-3xl overflow-x-hidden px-3 pb-4 sm:px-4 sm:pb-6 lg:max-w-5xl xl:max-w-6xl ${APP_MAIN_PT_BELOW_FIXED_HEADER}`}
+    >
       <CalendarClient
         ym={ym}
         prevYm={prevYm}

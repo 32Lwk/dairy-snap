@@ -120,6 +120,22 @@ input.timetable-editor-input.timetable-editor-input-sm:not([type]) {
   line-height: 1.125rem;
 }
 
+/*
+ Entry chat 送信欄: AssistantBubble と同じタイポ（13px / sm:14px）。グローバル textarea 1rem より後で指定。
+ フォーカス時の iOS ズームは 16px 未満で起きうるが、チャット本文との視覚的な揃えを優先。
+ */
+textarea.entry-chat-compose-textarea {
+  font-size: 0.8125rem;
+  line-height: 1.375;
+}
+
+@media (min-width: 640px) {
+  textarea.entry-chat-compose-textarea {
+    font-size: 0.875rem;
+    line-height: 1.625;
+  }
+}
+
 /* #calendar-display-settings-dialog: compact text overrides global `1rem` on inputs (may zoom on iOS when focused). */
 #calendar-display-settings-dialog input[type="text"].calendar-dialog-compact-text {
   font-size: 0.875rem;

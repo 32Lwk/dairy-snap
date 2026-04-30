@@ -206,6 +206,12 @@ export type CalendarGridDisplaySettings = {
   calendarHexById?: Record<string, string>;
 };
 
+/** 1 カレンダーに紐づく既定分類（1件または複数）。 */
+export type CalendarCategoryByCalendarIdValue = CalendarOpeningCategory | CalendarOpeningCategory[];
+
+/** 1 カレンダーあたりの既定分類の最大件数（保存・API 共通）。 */
+export const MAX_CALENDAR_DEFAULT_CATEGORIES_PER_CALENDAR = 8;
+
 export type CalendarOpeningSettings = {
   /** 優先順位（並べ替え）。未設定ならデフォルト順を使う */
   priorityOrder?: CalendarOpeningCategory[];
@@ -219,8 +225,8 @@ export type CalendarOpeningSettings = {
    * - 1.0 は保存しない（未設定扱い）
    */
   categoryMultiplierById?: Partial<Record<CalendarOpeningCategory, number>>;
-  /** Google カレンダー ID → 分類デフォルト（ルール・キーワードより強く効かせる） */
-  calendarCategoryById?: Record<string, CalendarOpeningCategory>;
+  /** Google カレンダー ID → 分類デフォルト（ルール・キーワードより強く効かせる）。複数指定時は各カテゴリに同じ重みで加算 */
+  calendarCategoryById?: Record<string, CalendarCategoryByCalendarIdValue>;
   /** Google カレンダー ID → このアプリ内だけの表示名（Google 側の名前は変えない） */
   calendarDisplayLabelById?: Record<string, string>;
   /** カレンダー画面のグリッド表示オプション */
@@ -228,7 +234,7 @@ export type CalendarOpeningSettings = {
 };
 
 /**
- * `calendarCategoryById` のスコア加算。値が大きいと本文・カレンダー名ヒントより常に勝ち「趣味」等に張り付きやすい。
+ * `calendarCategoryById` のスコア加算（複数指定時は各カテゴリに同一重み）。値が大きいと本文・カレンダー名ヒントより常に勝ち「趣味」等に張り付きやすい。
  * 明示の calendarId ルール（CALENDAR_ID_RULE_STRONG_WEIGHT）より弱くする。
  */
 export const CALENDAR_DEFAULT_CATEGORY_WEIGHT = 52;
@@ -367,12 +373,60 @@ function lookupCalendarIdRecordValue<T>(
   return undefined;
 }
 
-/** calendarCategoryById のキーが URL エンコード等でイベント側 ID とずれる場合のフォールバック付き参照。 */
+/** DB / 状態の値をカテゴリ配列に正規化（重複除去・順序維持）。 */
+export function expandCalendarCategoryAssignment(
+  v: CalendarCategoryByCalendarIdValue | undefined | null,
+): CalendarOpeningCategory[] {
+  if (v == null) return [];
+  if (typeof v === "string") {
+    const s = v.trim();
+    return s ? [s as CalendarOpeningCategory] : [];
+  }
+  if (!Array.isArray(v)) return [];
+  const out: CalendarOpeningCategory[] = [];
+  for (const x of v) {
+    if (typeof x !== "string") continue;
+    const t = x.trim();
+    if (!t) continue;
+    const c = t as CalendarOpeningCategory;
+    if (!out.includes(c)) out.push(c);
+  }
+  return out;
+}
+
+/** 配列を保存用に 1 要素なら文字列、複数なら配列へ畳む（空なら null）。 */
+export function compactCalendarCategoryAssignment(
+  cats: CalendarOpeningCategory[],
+): CalendarCategoryByCalendarIdValue | null {
+  const uniq: CalendarOpeningCategory[] = [];
+  for (const c of cats) {
+    if (!uniq.includes(c)) uniq.push(c);
+  }
+  if (uniq.length === 0) return null;
+  if (uniq.length === 1) return uniq[0]!;
+  return uniq;
+}
+
+function isPresentCalendarCategoryValue(v: unknown): boolean {
+  if (typeof v === "string") return v.trim().length > 0;
+  return Array.isArray(v) && v.some((x) => typeof x === "string" && x.trim().length > 0);
+}
+
+/** calendarCategoryById のキーが URL エンコード等でイベント側 ID とずれる場合のフォールバック付き参照（複数既定）。 */
+export function lookupCalendarCategoriesById(
+  map: Record<string, CalendarCategoryByCalendarIdValue> | undefined,
+  calendarId: string,
+): CalendarOpeningCategory[] {
+  const raw = lookupCalendarIdRecordValue(map, calendarId, (x) => isPresentCalendarCategoryValue(x));
+  return expandCalendarCategoryAssignment(raw as CalendarCategoryByCalendarIdValue | undefined);
+}
+
+/** 先頭の既定カテゴリ（プルダウン表示など単一ラベル用）。 */
 export function lookupCalendarCategoryById(
-  map: Record<string, CalendarOpeningCategory> | undefined,
+  map: Record<string, CalendarCategoryByCalendarIdValue> | undefined,
   calendarId: string,
 ): CalendarOpeningCategory | undefined {
-  return lookupCalendarIdRecordValue(map, calendarId, (v) => typeof v === "string" && v.length > 0);
+  return lookupCalendarCategoriesById(map, calendarId)[0];
 }
 
 /** アプリ内表示名の上書き（calendarDisplayLabelById）の参照。 */
@@ -395,19 +449,35 @@ export function resolveCalendarDisplayNameForUser(
 }
 
 /**
- * 保存済みカレンダー既定をスコアに載せる直前に正す。
- * 「シフトボード」等なのに過去の自動推定で hobby が残っている不整合を parttime に寄せる。
+ * 保存済みカレンダー既定をスコアに載せる直前に正す（複数可）。
+ * 「シフトボード」等なのに過去の自動推定で hobby が残っている不整合を parttime 等へ寄せる。
  */
-export function resolveCalendarDefaultCategoryForScoring(
+export function resolveCalendarDefaultCategoriesForScoring(
   calendarId: string | undefined,
   calendarName: string | undefined,
-  map: Record<string, CalendarOpeningCategory> | undefined,
-): CalendarOpeningCategory | undefined {
-  const raw = lookupCalendarCategoryById(map, calendarId ?? "");
-  if (raw === "hobby" && suggestsParttimeCalendarName(calendarName)) return "parttime";
-  if (raw === "hobby" && suggestsSchoolCalendarName(calendarName)) return "school";
-  if (raw === "hobby" && suggestsBirthdayCalendarName(calendarName)) return "birthday";
-  return raw;
+  map: Record<string, CalendarCategoryByCalendarIdValue> | undefined,
+): CalendarOpeningCategory[] {
+  const rawList = lookupCalendarCategoriesById(map, calendarId ?? "");
+  const out: CalendarOpeningCategory[] = [];
+  for (let raw of rawList) {
+    if (raw === "hobby" && suggestsParttimeCalendarName(calendarName)) raw = "parttime";
+    else if (raw === "hobby" && suggestsSchoolCalendarName(calendarName)) raw = "school";
+    else if (raw === "hobby" && suggestsBirthdayCalendarName(calendarName)) raw = "birthday";
+    if (!out.includes(raw)) out.push(raw);
+  }
+  return out;
+}
+
+/**
+ * カレンダー既定が設定されているときは、既定に含まれるカテゴリにだけカレンダー表示名由来のブーストを重ねる。
+ * （例: 既定を「授業」のみにしたのに、表示名の「労働」で parttime が上書きされるのを防ぐ）
+ */
+export function shouldApplyCalendarNameBoostForCategory(
+  cat: CalendarOpeningCategory,
+  explicitDefaults: CalendarOpeningCategory[],
+): boolean {
+  if (explicitDefaults.length === 0) return true;
+  return explicitDefaults.includes(cat);
 }
 
 /**
@@ -653,10 +723,16 @@ export function stripCalendarOpeningCustomLabel(
     Record<CalendarOpeningCategory, number>
   >;
   const prevCalCat = opening.calendarCategoryById;
-  const nextCalCat =
-    prevCalCat && Object.keys(prevCalCat).length > 0
-      ? Object.fromEntries(Object.entries(prevCalCat).filter(([, c]) => c !== id))
-      : undefined;
+  let nextCalCat: Record<string, CalendarCategoryByCalendarIdValue> | undefined;
+  if (prevCalCat && Object.keys(prevCalCat).length > 0) {
+    const rec: Record<string, CalendarCategoryByCalendarIdValue> = {};
+    for (const [k, val] of Object.entries(prevCalCat)) {
+      const list = expandCalendarCategoryAssignment(val).filter((c) => c !== id);
+      const compact = compactCalendarCategoryAssignment(list);
+      if (compact != null) rec[k] = compact;
+    }
+    if (Object.keys(rec).length > 0) nextCalCat = rec;
+  }
   const out: CalendarOpeningSettings = { ...opening };
   if (nextLabels.length) out.customCategoryLabels = nextLabels;
   else delete out.customCategoryLabels;
@@ -809,19 +885,41 @@ function parseCalendarOpening(raw: unknown): CalendarOpeningSettings | undefined
     if (out.length) rules = out;
   }
 
-  let calendarCategoryById: Record<string, CalendarOpeningCategory> | undefined;
+  let calendarCategoryById: Record<string, CalendarCategoryByCalendarIdValue> | undefined;
   const calCatRaw = o.calendarCategoryById;
   if (calCatRaw && typeof calCatRaw === "object" && !Array.isArray(calCatRaw)) {
-    const rec: Record<string, CalendarOpeningCategory> = {};
+    const rec: Record<string, CalendarCategoryByCalendarIdValue> = {};
     let n = 0;
     for (const [k, v] of Object.entries(calCatRaw as Record<string, unknown>)) {
       if (n >= 40) break;
-      if (k.length > 400 || typeof v !== "string") continue;
-      const trimmed = v.trim();
-      const normalized = builtinCat.has(trimmed.toLowerCase()) ? trimmed.toLowerCase() : trimmed;
-      if (!isAllowedCategory(normalized)) continue;
-      rec[k] = normalized as CalendarOpeningCategory;
-      n++;
+      if (k.length > 400) continue;
+      if (typeof v === "string") {
+        const trimmed = v.trim();
+        const normalized = builtinCat.has(trimmed.toLowerCase()) ? trimmed.toLowerCase() : trimmed;
+        if (!isAllowedCategory(normalized)) continue;
+        rec[k] = normalized as CalendarOpeningCategory;
+        n++;
+        continue;
+      }
+      if (Array.isArray(v)) {
+        const cats: CalendarOpeningCategory[] = [];
+        for (const item of v) {
+          if (cats.length >= MAX_CALENDAR_DEFAULT_CATEGORIES_PER_CALENDAR) break;
+          if (typeof item !== "string") continue;
+          const trimmed = item.trim();
+          const normalized = builtinCat.has(trimmed.toLowerCase()) ? trimmed.toLowerCase() : trimmed;
+          if (!isAllowedCategory(normalized)) continue;
+          const c = normalized as CalendarOpeningCategory;
+          if (!cats.includes(c)) cats.push(c);
+        }
+        if (cats.length === 1) {
+          rec[k] = cats[0]!;
+          n++;
+        } else if (cats.length > 1) {
+          rec[k] = cats;
+          n++;
+        }
+      }
     }
     if (Object.keys(rec).length) calendarCategoryById = rec;
   }

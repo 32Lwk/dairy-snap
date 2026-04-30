@@ -14,7 +14,8 @@ import {
   parseUserSettings,
   PARTTIME_CALENDAR_NAME_SCORE_BOOST,
   pickWinningCalendarCategory,
-  resolveCalendarDefaultCategoryForScoring,
+  resolveCalendarDefaultCategoriesForScoring,
+  shouldApplyCalendarNameBoostForCategory,
   SCHOOL_CALENDAR_NAME_SCORE_BOOST,
   suggestsBirthdayCalendarName,
   suggestsParttimeCalendarName,
@@ -183,12 +184,12 @@ export function scoreOpeningTopic(args: {
 
     if (rb) add(rb.cat, rb.w, `role:${args.occupationRole}`);
 
-    const calDefault = resolveCalendarDefaultCategoryForScoring(
+    const calDefaults = resolveCalendarDefaultCategoriesForScoring(
       ev.calendarId,
       ev.calendarName,
       args.calendarOpening?.calendarCategoryById,
     );
-    if (calDefault) add(calDefault, CALENDAR_DEFAULT_CATEGORY_WEIGHT, "calendar:default");
+    for (const calDefault of calDefaults) add(calDefault, CALENDAR_DEFAULT_CATEGORY_WEIGHT, "calendar:default");
 
     for (const r of rules) {
       const w = typeof r.weight === "number" ? r.weight : 5;
@@ -214,13 +215,13 @@ export function scoreOpeningTopic(args: {
       }
     }
 
-    if (suggestsParttimeCalendarName(ev.calendarName)) {
+    if (shouldApplyCalendarNameBoostForCategory("parttime", calDefaults) && suggestsParttimeCalendarName(ev.calendarName)) {
       add("parttime", PARTTIME_CALENDAR_NAME_SCORE_BOOST, "calendar:name");
     }
-    if (suggestsBirthdayCalendarName(ev.calendarName)) {
+    if (shouldApplyCalendarNameBoostForCategory("birthday", calDefaults) && suggestsBirthdayCalendarName(ev.calendarName)) {
       add("birthday", BIRTHDAY_CALENDAR_NAME_SCORE_BOOST, "calendar:name");
     }
-    if (suggestsSchoolCalendarName(ev.calendarName)) {
+    if (shouldApplyCalendarNameBoostForCategory("school", calDefaults) && suggestsSchoolCalendarName(ev.calendarName)) {
       add("school", SCHOOL_CALENDAR_NAME_SCORE_BOOST, "calendar:name");
     }
 

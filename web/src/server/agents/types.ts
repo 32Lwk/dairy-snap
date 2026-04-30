@@ -262,10 +262,15 @@ export const ORCHESTRATOR_TOOLS = [
           calendarOpening: {
             type: "object",
             description:
-              "開口カレンダー設定の部分更新。rules は {kind:keyword|calendarId|colorId|location|description, value, category, weight?} の配列（最大24）。calendarCategoryById はカレンダーID→カテゴリ。categoryMultiplierById はカテゴリ→0.2〜3。いずれかを含める。",
+              "開口カレンダー設定の部分更新。rules は {kind:keyword|calendarId|colorId|location|description, value, category, weight?} の配列（最大24）。calendarCategoryById はカレンダーID→カテゴリまたはカテゴリ配列（複数既定）。categoryMultiplierById はカテゴリ→0.2〜3。いずれかを含める。",
             properties: {
               rules: { type: "array", items: { type: "object" } },
-              calendarCategoryById: { type: "object", additionalProperties: { type: "string" } },
+              calendarCategoryById: {
+                type: "object",
+                additionalProperties: {
+                  oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+                },
+              },
               categoryMultiplierById: { type: "object", additionalProperties: { type: "number" } },
             },
           },

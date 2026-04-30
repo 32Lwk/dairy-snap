@@ -9,6 +9,7 @@ import { isLoveMbtiType } from "@/lib/love-mbti";
 import { isMbtiType } from "@/lib/mbti";
 import { isValidIanaTimeZone } from "@/lib/time/user-day-boundary";
 import {
+  CALENDAR_OPENING_BUILTIN_IDS,
   mergeUserSettingsJson,
   parseUserSettings,
   type UserProfileSettings,
@@ -41,6 +42,19 @@ const loveMbtiField = z
   .refine((s) => s === "" || isLoveMbtiType(s), {
     message: "恋愛MBTI は16タイプの英字4文字（LCRO など）",
   });
+
+function isValidCalendarOpeningCategoryValue(s: string): boolean {
+  if ((CALENDAR_OPENING_BUILTIN_IDS as readonly string[]).includes(s)) return true;
+  return /^usercat:[a-z0-9_]{1,32}$/.test(s);
+}
+
+const calendarCategoryByCalendarIdValueSchema = z.union([
+  z.string().max(48).refine(isValidCalendarOpeningCategoryValue, { message: "無効なカテゴリです" }),
+  z
+    .array(z.string().max(48).refine(isValidCalendarOpeningCategoryValue, { message: "無効なカテゴリです" }))
+    .min(1)
+    .max(8),
+]);
 
 const profilePatchSchema = z
   .object({
@@ -116,7 +130,7 @@ const profilePatchSchema = z
           })
           .optional(),
         calendarCategoryById: z
-          .record(z.string().max(400), z.string().max(48))
+          .record(z.string().max(400), calendarCategoryByCalendarIdValueSchema)
           .optional()
           .refine((rec) => rec == null || Object.keys(rec).length <= 40, {
             message: "calendarCategoryById が多すぎます",
