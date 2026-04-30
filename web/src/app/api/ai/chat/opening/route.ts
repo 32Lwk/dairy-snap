@@ -7,8 +7,11 @@ export const runtime = "nodejs";
 export const maxDuration = 120;
 
 export async function POST(req: NextRequest) {
-  const url = new URL(req.url);
-  url.pathname = "/api/ai/orchestrator/opening";
+  // Cloud Run / Next standalone はコンテナ内 HTTP で待ち受ける。
+  // 外部公開ドメインへ HTTPS で自己リクエストすると環境によっては
+  // `ERR_SSL_WRONG_VERSION_NUMBER` になりうるため、ローカルループバックへ転送する。
+  const port = process.env.PORT ?? "8080";
+  const url = new URL("/api/ai/orchestrator/opening", `http://127.0.0.1:${port}`);
 
   const body = await req.text();
 
