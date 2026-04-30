@@ -1198,7 +1198,7 @@ export async function fetchCalendarEventsForDay(
       .filter((e) => e.start)
       .sort((a, b) => sortKeyIso(a.start) - sortKeyIso(b.start));
 
-    const merged = await mergeAppLocalEventsIntoGoogleList(userId, dayStart, dayEnd, events, {
+    const merged = await mergeAppLocalEventsIntoGoogleList(userId, dayStart, dayEndExclusive, events, {
       scopeOneCalendar: false,
       limit: 50,
     });

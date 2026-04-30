@@ -127,7 +127,7 @@ function stripLightMarkdownForChatDisplay(text: string): string {
 function UserMessageBubble({
   m,
   onUpdated,
-  onDeleted,
+  onRequestCascadeDelete,
   hasFollowingMessages,
   followingMessageCount,
 }: {
