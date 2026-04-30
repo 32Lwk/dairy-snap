@@ -25,6 +25,16 @@ import {
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
+function jsonResponse(data: unknown, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+    },
+  });
+}
+
 const bodySchema = z.object({
   entryId: z.string().min(1),
   /** クライアントの `new Date().toISOString()`。サーバー時刻から ±12h を超える場合は無視 */
@@ -39,12 +49,12 @@ export async function POST(req: NextRequest) {
   const parsed = bodySchema.safeParse(json);
   if (!parsed.success) {
     scheduleAppLog(AppLogScope.opening, "warn", "opening_bad_request", { reason: "body_schema" });
-    return new Response(JSON.stringify({ error: "入力が不正です" }), { status: 400 });
+    return jsonResponse({ error: "入力が不正です" }, 400);
   }
 
   if (!process.env.OPENAI_API_KEY) {
     scheduleAppLog(AppLogScope.opening, "warn", "opening_openai_unconfigured", {});
-    return new Response(JSON.stringify({ error: "OPENAI_API_KEY が未設定です" }), { status: 503 });
+    return jsonResponse({ error: "OPENAI_API_KEY が未設定です" }, 503);
   }
 
   const entry = await prisma.dailyEntry.findFirst({
@@ -52,13 +62,13 @@ export async function POST(req: NextRequest) {
   });
   if (!entry) {
     scheduleAppLog(AppLogScope.opening, "info", "opening_entry_not_found", { entryId: parsed.data.entryId });
-    return new Response(JSON.stringify({ error: "見つかりません" }), { status: 404 });
+    return jsonResponse({ error: "見つかりません" }, 404);
   }
 
   const counter = await getTodayCounter(session.user.id);
   if (counter.chatMessages >= LIMITS.CHAT_PER_DAY) {
     scheduleAppLog(AppLogScope.opening, "warn", "opening_rate_limited", { limit: LIMITS.CHAT_PER_DAY });
-    return new Response(JSON.stringify({ error: "本日のチャット上限に達しました" }), { status: 429 });
+    return jsonResponse({ error: "本日のチャット上限に達しました" }, 429);
   }
 
   const claim = await claimThreadForOpening(entry.id);
@@ -69,10 +79,7 @@ export async function POST(req: NextRequest) {
       entryId: entry.id,
       threadId: claim.threadId,
     });
-    return new Response(JSON.stringify({ skipped: true, threadId: claim.threadId }), {
-      status: 200,
-      headers: { "Content-Type": "application/json; charset=utf-8" },
-    });
+    return jsonResponse({ skipped: true, threadId: claim.threadId }, 200);
   }
 
   if (claim.kind === "in_progress") {
@@ -81,16 +88,9 @@ export async function POST(req: NextRequest) {
       entryId: entry.id,
       threadId: claim.threadId,
     });
-    return new Response(
-      JSON.stringify({
-        skipped: true,
-        threadId: claim.threadId,
-        openingInProgress: true,
-      }),
-      {
-        status: 200,
-        headers: { "Content-Type": "application/json; charset=utf-8" },
-      },
+    return jsonResponse(
+      { skipped: true, threadId: claim.threadId, openingInProgress: true },
+      200,
     );
   }
 
@@ -244,10 +244,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    return new Response(JSON.stringify({ skipped: true, threadId }), {
-      status: 200,
-      headers: { "Content-Type": "application/json; charset=utf-8" },
-    });
+    return jsonResponse({ skipped: true, threadId }, 200);
   }
 
   const openingExtraAppend = openingAllowSettingsTool
@@ -297,11 +294,33 @@ export async function POST(req: NextRequest) {
   const encoder = new TextEncoder();
   let assistantText = "";
   let assistantDisplayed = "";
+  const abortSignal = req.signal;
 
   const readable = new ReadableStream({
     async start(controller) {
+      let closed = false;
+      const safeClose = () => {
+        if (closed) return;
+        closed = true;
+        try {
+          controller.close();
+        } catch {
+          // ignore
+        }
+      };
       try {
         for await (const part of stream) {
+          if (abortSignal.aborted) {
+            scheduleAppLog(
+              AppLogScope.opening,
+              "info",
+              "opening_sse_aborted_by_client",
+              { userId: session.user.id, entryId: entry.id, threadId },
+              { correlationId },
+            );
+            safeClose();
+            return;
+          }
           const delta = part.choices[0]?.delta?.content ?? "";
           if (delta) {
             assistantText += delta;
@@ -435,7 +454,7 @@ export async function POST(req: NextRequest) {
           });
         })().catch(() => {});
 
-        controller.close();
+        safeClose();
       } catch (e) {
         scheduleAppLog(
           AppLogScope.opening,
@@ -465,6 +484,7 @@ export async function POST(req: NextRequest) {
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
     },
   });
 }
