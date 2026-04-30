@@ -350,6 +350,28 @@ type DryRun = {
   targetHasEntries: boolean;
   targetSettingsKeys: string[];
   conflictingSettingsKeys: string[];
+  importPlan: {
+    targetExistingDailyCount: number;
+    bundleDailyCount: number;
+    importableDailyCount: number;
+    skippedDailyDueToDateOverlap: number;
+    dropsBundledGlobalSnapshot: boolean;
+    canImport: boolean;
+  };
+  importPreviewCounts: {
+    dailyEntries: number;
+    images: number;
+    chatMessages: number;
+    appLocalCalendars: number;
+    googleCalendarEvents: number;
+    tags: number;
+    memoryLongTerm: number;
+    memoryShortTerm: number;
+    agentMemory: number;
+    usageCounters: number;
+    skippedE2eeEntries: number;
+  };
+  importPreviewBlobs: { count: number; totalBytes: number };
 };
 
 function ImportFlow({ onClose }: { onClose: () => void }) {
@@ -500,11 +522,11 @@ function ImportFlow({ onClose }: { onClose: () => void }) {
           <button
             type="button"
             onClick={() => void applyImport()}
-            disabled={dryRun.targetHasEntries}
+            disabled={!dryRun.importPlan.canImport}
             className="rounded-lg bg-emerald-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-600 disabled:opacity-50"
             title={
-              dryRun.targetHasEntries
-                ? "このアカウントにはすでに日記があるためインポートできません"
+              !dryRun.importPlan.canImport
+                ? "取り込める日記がありません（バンドル内の日付がすべて既存日記と重なっています）"
                 : ""
             }
           >
@@ -598,7 +620,9 @@ function ImportReviewStep(props: {
   onChoose: (key: string, value: "source" | "target") => void;
 }) {
   const { dryRun, chosen, onChoose } = props;
-  const c = dryRun.summary.counts;
+  const c = dryRun.importPreviewCounts;
+  const bundleCounts = dryRun.summary.counts;
+  const plan = dryRun.importPlan;
 
   const stats = useMemo(
     () =>
@@ -628,21 +652,37 @@ function ImportReviewStep(props: {
           発行日時: {new Date(dryRun.summary.exportedAt).toLocaleString()}
         </p>
         <p className="text-zinc-500">
-          画像: {dryRun.summary.blobs.count}件 / 合計 {formatBytes(dryRun.summary.blobs.totalBytes)}
+          画像: {dryRun.importPreviewBlobs.count}件 / 合計{" "}
+          {formatBytes(dryRun.importPreviewBlobs.totalBytes)}
         </p>
-        {dryRun.summary.counts.skippedE2eeEntries > 0 && (
+        {bundleCounts.skippedE2eeEntries > 0 && (
           <p className="mt-1 text-amber-700 dark:text-amber-300">
-            {dryRun.summary.counts.skippedE2eeEntries} 件の E2EE 暗号化日記は引き継ぎ対象外（v1の制限）です。
+            {bundleCounts.skippedE2eeEntries} 件の E2EE 暗号化日記は引き継ぎ対象外（v1の制限）です。
           </p>
         )}
       </div>
 
-      {dryRun.targetHasEntries ? (
+      {!plan.canImport ? (
         <div className="rounded-lg bg-red-50 p-3 text-xs text-red-800 dark:bg-red-900/20 dark:text-red-200">
-          このアカウントにはすでに日記が保存されています。
-          安全のため、まっさらなアカウントへのインポートのみ受け付けます。
-          <br />
-          別アカウントでログインするか、サポートへお問い合わせください。
+          バンドル内の日記の日付が、すべてこのアカウントの既存日記と重なっています。取り込める日記がありません。
+        </div>
+      ) : plan.skippedDailyDueToDateOverlap > 0 ? (
+        <div className="space-y-2">
+          <div className="rounded-lg bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-900/20 dark:text-amber-200">
+            すでに日記がある日付はバンドル側をスキップし、空いている日付だけを追加します（
+            {plan.skippedDailyDueToDateOverlap} 日分スキップ、{plan.importableDailyCount}{" "}
+            日分を新規取り込み）。
+          </div>
+          {plan.dropsBundledGlobalSnapshot && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50/80 p-3 text-xs text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
+              日付の一部だけ取り込むため、バンドルに含まれるアプリ内カレンダー・Google
+              カレンダーのキャッシュ・使用量カウンター・エージェント記憶はこのインポートでは載せません（既存アカウントの状態を優先します）。
+            </div>
+          )}
+        </div>
+      ) : dryRun.targetHasEntries ? (
+        <div className="rounded-lg bg-sky-50 p-3 text-xs text-sky-950 dark:bg-sky-950/40 dark:text-sky-100">
+          このアカウントには既に日記がありますが、バンドル内の日付と重なりがないため、そのまま追加で取り込めます。
         </div>
       ) : (
         <div className="rounded-lg bg-emerald-50 p-3 text-xs text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-200">
@@ -654,6 +694,12 @@ function ImportReviewStep(props: {
         <h3 className="mb-1 text-xs font-medium text-zinc-700 dark:text-zinc-300">
           取り込まれる件数（概算）
         </h3>
+        {bundleCounts.dailyEntries !== c.dailyEntries && (
+          <p className="mb-2 text-xs text-zinc-500">
+            バンドル全体は日記 {bundleCounts.dailyEntries} 日分ですが、上記ルールで実際に作成されるのは{" "}
+            {c.dailyEntries} 日分です。
+          </p>
+        )}
         <ul className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
           {stats.map(([label, n]) => (
             <li key={label} className="flex justify-between">

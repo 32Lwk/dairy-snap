@@ -249,30 +249,51 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const { stream, agentsUsed, personaInstructions, mbtiHint, orchestratorModel, correlationId } =
-    await runOrchestrator({
-      userId: session.user.id,
-      entryId: entry.id,
-      entryDateYmd: entry.entryDateYmd,
-      userMessage: parsed.data.message,
-      historyMessages,
-      isOpening: false,
-      encryptionMode: entry.encryptionMode,
-      currentBody: entry.body,
-      reflectiveUserTurnIncludingCurrent,
-      preferMiniOrchestrator,
-      clockNow: orchestratorNow,
-      threadId: thread.id,
-      extraSystemAppend,
-    });
-
   const encoder = new TextEncoder();
   let assistantText = "";
   let assistantDisplayed = "";
+  /** runOrchestrator 完了後にセット（SSE 内エラーログ突合用） */
+  let streamCorrelationId: string | undefined;
 
   const readable = new ReadableStream({
     async start(controller) {
       try {
+        // PERF: runOrchestrator はツールラウンドで十数秒かかることがある。完了待ちの間、
+        // HTTP レスポンスをブロックしないようストリーム開始後に実行し、早期フィードバックを送る。
+        controller.enqueue(
+          encoder.encode(
+            `data: ${JSON.stringify({
+              phase: "preparing",
+              hintJa: "カレンダーや記憶を参照している場合、30秒ほどかかることがあります。",
+            })}\n\n`,
+          ),
+        );
+
+        const {
+          stream,
+          agentsUsed,
+          personaInstructions,
+          mbtiHint,
+          orchestratorModel,
+          correlationId,
+        } = await runOrchestrator({
+          userId: session.user.id,
+          entryId: entry.id,
+          entryDateYmd: entry.entryDateYmd,
+          userMessage: parsed.data.message,
+          historyMessages,
+          isOpening: false,
+          encryptionMode: entry.encryptionMode,
+          currentBody: entry.body,
+          reflectiveUserTurnIncludingCurrent,
+          preferMiniOrchestrator,
+          clockNow: orchestratorNow,
+          threadId: thread.id,
+          extraSystemAppend,
+        });
+
+        streamCorrelationId = correlationId;
+
         for await (const part of stream) {
           const delta = part.choices[0]?.delta?.content ?? "";
           if (delta) {
@@ -471,7 +492,7 @@ export async function POST(req: NextRequest) {
             entryId: entry.id,
             err: e instanceof Error ? e.message : String(e).slice(0, 500),
           },
-          { correlationId },
+          streamCorrelationId ? { correlationId: streamCorrelationId } : undefined,
         );
         controller.error(e);
       }

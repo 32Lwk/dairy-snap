@@ -359,6 +359,7 @@ function UserMessageBubble({
 function AssistantBubble({
   content,
   streaming,
+  subNote,
   settingsChangeTip,
   onUndoSettings,
   undoBusy,
@@ -366,6 +367,8 @@ function AssistantBubble({
 }: {
   content: string;
   streaming?: boolean;
+  /** 待機中など、本文の下に控えめに表示する補足 */
+  subNote?: string;
   settingsChangeTip?: SettingsChangeTip;
   onUndoSettings?: () => void;
   undoBusy?: boolean;
@@ -377,6 +380,9 @@ function AssistantBubble({
       <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">AI</span>
       <div className="max-w-[min(100%,28rem)] rounded-2xl rounded-bl-md border border-zinc-200/80 bg-white px-3 py-2 text-[13px] leading-snug text-zinc-900 shadow-sm sm:px-3.5 sm:py-2.5 sm:text-sm sm:leading-relaxed dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100">
         <p className="whitespace-pre-wrap">{shown}</p>
+        {subNote ? (
+          <p className="mt-1.5 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">{subNote}</p>
+        ) : null}
         {streaming && <span className="ml-0.5 inline-block h-3 w-0.5 animate-pulse bg-emerald-500 align-middle" />}
       </div>
       {!streaming && settingsChangeTip ? (
@@ -450,6 +456,8 @@ export function EntryChat({
   const [tid, setTid] = useState<string | null>(initialThreadId);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState("");
+  /** サーバー SSE `phase: preparing` の hintJa（待機バブル用） */
+  const [assistantWaitHint, setAssistantWaitHint] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [securityBannerDismissed, setSecurityBannerDismissed] = useState(false);
@@ -896,12 +904,13 @@ export function EntryChat({
     setBusy(true);
     setInput("");
     setStreaming("");
+    setAssistantWaitHint(null);
 
     const optimisticUserId = crypto.randomUUID();
     setMessages((prev) => [...prev, { id: optimisticUserId, role: "user", content: text }]);
 
     try {
-      const res = await fetch("/api/ai/chat", {
+      const res = await fetch("/api/ai/orchestrator/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ entryId, message: text, clientNow: new Date().toISOString() }),
@@ -911,6 +920,7 @@ export function EntryChat({
         setError(typeof data.error === "string" ? data.error : "チャットに失敗しました");
         setMessages((m) => m.filter((x) => x.id !== optimisticUserId));
         setInput(text);
+        setAssistantWaitHint(null);
         setBusy(false);
         return;
       }
@@ -938,6 +948,8 @@ export function EntryChat({
           const payload = line.slice(6);
           try {
             const json = JSON.parse(payload) as {
+              phase?: string;
+              hintJa?: string;
               delta?: string;
               done?: boolean;
               threadId?: string;
@@ -950,7 +962,11 @@ export function EntryChat({
               openTimetableEditorAfterAck?: boolean;
               pendingSettingsSummaryJa?: string;
             };
+            if (json.phase === "preparing" && typeof json.hintJa === "string" && json.hintJa.trim()) {
+              setAssistantWaitHint(json.hintJa.trim());
+            }
             if (json.delta) {
+              setAssistantWaitHint(null);
               assistant += json.delta;
               setStreaming(assistant);
             }
@@ -1006,6 +1022,7 @@ export function EntryChat({
         ];
       });
       setStreaming("");
+      setAssistantWaitHint(null);
       onJournalDraftContextRefresh?.();
       if (journalDraftPlacement !== "none") {
         setJournalDraftPanelRefreshKey((k) => k + 1);
@@ -1026,8 +1043,10 @@ export function EntryChat({
       setError("通信に失敗しました。接続やログイン状態を確認してください。");
       setMessages((m) => m.filter((x) => x.id !== optimisticUserId));
       setInput(text);
+      setAssistantWaitHint(null);
     } finally {
       setBusy(false);
+      setAssistantWaitHint(null);
     }
   }
 
@@ -1110,7 +1129,20 @@ export function EntryChat({
               />
             ),
           )}
-          {streaming && <AssistantBubble content={streaming} streaming />}
+          {busy &&
+            !streaming &&
+            messages.length > 0 &&
+            messages[messages.length - 1]?.role === "user" && (
+              <AssistantBubble
+                content="応答を準備しています…"
+                subNote={
+                  assistantWaitHint ??
+                  "カレンダー・天気・記憶などを参照している間、返信が始まるまで数十秒かかることがあります。"
+                }
+                streaming
+              />
+            )}
+          {streaming ? <AssistantBubble content={streaming} streaming /> : null}
         </div>
 
         <div className="shrink-0 border-t border-zinc-100 bg-zinc-50/95 p-2 sm:p-2.5 lg:p-3 dark:border-zinc-800 dark:bg-zinc-900/90">

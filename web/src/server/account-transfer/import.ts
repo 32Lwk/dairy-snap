@@ -12,15 +12,156 @@ import {
 import { prisma } from "@/server/db";
 import { getObjectStorage } from "@/server/storage/local";
 
+export type ImportPlan = {
+  targetExistingDailyCount: number;
+  bundleDailyCount: number;
+  /** 実際に新規作成される日記（日付がターゲットに未登録のもの） */
+  importableDailyCount: number;
+  /** 同一日付が既にあるためスキップされるバンドル内の日記 */
+  skippedDailyDueToDateOverlap: number;
+  /**
+   * true のとき、バンドル内のアプリ／Google カレンダー・使用量・エージェント記憶は取り込まない。
+   * （日付重複がある部分インポート時。ユーザー環境のスナップショットと矛盾しないようにする）
+   */
+  dropsBundledGlobalSnapshot: boolean;
+  /** 検証画面でインポート実行が可能か */
+  canImport: boolean;
+};
+
+/** フィルタ後に実際に DB へ入る件数のプレビュー（dry run / UI 用） */
+export type ImportPreviewCounts = {
+  dailyEntries: number;
+  images: number;
+  chatMessages: number;
+  appLocalCalendars: number;
+  googleCalendarEvents: number;
+  tags: number;
+  memoryLongTerm: number;
+  memoryShortTerm: number;
+  agentMemory: number;
+  usageCounters: number;
+  skippedE2eeEntries: number;
+};
+
 export type DryRunResult = {
   ok: true;
   summary: BundleSummary;
-  /** ターゲットに既に DailyEntry が1件でもあれば true（インポートは 409） */
+  /** ターゲットに既に DailyEntry が1件でもあれば true */
   targetHasEntries: boolean;
   targetSettingsKeys: string[];
   /** ソースとターゲット両方に存在するトップレベル設定キー（ユーザーに選ばせる対象） */
   conflictingSettingsKeys: string[];
+  importPlan: ImportPlan;
+  importPreviewCounts: ImportPreviewCounts;
+  importPreviewBlobs: { count: number; totalBytes: number };
 };
+
+function buildImportPlan(
+  bundleDailyCount: number,
+  targetExistingDailyCount: number,
+  existingDates: Set<string>,
+  data: BundleData,
+): ImportPlan {
+  const importableDailyCount = data.dailyEntries.filter(
+    (e) => !existingDates.has(e.entryDateYmd),
+  ).length;
+  const skippedDailyDueToDateOverlap = bundleDailyCount - importableDailyCount;
+  const hasDateOverlap = skippedDailyDueToDateOverlap > 0;
+  const dropsBundledGlobalSnapshot =
+    targetExistingDailyCount > 0 && hasDateOverlap;
+  const canImport =
+    importableDailyCount > 0 ||
+    (targetExistingDailyCount === 0 && bundleDailyCount > 0) ||
+    (targetExistingDailyCount > 0 && !hasDateOverlap && bundleDailyCount > 0);
+
+  return {
+    targetExistingDailyCount,
+    bundleDailyCount,
+    importableDailyCount,
+    skippedDailyDueToDateOverlap,
+    dropsBundledGlobalSnapshot,
+    canImport,
+  };
+}
+
+/**
+ * 日付がターゲットと重なる日記だけを落とし、グローバルスナップショット系は空にする。
+ */
+function filterBundleForDateOverlapImport(
+  data: BundleData,
+  existingDates: Set<string>,
+): BundleData {
+  const allowedEntryIds = new Set(
+    data.dailyEntries.filter((e) => !existingDates.has(e.entryDateYmd)).map((e) => e.id),
+  );
+
+  const dailyEntries = data.dailyEntries.filter((e) => allowedEntryIds.has(e.id));
+  const entryAppendEvents = data.entryAppendEvents.filter((r) =>
+    allowedEntryIds.has(r.entryId),
+  );
+  const images = data.images.filter((r) => allowedEntryIds.has(r.entryId));
+  const googlePhotoSelections = data.googlePhotoSelections.filter(
+    (r) =>
+      (r.entryId != null && allowedEntryIds.has(r.entryId)) ||
+      (r.entryId == null && !existingDates.has(r.entryDateYmd)),
+  );
+  const entryTags = data.entryTags.filter((r) => allowedEntryIds.has(r.entryId));
+  const tagIdsNeeded = new Set(entryTags.map((r) => r.tagId));
+  const tags = data.tags.filter((t) => tagIdsNeeded.has(t.id));
+
+  const chatThreads = data.chatThreads.filter((r) => allowedEntryIds.has(r.entryId));
+  const threadIds = new Set(chatThreads.map((t) => t.id));
+  const chatMessages = data.chatMessages.filter((m) => threadIds.has(m.threadId));
+
+  const aiArtifacts = data.aiArtifacts.filter(
+    (r) => !r.entryId || allowedEntryIds.has(r.entryId),
+  );
+
+  const memoryShortTerm = data.memoryShortTerm.filter((r) =>
+    allowedEntryIds.has(r.entryId),
+  );
+  const memoryLongTerm = data.memoryLongTerm.filter(
+    (r) => r.sourceEntryId != null && allowedEntryIds.has(r.sourceEntryId),
+  );
+
+  return {
+    ...data,
+    dailyEntries,
+    entryAppendEvents,
+    images,
+    googlePhotoSelections,
+    tags,
+    entryTags,
+    googleCalendarEventCache: [],
+    googleCalendarSyncState: [],
+    appLocalCalendars: [],
+    appLocalCalendarEvents: [],
+    chatThreads,
+    chatMessages,
+    aiArtifacts,
+    memoryLongTerm,
+    memoryShortTerm,
+    agentMemory: [],
+    usageCounters: [],
+  };
+}
+
+function prepareDataForApply(
+  data: BundleData,
+  existingDates: Set<string>,
+  targetExistingDailyCount: number,
+): BundleData {
+  if (targetExistingDailyCount === 0) {
+    return data;
+  }
+  const hasDateOverlap = data.dailyEntries.some((e) =>
+    existingDates.has(e.entryDateYmd),
+  );
+  if (!hasDateOverlap) {
+    return data;
+  }
+  return filterBundleForDateOverlapImport(data, existingDates);
+}
 
 /** バンドルを復号→件数サマリ＋ターゲットの状態を返す（DB 書き込みなし） */
 export async function dryRunImport(
@@ -46,19 +187,63 @@ export async function dryRunImport(
   const targetSettingsKeys = Object.keys(targetSettingsObj);
   const conflicting = summary.settingsKeys.filter((k) => targetSettingsKeys.includes(k));
 
-  const entryCount = await prisma.dailyEntry.count({ where: { userId: targetUserId } });
+  const existingRows = await prisma.dailyEntry.findMany({
+    where: { userId: targetUserId },
+    select: { entryDateYmd: true },
+  });
+  const existingDates = new Set(existingRows.map((r) => r.entryDateYmd));
+  const targetExistingDailyCount = existingRows.length;
+  const bundleDailyCount = decrypted.data.dailyEntries.length;
+
+  const importPlan = buildImportPlan(
+    bundleDailyCount,
+    targetExistingDailyCount,
+    existingDates,
+    decrypted.data,
+  );
+
+  const preparedPreview = prepareDataForApply(
+    decrypted.data,
+    existingDates,
+    targetExistingDailyCount,
+  );
+  const importPreviewCounts: ImportPreviewCounts = {
+    dailyEntries: preparedPreview.dailyEntries.length,
+    images: preparedPreview.images.length,
+    chatMessages: preparedPreview.chatMessages.length,
+    appLocalCalendars: preparedPreview.appLocalCalendars.length,
+    googleCalendarEvents: preparedPreview.googleCalendarEventCache.length,
+    tags: preparedPreview.tags.length,
+    memoryLongTerm: preparedPreview.memoryLongTerm.length,
+    memoryShortTerm: preparedPreview.memoryShortTerm.length,
+    agentMemory: preparedPreview.agentMemory.length,
+    usageCounters: preparedPreview.usageCounters.length,
+    skippedE2eeEntries: decrypted.data.skippedE2eeEntries,
+  };
+
+  let importPreviewBlobsTotalBytes = 0;
+  for (const img of preparedPreview.images) {
+    const blob = decrypted.blobs.get(img.storageKey);
+    if (blob) importPreviewBlobsTotalBytes += blob.bytes.byteLength;
+  }
 
   return {
     ok: true,
     summary,
-    targetHasEntries: entryCount > 0,
+    targetHasEntries: targetExistingDailyCount > 0,
     targetSettingsKeys,
     conflictingSettingsKeys: conflicting,
+    importPlan,
+    importPreviewCounts,
+    importPreviewBlobs: {
+      count: preparedPreview.images.length,
+      totalBytes: importPreviewBlobsTotalBytes,
+    },
   };
 }
 
 export type ImportConflictError = {
-  kind: "target_has_entries";
+  kind: "target_has_entries" | "all_entries_date_overlap";
   message: string;
 };
 
@@ -70,6 +255,9 @@ export type ImportApplyResult =
  * インポートを実行。
  * - settingsSourceKeys: バンドル(ソース)から採用するトップレベル設定キー一覧。
  *   それ以外はターゲットの値を維持する。
+ *
+ * 既に日記があるアカウントでも、バンドル内の日付がすべて埋まっているわけでなければ取り込み可能。
+ * 日付が重なる日はスキップし、カレンダーキャッシュ等のスナップショットは部分取り込み時は載せない。
  */
 export async function applyImport(
   bundleJwe: string,
@@ -80,14 +268,22 @@ export async function applyImport(
   const decrypted = await decryptBundle(bundleJwe, passphrase);
   const data = decrypted.data;
 
-  const entryCount = await prisma.dailyEntry.count({ where: { userId: targetUserId } });
-  if (entryCount > 0) {
+  const existingRows = await prisma.dailyEntry.findMany({
+    where: { userId: targetUserId },
+    select: { entryDateYmd: true },
+  });
+  const existingDates = new Set(existingRows.map((r) => r.entryDateYmd));
+  const targetExistingDailyCount = existingRows.length;
+
+  const prepared = prepareDataForApply(data, existingDates, targetExistingDailyCount);
+
+  if (data.dailyEntries.length > 0 && prepared.dailyEntries.length === 0) {
     return {
       ok: false,
       error: {
-        kind: "target_has_entries",
+        kind: "all_entries_date_overlap",
         message:
-          "このアカウントにはすでに日記が保存されているため、衝突を避けるためインポートを中止しました。インポートはまっさらな状態のアカウントへのみ可能です。",
+          "バンドル内の日記の日付が、すべてこのアカウントの既存日記と重なっています。重複しない日付のデータがあるバンドルを使うか、別アカウントでお試しください。",
       },
     };
   }
@@ -96,17 +292,32 @@ export async function applyImport(
     (s, b) => s + b.bytes.byteLength,
     0,
   );
-  const summary = summarizeBundleData(data, blobsTotalBytes);
+  const summary = summarizeBundleData(prepared, blobsTotalBytes);
 
-  const idMap = buildIdMap(data);
+  const idMap = buildIdMap(prepared);
 
-  const stagedKeys = await stageBlobs(decrypted, idMap, targetUserId);
+  const existingTags = await prisma.tag.findMany({
+    where: { userId: targetUserId },
+    select: { id: true, name: true },
+  });
+  const tagNameToId = new Map(existingTags.map((t) => [t.name, t.id]));
+  for (const t of prepared.tags) {
+    const hit = tagNameToId.get(t.name);
+    if (hit) idMap.tags.set(t.id, hit);
+  }
+  const tagsToCreate = prepared.tags.filter((t) => !tagNameToId.has(t.name));
+
+  const stagedKeys = await stageBlobs(decrypted, idMap, targetUserId, prepared.images);
+
+  const skipDuplicateGlobals = targetExistingDailyCount > 0;
 
   try {
     await prisma.$transaction(
       async (tx) => {
-        await applyUserSettings(tx, targetUserId, data, settingsSourceKeys);
-        await insertAllRows(tx, targetUserId, data, idMap);
+        await applyUserSettings(tx, targetUserId, prepared, settingsSourceKeys);
+        await insertAllRows(tx, targetUserId, prepared, idMap, tagsToCreate, {
+          skipDuplicateGlobals,
+        });
       },
       { timeout: 60_000, maxWait: 10_000 },
     );
@@ -174,10 +385,11 @@ async function stageBlobs(
   decrypted: DecryptedBundle,
   idMap: IdMap,
   targetUserId: string,
+  images: BundleData["images"],
 ): Promise<string[]> {
   const storage = getObjectStorage();
   const stagedKeys: string[] = [];
-  for (const img of decrypted.data.images) {
+  for (const img of images) {
     const newImageId = idMap.images.get(img.id);
     if (!newImageId) continue;
     const blob = decrypted.blobs.get(img.storageKey);
@@ -239,15 +451,19 @@ async function applyUserSettings(
   });
 }
 
+type InsertOptions = { skipDuplicateGlobals: boolean };
+
 async function insertAllRows(
   tx: Tx,
   targetUserId: string,
   data: BundleData,
   idMap: IdMap,
+  tagsToCreate: BundleData["tags"],
+  opts: InsertOptions,
 ) {
-  if (data.tags.length > 0) {
+  if (tagsToCreate.length > 0) {
     await tx.tag.createMany({
-      data: data.tags.map((r) => ({
+      data: tagsToCreate.map((r) => ({
         id: idMap.tags.get(r.id)!,
         userId: targetUserId,
         name: r.name,
@@ -345,6 +561,7 @@ async function insertAllRows(
         createdAt: new Date(r.createdAt),
         updatedAt: new Date(r.updatedAt),
       })),
+      skipDuplicates: opts.skipDuplicateGlobals,
     });
   }
 
@@ -386,6 +603,7 @@ async function insertAllRows(
         createdAt: new Date(r.createdAt),
         updatedAt: new Date(r.updatedAt),
       })),
+      skipDuplicates: opts.skipDuplicateGlobals,
     });
   }
 
@@ -399,6 +617,7 @@ async function insertAllRows(
         createdAt: new Date(r.createdAt),
         updatedAt: new Date(r.updatedAt),
       })),
+      skipDuplicates: opts.skipDuplicateGlobals,
     });
   }
 
@@ -540,6 +759,7 @@ async function insertAllRows(
         createdAt: new Date(r.createdAt),
         updatedAt: new Date(r.updatedAt),
       })),
+      skipDuplicates: opts.skipDuplicateGlobals,
     });
   }
 
@@ -558,6 +778,7 @@ async function insertAllRows(
         createdAt: new Date(r.createdAt),
         updatedAt: new Date(r.updatedAt),
       })),
+      skipDuplicates: opts.skipDuplicateGlobals,
     });
   }
 }
