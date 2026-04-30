@@ -882,6 +882,11 @@ git log -1 --oneline origin/main
 - **テスト**: `tokyo-calendar-interval.test.ts`、`jp-holiday.test.ts`、`app-log.test.ts`。`vitest.config.ts` で `src/**/*.test.ts`、`@` エイリアスを設定。
 - **`calendar-opening-infer-event.ts`**: ルール・優先順位・カレンダー既定カテゴリから 1 イベントの開口カテゴリを決定（UI の `inferCategoryForEvent` と同等ロジックのサーバー側）。
 
+### 作業ツリー追記（未コミット差分）
+
+- `web/src/app/api/ai/chat/opening/route.ts`: `/api/ai/orchestrator/opening` への転送で **`req.headers` をそのまま渡さず**、必要ヘッダーをホワイトリストで再構築するように変更（環境によって禁止ヘッダーで fetch が落ちるケースの回避）。転送失敗時は **502 JSON** を返す。
+- `web/docker-entrypoint.sh`: `DATABASE_URL` 未設定時に **マイグレーションをスキップして起動**（従来はエラー終了）。Cloud Run 等で DB を使わない起動形態を許容。
+
 ---
 
 ## サマリー表（期間全体）
