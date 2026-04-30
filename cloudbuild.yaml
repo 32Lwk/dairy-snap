@@ -1,18 +1,46 @@
+substitutions:
+  _RUN_REGION: "asia-northeast2"
+  _RUN_SERVICE: "daily-snap"
+  # Artifact Registry の Docker リポジトリ名（事前作成が必要）
+  _AR_REPO: "daily-snap"
+
 steps:
-  - name: "gcr.io/cloud-builders/npm"
-    dir: "web"
-    entrypoint: "bash"
-    env:
-      - "SKIP_ENV_VALIDATION=1"
-      - "NODE_OPTIONS=--max-old-space-size=4096"
-      # Prisma generate が参照するため、ビルド専用のダミー URL を入れる（接続はしない）
-      - "DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/postgres?schema=public"
+  # コンテナビルド（ルートの Dockerfile を使用。web/ を同梱して Next.js をビルド）
+  - name: "gcr.io/cloud-builders/docker"
     args:
-      - "-lc"
-      - |
-        npm ci
-        npx prisma generate
-        npm run build
+      [
+        "build",
+        "-t",
+        "${_RUN_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_RUN_SERVICE}:$SHORT_SHA",
+        ".",
+      ]
+
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      [
+        "push",
+        "${_RUN_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_RUN_SERVICE}:$SHORT_SHA",
+      ]
+
+  # Cloud Run へデプロイ
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
+    args:
+      [
+        "gcloud",
+        "run",
+        "deploy",
+        "${_RUN_SERVICE}",
+        "--image",
+        "${_RUN_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_RUN_SERVICE}:$SHORT_SHA",
+        "--region",
+        "${_RUN_REGION}",
+        "--platform",
+        "managed",
+        "--quiet",
+      ]
+
+images:
+  - "${_RUN_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_RUN_SERVICE}:$SHORT_SHA"
 
 options:
   logging: CLOUD_LOGGING_ONLY
