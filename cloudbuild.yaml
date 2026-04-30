@@ -1,17 +1,34 @@
 substitutions:
-  _RUN_REGION: "asia-northeast2"
-  _RUN_SERVICE: "daily-snap"
+  # NOTE: `snap.yutok.dev` が向いている Cloud Run の service / region に合わせる。
+  # Cloud Run リクエストログ上は `service_name=dairy-snap`, `location=asia-northeast1`。
+  _RUN_REGION: "asia-northeast1"
+  _RUN_SERVICE: "dairy-snap"
   # Artifact Registry の Docker リポジトリ名（事前作成が必要）
   _AR_REPO: "daily-snap"
+  # Artifact Registry 上のイメージ名（Cloud Run service 名と一致しない場合がある）
+  _IMAGE_NAME: "daily-snap"
 
 steps:
+  # 直前のイメージを pull してビルドキャッシュに使う（初回以外を大幅に高速化）
+  - name: "gcr.io/cloud-builders/docker"
+    entrypoint: "bash"
+    args:
+      [
+        "-lc",
+        "docker pull ${_RUN_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:latest || true",
+      ]
+
   # コンテナビルド（ルートの Dockerfile を使用。web/ を同梱して Next.js をビルド）
   - name: "gcr.io/cloud-builders/docker"
     args:
       [
         "build",
+        "--cache-from",
+        "${_RUN_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:latest",
         "-t",
-        "${_RUN_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_RUN_SERVICE}:$SHORT_SHA",
+        "${_RUN_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:latest",
+        "-t",
+        "${_RUN_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:$SHORT_SHA",
         ".",
       ]
 
@@ -19,7 +36,14 @@ steps:
     args:
       [
         "push",
-        "${_RUN_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_RUN_SERVICE}:$SHORT_SHA",
+        "${_RUN_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:$SHORT_SHA",
+      ]
+
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      [
+        "push",
+        "${_RUN_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:latest",
       ]
 
   # Cloud Run へデプロイ
@@ -31,7 +55,7 @@ steps:
         "deploy",
         "${_RUN_SERVICE}",
         "--image",
-        "${_RUN_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_RUN_SERVICE}:$SHORT_SHA",
+        "${_RUN_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:$SHORT_SHA",
         "--region",
         "${_RUN_REGION}",
         "--platform",
@@ -40,7 +64,8 @@ steps:
       ]
 
 images:
-  - "${_RUN_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_RUN_SERVICE}:$SHORT_SHA"
+  - "${_RUN_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:$SHORT_SHA"
+  - "${_RUN_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:latest"
 
 options:
   logging: CLOUD_LOGGING_ONLY

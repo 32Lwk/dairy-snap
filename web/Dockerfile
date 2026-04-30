@@ -27,8 +27,10 @@ FROM base AS migrate-tool
 WORKDIR /migrate
 COPY prisma ./prisma
 COPY prisma.config.ts ./
-RUN echo '{"private":true,"dependencies":{"prisma":"7.6.0","dotenv":"17.3.1"}}' > package.json \
-  && npm install
+# 依存の再インストールは避け、deps の node_modules を流用する（初回ビルドの重さを大きく減らす）
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/package.json ./package.json
+COPY --from=deps /app/package-lock.json ./package-lock.json
 
 FROM base AS runner
 RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates \
