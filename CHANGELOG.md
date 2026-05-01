@@ -2,8 +2,8 @@
 
 本リポジトリの変更を **日付（AuthorDate）** 単位で整理したドキュメントです。README とは別ファイルとして保守します。
 
-**最終更新**: 2026-04-30  
-**対象期間**: 2026-04-02（初期コミット）〜 2026-04-30（作業ツリー追記を含む）
+**最終更新**: 2026-05-01  
+**対象期間**: 2026-04-02（初期コミット）〜 2026-05-01
 
 ---
 
@@ -45,6 +45,7 @@ git log -1 --oneline origin/main
 | 2026-04-21〜27 | なし | [§ 04-21〜27](#2026-04-21火-2026-04-27月) |
 | 2026-04-28 | あり | [§ 04-28](#2026-04-28火) |
 | 2026-04-30 | あり | [§ 04-30](#2026-04-30木) |
+| 2026-05-01 | あり | [§ 05-01](#2026-05-01金) |
 
 ---
 
@@ -806,6 +807,10 @@ git log -1 --oneline origin/main
 | `3a8a28a` | feat(web): chat-driven settings patch + user-day boundary |
 | `52235b5` | feat(web): holiday guard + faster streaming post-processing |
 | `2d0beb4` | feat(web): app logging, vitest calendar tests, timetable editor from chat |
+| `b8bd296` | docs(changelog): 2026-04-30 バッチのコミットハッシュを記載 |
+| `2fa1f98` | feat(web): account transfer bundle import/export |
+| `fb21dfe` | fix(web): harden opening proxy headers and allow no-DB container start |
+| `44e81b0` | fix(web): harden opening SSE response handling |
 
 ### 概要（本日の変更の全体像）
 
@@ -823,7 +828,8 @@ git log -1 --oneline origin/main
 12. **開口カテゴリ推定のサーバー共通化** — `calendar-opening-infer-event.ts` でクライアントと同ルールの `inferCalendarEventCategory` をサーバーでも利用（ログ・エージェント・開口デバッグの一貫性）。
 13. **認証・埋め込み・セキュリティ周辺の堅牢化** — NextAuth ルートを try/catch でラップし JSON エラーを返す（空ボディ等での SessionProvider の ClientFetchError 抑制）。`deleteEmbeddingsForTargets` でチャット一括削除時のベクトル削除を一括化。セキュリティレビュー投入／ジョブにログや調整を追記。
 14. **カレンダー取得と UI** — 日次フェッチの Prisma 条件を東京暦日の半開区間に揃える変更に追従。`calendar-client` 等の UI 調整。`entry-temporal-context` の微修正。
-15. **アカウント移行（エクスポート/インポート）と静的アセット配信** — 設定画面から暗号化バンドル（`.dsbundle`）をエクスポート／インポートする UI と API を追加。未ログインでも `public/` の静的ファイル（`/brand/*` や画像・フォント等）が `proxy` によって `/login` へリダイレクトされないよう例外を追加。
+15. **アカウント移行（エクスポート/インポート）と静的アセット配信** — 設定画面から暗号化バンドル（`.dsbundle`）をエクスポート／インポートする UI と API を追加（`2fa1f98`）。未ログインでも `public/` の静的ファイル（`/brand/*` や画像・フォント等）が `proxy` によって `/login` へリダイレクトされないよう例外を追加。
+16. **開口プロキシ／SSE の堅牢化（同日後半）** — `/api/ai/chat/opening` からオーケストレーターへの内部 `fetch` で **禁止ヘッダーによる失敗を避ける** ホワイトリスト再構築（`fb21dfe`）。開口 API 側の **SSE 応答ハンドリング** を強化（`44e81b0`）。以前 CHANGELOG に「作業ツリー追記」として書いていた内容はこれらのコミットで本線に取り込まれた。
 
 ### データベース（Prisma / マイグレーション）
 
@@ -882,10 +888,52 @@ git log -1 --oneline origin/main
 - **テスト**: `tokyo-calendar-interval.test.ts`、`jp-holiday.test.ts`、`app-log.test.ts`。`vitest.config.ts` で `src/**/*.test.ts`、`@` エイリアスを設定。
 - **`calendar-opening-infer-event.ts`**: ルール・優先順位・カレンダー既定カテゴリから 1 イベントの開口カテゴリを決定（UI の `inferCategoryForEvent` と同等ロジックのサーバー側）。
 
-### 作業ツリー追記（未コミット差分）
+### 同日後半のコミット（移行・開口まわり）
 
-- `web/src/app/api/ai/chat/opening/route.ts`: `/api/ai/orchestrator/opening` への転送で **`req.headers` をそのまま渡さず**、必要ヘッダーをホワイトリストで再構築するように変更（環境によって禁止ヘッダーで fetch が落ちるケースの回避）。転送失敗時は **502 JSON** を返す。
-- `web/docker-entrypoint.sh`: `DATABASE_URL` 未設定時に **マイグレーションをスキップして起動**（従来はエラー終了）。Cloud Run 等で DB を使わない起動形態を許容。
+- **`b8bd296`**: 本 CHANGELOG の 04-30 節に、実際に積まれたコミットハッシュを追記するメンテナンスコミット。
+- **`2fa1f98`**: 暗号化バンドルの **エクスポートジョブ**（開始・状態・ダウンロード）と **インポート**（dry-run 含む）、設定画面からの UI、サーバー側 `account-transfer/*`（コーデック・ジョブストア・レート制限等）の初版。
+- **`fb21dfe` / `44e81b0`**: 上記「16. 開口プロキシ／SSE」のとおり。
+
+---
+
+## 2026-05-01（金）
+
+### コミット一覧（時系列・古いものが上）
+
+| ハッシュ | メッセージ |
+|----------|------------|
+| `b6b4b34` | chore(ci): add Cloud Build config |
+| `96fcd92` | ci: deploy to Cloud Run via Cloud Build |
+| `20ab0fe` | fix: Cloud Build typecheck (UserMessageBubble props, calendar dayEnd, tsconfig excludes tests) |
+| `4b80d7c` | fix: avoid SSL self-fetch in opening proxy |
+| `5dce485` | fix: keep Cloud Run startup resilient |
+| `b4cc045` | feat: sync JP national holidays and harden opening flow |
+| `3141fd5` | fix: openingチャットの非ストリーミングフォールバック |
+| `96862ae` | perf: Cloud Build を高速化しデプロイ設定を補正 |
+| `b5a883c` | fix: include Cloud Tasks config JSON in standalone build |
+| `8fc2475` | fix(web): include v2beta2/v2beta3 Cloud Tasks configs in output tracing |
+| `30ae8db` | feat(web): プロンプト・カレンダー/エントリ/Today UI・設定・オーケストレータの更新 |
+| `57ce644` | feat: オーケストレーター待機表示とアカウント移行の部分インポート |
+| `1090875` | feat(web): アカウント移行インポートの重複日処理と dry-run 詳細・パスフレーズ試行制限 |
+
+（本日の末尾に **CHANGELOG 本文のみ** のコミットが続く場合は、`git log -1 --oneline CHANGELOG.md` でハッシュを確認してください。）
+
+### 概要（本日の変更の全体像）
+
+1. **Cloud Build / Cloud Run** — ルート `cloudbuild.yaml` で `web/` の `npm ci`・`prisma generate`・`next build` を CI 向けに実行。Artifact Registry へプッシュ後 **asia-northeast2 の Cloud Run** へデプロイ（`96fcd92`）。**直前イメージの pull・cache-from**、`migrate-tool` での `node_modules` 再利用などでビルド時間を短縮（`96862ae`）。`UserMessageBubble` の型、カレンダー `dayEnd`、`tsconfig` でテスト除外など **型チェック通過の修正**（`20ab0fe`）。
+2. **ランタイムの堅牢化** — イメージビルド時に **entrypoint の改行を正規化**。**Prisma マイグレーション失敗時もコンテナ起動を継続**し、Cloud Run の起動タイムアウト内で `PORT` をListenできるようにする（`5dce485`）。**開口プロキシの自己参照 SSL `fetch` を回避**（`4b80d7c`）。
+3. **日本の祝日データと開口まわり** — `.github/workflows/sync-jp-holidays.yml` と `web/scripts/sync-jp-national-holidays.mjs` で **内閣府 CSV 由来の国民の祝日**を `web/src/data/jp-national-holidays-official.json` に同期。オーケストレーター入力前に **祝日カレンダー由来のゴーストイベントをフィルタ**。開口ルートを **共通ハンドラ経由**に整理し、プロンプト・モバイル余白などを調整（`b4cc045`）。
+4. **開口チャットのフォールバック** — ストリーミング不可環境では **JSON 応答へフォールバック**し、エラーメッセージを詳細化（`3141fd5`）。
+5. **Standalone 出力と Cloud Tasks** — `@google-cloud/tasks` が読み込む **設定 JSON を Next の output tracing に含め**、Cloud Run での `MODULE_NOT_FOUND` を防ぐ（`b5a883c`）。**v2beta2 / v2beta3** の設定ファイルもトレース対象に追加（`8fc2475`）。
+6. **プロンプト・画面・設定** — エージェント用プロンプトの調整、カレンダー・日記・Today の UI 改善、**`app-header-toolbar`**、**`today-journal-draft-bridge`**、設定 API と `user-settings` まわりの更新（`30ae8db`）。
+7. **オーケストレーター待機表示と部分インポート** — エントリチャットを **`/api/ai/orchestrator/chat` に寄せ**、**`preparing` フェーズの SSE** で待機ヒントを表示。オーケストレーター完了前にストリームを開き **早期フィードバック**。アカウント移行は **既存日記と日付が重ならない範囲**での取り込みと、**dry-run のプレビュー強化**（`57ce644`）。
+8. **インポート UX の拡張** — 日付ごとに **スキップ／上書き／本文マージ**を選択可能に。dry-run に **重複日の本文プレビュー・スレッド数など**、**設定キー衝突のプレビュー行**、**新規取り込み日リスト** 等を追加。**パスフレーズ試行のレート制限・クールダウン**を `job-store` と `import-passphrase-policy.ts` で共通化。ユーザー向け文言を `transfer-user-messages.ts` に集約（`1090875`）。
+
+### 参照パス（主）
+
+- CI: `cloudbuild.yaml`、`.github/workflows/sync-jp-holidays.yml`
+- 祝日: `web/scripts/sync-jp-national-holidays.mjs`、`web/src/data/jp-national-holidays-official.json`、`web/src/lib/jp-national-holidays-official.ts`
+- 移行: `web/src/server/account-transfer/import.ts`、`web/src/components/account-transfer-dialog.tsx`、`web/src/lib/account-transfer/import-passphrase-policy.ts`
 
 ---
 
@@ -908,7 +956,8 @@ git log -1 --oneline origin/main
 | 04-20 | 複数 | セキュリティレビュー、Plutchik、ローカル GCal、Photos、日記 UI、および同日の CHANGELOG 反復更新 |
 | 04-21〜27 | 0 | — |
 | 04-28 | あり | 公開 LP／法務／PWA、開口設定モーダル・倍率プリセット、`ResponsiveDialog` 下寄せ、`scoreOpeningTopic` デバッグ、時間割 `st_level` 連携 |
-| 04-30 | 複数 | 設定提案→同意→適用、日付境界/TZ、監査・レート制限、祝日ガード、ストリーム後処理非同期化、レイアウト改善、**構造化ログ・Vitest・チャットから時間割エディタ・開口カテゴリ推定のサーバー共通化**、NextAuth JSON エラー化・埋め込み一括削除 など |
+| 04-30 | 複数 | 設定提案→同意→適用、日付境界/TZ、監査・レート制限、祝日ガード、ストリーム後処理非同期化、レイアウト改善、**構造化ログ・Vitest・チャットから時間割エディタ・開口カテゴリ推定のサーバー共通化**、NextAuth JSON エラー化・埋め込み一括削除。**同日後半**: アカウント移行の初版、開口プロキシ／SSE 堅牢化、CHANGELOG ハッシュ追記 |
+| 05-01 | 複数 | **Cloud Build／Cloud Run デプロイ**、ビルド高速化・起動耐性、**国民の祝日公式同期ワークフロー**と開口のゴースト除去、開口非ストリームフォールバック、**Cloud Tasks JSON を standalone に同梱**、プロンプト・カレンダー／Today UI・設定、**オーケストレーター待機 SSE**、**移行インポートの重複日ごとの方針と dry-run 詳細・パスフレーズ試行制限** |
 
 ---
 
