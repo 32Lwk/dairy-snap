@@ -10,14 +10,18 @@ import {
 } from "@/server/account-transfer/bundle-codec";
 import {
   applyImport,
+  type OverlapChoice,
+  parseOverlapChoices,
   scheduleEmbeddingRebuild,
 } from "@/server/account-transfer/import";
 import {
   clearPassphraseFailures,
+  getImportPassphraseAttemptsRemaining,
   isPassphraseExhausted,
   recordPassphraseFailure,
 } from "@/server/account-transfer/job-store";
 import { MAX_BUNDLE_PLAINTEXT_BYTES } from "@/lib/account-transfer/bundle-schema";
+import { ACCOUNT_TRANSFER_BUNDLE_DECRYPT_FAILED } from "@/lib/account-transfer/transfer-user-messages";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -42,6 +46,7 @@ export async function POST(req: NextRequest) {
       {
         error:
           "パスフレーズの試行回数が上限を超えました。30分待ってから再度お試しください。",
+        passphraseAttemptsRemaining: 0,
       },
       { status: 429 },
     );
@@ -51,6 +56,7 @@ export async function POST(req: NextRequest) {
   const bundleFile = form?.get("bundle");
   const passphrase = form?.get("passphrase");
   const settingsKeysRaw = form?.get("settingsSourceKeys");
+  const overlapChoicesRaw = form?.get("overlapChoices");
 
   if (!(bundleFile instanceof Blob) || typeof passphrase !== "string") {
     return NextResponse.json({ error: "入力が不正です" }, { status: 400 });
@@ -83,6 +89,20 @@ export async function POST(req: NextRequest) {
     settingsSourceKeys = v.data;
   }
 
+  let overlapChoices: Record<string, OverlapChoice> = {};
+  if (typeof overlapChoicesRaw === "string" && overlapChoicesRaw.length > 0) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(overlapChoicesRaw);
+    } catch {
+      return NextResponse.json(
+        { error: "overlapChoices の JSON 形式が不正です" },
+        { status: 400 },
+      );
+    }
+    overlapChoices = parseOverlapChoices(parsed);
+  }
+
   let bundleText: string;
   try {
     bundleText = await bundleFile.text();
@@ -101,6 +121,7 @@ export async function POST(req: NextRequest) {
       passphrase,
       resolved.id,
       settingsSourceKeys,
+      overlapChoices,
     );
     if (!result.ok) {
       scheduleAppLog(AppLogScope.account, "warn", "transfer_import_conflict", {
@@ -133,12 +154,16 @@ export async function POST(req: NextRequest) {
           {
             error:
               "パスフレーズの試行回数が上限を超えました。30分待ってから再度お試しください。",
+            passphraseAttemptsRemaining: 0,
           },
           { status: 429 },
         );
       }
       return NextResponse.json(
-        { error: "パスフレーズが正しくないか、ファイルが壊れています" },
+        {
+          error: ACCOUNT_TRANSFER_BUNDLE_DECRYPT_FAILED,
+          passphraseAttemptsRemaining: getImportPassphraseAttemptsRemaining(resolved.id),
+        },
         { status: 400 },
       );
     }

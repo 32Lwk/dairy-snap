@@ -43,6 +43,46 @@ export type ImportPreviewCounts = {
   skippedE2eeEntries: number;
 };
 
+export type OverlapChoice = "skip" | "replace" | "merge";
+
+export type OverlapDateDetail = {
+  entryDateYmd: string;
+  bundle: {
+    title: string | null;
+    /** モーダル用（改行をある程度保持） */
+    bodyPreview: string;
+    imageCount: number;
+    imageUploadedCount: number;
+    imageGeneratedCount: number;
+    chatThreadCount: number;
+  };
+  target: {
+    title: string | null;
+    bodyPreview: string;
+    imageCount: number;
+    chatThreadCount: number;
+  };
+};
+
+export type ConflictingSettingRow = {
+  key: string;
+  bundleText: string;
+  targetText: string;
+};
+
+export type ImportPreviewDetail = {
+  entryDatesYmd: string[];
+  imageByKind: { uploaded: number; generated: number };
+  tagNames: string[];
+  appLocalCalendarNames: string[];
+  chatThreadSummaries: string[];
+  googleCalendarSampleTitles: string[];
+  memoryLongTermCount: number;
+  memoryShortTermEntryDates: string[];
+  agentMemoryLines: string[];
+  usageCounterDatesYmd: string[];
+};
+
 export type DryRunResult = {
   ok: true;
   summary: BundleSummary;
@@ -51,9 +91,16 @@ export type DryRunResult = {
   targetSettingsKeys: string[];
   /** ソースとターゲット両方に存在するトップレベル設定キー（ユーザーに選ばせる対象） */
   conflictingSettingsKeys: string[];
+  /** 衝突キーごとの JSON プレビュー（UI 比較用） */
+  conflictingSettingsDetail: ConflictingSettingRow[];
   importPlan: ImportPlan;
   importPreviewCounts: ImportPreviewCounts;
   importPreviewBlobs: { count: number; totalBytes: number };
+  importPreviewDetail: ImportPreviewDetail;
+  /** 日付が重なる日の比較用（新規日は含まない） */
+  overlapDateRows: OverlapDateDetail[];
+  /** バンドルにあってターゲットにまだ無い日付（昇順） */
+  newImportDates: string[];
 };
 
 function buildImportPlan(
@@ -84,18 +131,34 @@ function buildImportPlan(
   };
 }
 
-/**
- * 日付がターゲットと重なる日記だけを落とし、グローバルスナップショット系は空にする。
- */
-function filterBundleForDateOverlapImport(
-  data: BundleData,
-  existingDates: Set<string>,
-): BundleData {
-  const allowedEntryIds = new Set(
-    data.dailyEntries.filter((e) => !existingDates.has(e.entryDateYmd)).map((e) => e.id),
-  );
+const MERGE_BODY_SEPARATOR = "\n\n────────\n▽ バンドルから結合した本文\n\n";
 
+function previewBodyForUi(s: string, max = 900): string {
+  if (s.length <= max) return s;
+  return `${s.slice(0, max)}…`;
+}
+
+export function parseOverlapChoices(raw: unknown): Record<string, OverlapChoice> {
+  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const ymdRe = /^\d{4}-\d{2}-\d{2}$/;
+  const out: Record<string, OverlapChoice> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!ymdRe.test(k)) continue;
+    if (v === "skip" || v === "replace" || v === "merge") out[k] = v;
+  }
+  return out;
+}
+
+/**
+ * ソース日記 ID 集合に基づきバンドルを部分集合化（グローバル行はそのまま）。
+ */
+function filterBundleDataByEntryIds(
+  data: BundleData,
+  allowedEntryIds: Set<string>,
+): BundleData {
   const dailyEntries = data.dailyEntries.filter((e) => allowedEntryIds.has(e.id));
+  const ymds = new Set(dailyEntries.map((e) => e.entryDateYmd));
+
   const entryAppendEvents = data.entryAppendEvents.filter((r) =>
     allowedEntryIds.has(r.entryId),
   );
@@ -103,7 +166,7 @@ function filterBundleForDateOverlapImport(
   const googlePhotoSelections = data.googlePhotoSelections.filter(
     (r) =>
       (r.entryId != null && allowedEntryIds.has(r.entryId)) ||
-      (r.entryId == null && !existingDates.has(r.entryDateYmd)),
+      (r.entryId == null && ymds.has(r.entryDateYmd)),
   );
   const entryTags = data.entryTags.filter((r) => allowedEntryIds.has(r.entryId));
   const tagIdsNeeded = new Set(entryTags.map((r) => r.tagId));
@@ -132,18 +195,303 @@ function filterBundleForDateOverlapImport(
     googlePhotoSelections,
     tags,
     entryTags,
-    googleCalendarEventCache: [],
-    googleCalendarSyncState: [],
-    appLocalCalendars: [],
-    appLocalCalendarEvents: [],
     chatThreads,
     chatMessages,
     aiArtifacts,
     memoryLongTerm,
     memoryShortTerm,
+  };
+}
+
+function stripBundledGlobalSnapshotRows(data: BundleData): BundleData {
+  return {
+    ...data,
+    googleCalendarEventCache: [],
+    googleCalendarSyncState: [],
+    appLocalCalendars: [],
+    appLocalCalendarEvents: [],
     agentMemory: [],
     usageCounters: [],
   };
+}
+
+/**
+ * 日付がターゲットと重なる日記だけを落とし、グローバルスナップショット系は空にする。
+ */
+function filterBundleForDateOverlapImport(
+  data: BundleData,
+  existingDates: Set<string>,
+): BundleData {
+  const allowedEntryIds = new Set(
+    data.dailyEntries.filter((e) => !existingDates.has(e.entryDateYmd)).map((e) => e.id),
+  );
+  return stripBundledGlobalSnapshotRows(filterBundleDataByEntryIds(data, allowedEntryIds));
+}
+
+type MergeJob = {
+  targetEntryId: string;
+  bundleEntry: BundleData["dailyEntries"][number];
+  images: BundleData["images"];
+  appendEvents: BundleData["entryAppendEvents"];
+  entryTags: BundleData["entryTags"];
+  googlePhotoSelections: BundleData["googlePhotoSelections"];
+  memoryShortTerm: BundleData["memoryShortTerm"];
+};
+
+async function buildOverlapDateRows(
+  data: BundleData,
+  targetUserId: string,
+): Promise<{ overlapDateRows: OverlapDateDetail[]; newImportDates: string[] }> {
+  const bundleByYmd = new Map(data.dailyEntries.map((e) => [e.entryDateYmd, e]));
+  const bundleYmds = [...bundleByYmd.keys()];
+
+  const targets = await prisma.dailyEntry.findMany({
+    where: { userId: targetUserId, entryDateYmd: { in: bundleYmds } },
+    select: {
+      entryDateYmd: true,
+      title: true,
+      body: true,
+      _count: { select: { images: true, chatThreads: true } },
+    },
+  });
+  const targetByYmd = new Map(targets.map((t) => [t.entryDateYmd, t]));
+
+  const overlapDateRows: OverlapDateDetail[] = [];
+  const newImportDates: string[] = [];
+
+  for (const ymd of bundleYmds.sort()) {
+    const bundleEntry = bundleByYmd.get(ymd)!;
+    const t = targetByYmd.get(ymd);
+    if (!t) {
+      newImportDates.push(ymd);
+      continue;
+    }
+    const bi = data.images.filter((i) => i.entryId === bundleEntry.id);
+    const bthreads = data.chatThreads.filter((c) => c.entryId === bundleEntry.id);
+    overlapDateRows.push({
+      entryDateYmd: ymd,
+      bundle: {
+        title: bundleEntry.title,
+        bodyPreview: previewBodyForUi(bundleEntry.body ?? ""),
+        imageCount: bi.length,
+        imageUploadedCount: bi.filter((i) => i.kind === "UPLOADED").length,
+        imageGeneratedCount: bi.filter((i) => i.kind === "GENERATED").length,
+        chatThreadCount: bthreads.length,
+      },
+      target: {
+        title: t.title,
+        bodyPreview: previewBodyForUi(t.body ?? ""),
+        imageCount: t._count.images,
+        chatThreadCount: t._count.chatThreads,
+      },
+    });
+  }
+
+  return { overlapDateRows, newImportDates };
+}
+
+function buildImportPayload(
+  data: BundleData,
+  choices: Record<string, OverlapChoice>,
+  occupiedAfterReplace: Set<string>,
+  targetByYmd: Map<string, { id: string }>,
+): { prepared: BundleData; mergeJobs: MergeJob[] } {
+  const mergeJobs: MergeJob[] = [];
+  const includedEntryIds = new Set<string>();
+
+  for (const e of data.dailyEntries) {
+    const ymd = e.entryDateYmd;
+    if (!occupiedAfterReplace.has(ymd)) {
+      includedEntryIds.add(e.id);
+      continue;
+    }
+    const ch = choices[ymd] ?? "skip";
+    if (ch === "merge") {
+      const target = targetByYmd.get(ymd);
+      if (target) {
+        mergeJobs.push({
+          targetEntryId: target.id,
+          bundleEntry: e,
+          images: data.images.filter((i) => i.entryId === e.id),
+          appendEvents: data.entryAppendEvents.filter((a) => a.entryId === e.id),
+          entryTags: data.entryTags.filter((t) => t.entryId === e.id),
+          googlePhotoSelections: data.googlePhotoSelections.filter(
+            (p) =>
+              (p.entryId != null && p.entryId === e.id) ||
+              (p.entryId == null && p.entryDateYmd === ymd),
+          ),
+          memoryShortTerm: data.memoryShortTerm.filter((m) => m.entryId === e.id),
+        });
+      }
+    }
+  }
+
+  let prepared = filterBundleDataByEntryIds(data, includedEntryIds);
+  return { prepared, mergeJobs };
+}
+
+function shouldStripGlobalsForImport(
+  initialTargetHadEntries: boolean,
+  choices: Record<string, OverlapChoice>,
+  data: BundleData,
+  initialExistingDates: Set<string>,
+): boolean {
+  if (!initialTargetHadEntries) return false;
+  for (const e of data.dailyEntries) {
+    if (!initialExistingDates.has(e.entryDateYmd)) continue;
+    const ch = choices[e.entryDateYmd] ?? "skip";
+    if (ch === "skip" || ch === "merge") return true;
+  }
+  return false;
+}
+
+function allocateIdsForMergeJobs(jobs: MergeJob[], idMap: IdMap) {
+  for (const job of jobs) {
+    for (const r of job.appendEvents) {
+      if (!idMap.appendEvents.has(r.id)) idMap.appendEvents.set(r.id, randomUUID());
+    }
+    for (const img of job.images) {
+      if (!idMap.images.has(img.id)) idMap.images.set(img.id, randomUUID());
+    }
+    for (const p of job.googlePhotoSelections) {
+      if (!idMap.photoSelections.has(p.id)) idMap.photoSelections.set(p.id, randomUUID());
+    }
+    for (const m of job.memoryShortTerm) {
+      if (!idMap.shortTerm.has(m.id)) idMap.shortTerm.set(m.id, randomUUID());
+    }
+  }
+}
+
+function dedupeTags(list: BundleData["tags"]): BundleData["tags"] {
+  const seen = new Set<string>();
+  return list.filter((t) => {
+    if (seen.has(t.id)) return false;
+    seen.add(t.id);
+    return true;
+  });
+}
+
+function collectTagsForPreparedAndMerges(
+  prepared: BundleData,
+  mergeJobs: MergeJob[],
+  allBundleTags: BundleData["tags"],
+): BundleData["tags"] {
+  const tagIds = new Set<string>();
+  for (const t of prepared.entryTags) tagIds.add(t.tagId);
+  for (const j of mergeJobs) for (const t of j.entryTags) tagIds.add(t.tagId);
+  return dedupeTags(allBundleTags.filter((t) => tagIds.has(t.id)));
+}
+
+async function applyMergeJobsInTx(
+  tx: Tx,
+  targetUserId: string,
+  jobs: MergeJob[],
+  idMap: IdMap,
+  opts: InsertOptions,
+) {
+  for (const job of jobs) {
+    const cur = await tx.dailyEntry.findUniqueOrThrow({
+      where: { id: job.targetEntryId },
+      select: { body: true, title: true },
+    });
+    const bundleBody = job.bundleEntry.body ?? "";
+    const newBody = (cur.body ?? "") + MERGE_BODY_SEPARATOR + bundleBody;
+    const newTitle = cur.title?.trim() ? cur.title : job.bundleEntry.title;
+
+    await tx.dailyEntry.update({
+      where: { id: job.targetEntryId },
+      data: {
+        body: newBody,
+        title: newTitle,
+      },
+    });
+
+    if (job.appendEvents.length > 0) {
+      await tx.entryAppendEvent.createMany({
+        data: job.appendEvents.map((r) => ({
+          id: idMap.appendEvents.get(r.id)!,
+          entryId: job.targetEntryId,
+          occurredAt: new Date(r.occurredAt),
+          fragment: r.fragment,
+          createdAt: new Date(r.createdAt),
+        })),
+      });
+    }
+
+    if (job.images.length > 0) {
+      await tx.image.createMany({
+        data: job.images.map((r) => {
+          const newImageId = idMap.images.get(r.id)!;
+          return {
+            id: newImageId,
+            entryId: job.targetEntryId,
+            kind: r.kind,
+            storageKey: newStorageKeyFor(targetUserId, newImageId),
+            mimeType: r.mimeType,
+            byteSize: r.byteSize,
+            sha256: r.sha256,
+            googleMediaItemId: r.googleMediaItemId,
+            rotationQuarterTurns: r.rotationQuarterTurns,
+            caption: r.caption,
+            width: r.width,
+            height: r.height,
+            createdAt: new Date(r.createdAt),
+          };
+        }),
+      });
+    }
+
+    if (job.googlePhotoSelections.length > 0) {
+      await tx.googlePhotoSelection.createMany({
+        data: job.googlePhotoSelections.map((r) => ({
+          id: idMap.photoSelections.get(r.id)!,
+          userId: targetUserId,
+          entryId: job.targetEntryId,
+          entryDateYmd: r.entryDateYmd,
+          providerSessionId: r.providerSessionId,
+          mediaItemId: r.mediaItemId,
+          baseUrl: r.baseUrl,
+          productUrl: r.productUrl,
+          mimeType: r.mimeType,
+          filename: r.filename,
+          width: r.width,
+          height: r.height,
+          creationTime: r.creationTime ? new Date(r.creationTime) : null,
+          createdAt: new Date(r.createdAt),
+          updatedAt: new Date(r.updatedAt),
+        })),
+        skipDuplicates: opts.skipDuplicateGlobals,
+      });
+    }
+
+    if (job.entryTags.length > 0) {
+      await tx.entryTag.createMany({
+        data: job.entryTags
+          .map((r) => {
+            const tid = idMap.tags.get(r.tagId);
+            if (!tid) return null;
+            return { entryId: job.targetEntryId, tagId: tid };
+          })
+          .filter((x): x is { entryId: string; tagId: string } => x !== null),
+        skipDuplicates: true,
+      });
+    }
+
+    if (job.memoryShortTerm.length > 0) {
+      await tx.memoryShortTerm.createMany({
+        data: job.memoryShortTerm.map((r) => ({
+          id: idMap.shortTerm.get(r.id)!,
+          userId: targetUserId,
+          entryId: job.targetEntryId,
+          bullets: (r.bullets ?? []) as Prisma.InputJsonValue,
+          salience: r.salience,
+          dedupKey: r.dedupKey,
+          createdAt: new Date(r.createdAt),
+          updatedAt: new Date(r.updatedAt),
+        })),
+      });
+    }
+  }
 }
 
 function prepareDataForApply(
@@ -161,6 +509,88 @@ function prepareDataForApply(
     return data;
   }
   return filterBundleForDateOverlapImport(data, existingDates);
+}
+
+function serializeSettingJson(v: unknown, maxLen: number): string {
+  if (v === undefined) return "（このキーはバンドルにありません）";
+  try {
+    const s = JSON.stringify(v, null, 2);
+    if (s.length <= maxLen) return s;
+    return `${s.slice(0, maxLen)}\n… （長いため省略）`;
+  } catch {
+    const t = String(v);
+    return t.length <= maxLen ? t : `${t.slice(0, maxLen)}\n… （省略）`;
+  }
+}
+
+function buildConflictingSettingsDetail(
+  keys: string[],
+  bundleSettings: Record<string, unknown>,
+  targetSettings: Record<string, unknown>,
+): ConflictingSettingRow[] {
+  return keys.map((key) => ({
+    key,
+    bundleText: serializeSettingJson(bundleSettings[key], 12_000),
+    targetText: serializeSettingJson(targetSettings[key], 12_000),
+  }));
+}
+
+function buildImportPreviewDetail(prepared: BundleData): ImportPreviewDetail {
+  const entryYmdById = new Map(
+    prepared.dailyEntries.map((e) => [e.id, e.entryDateYmd] as const),
+  );
+  const entryDatesYmd = [...new Set(prepared.dailyEntries.map((e) => e.entryDateYmd))].sort();
+
+  const images = prepared.images;
+  const imageByKind = {
+    uploaded: images.filter((i) => i.kind === "UPLOADED").length,
+    generated: images.filter((i) => i.kind === "GENERATED").length,
+  };
+
+  const tagNames = prepared.tags
+    .map((t) => t.name)
+    .sort()
+    .slice(0, 300);
+
+  const appLocalCalendarNames = prepared.appLocalCalendars.map((c) => c.name).slice(0, 100);
+
+  const chatThreadSummaries = prepared.chatThreads.slice(0, 60).map((t) => {
+    const ymd = entryYmdById.get(t.entryId) ?? "?";
+    const title = t.title?.trim() || "（タイトルなし）";
+    return `${ymd} · ${title}`;
+  });
+
+  const googleCalendarSampleTitles = prepared.googleCalendarEventCache
+    .slice(0, 40)
+    .map((e) => e.title);
+
+  const memoryShortTermEntryDates = [
+    ...new Set(
+      prepared.memoryShortTerm
+        .map((m) => entryYmdById.get(m.entryId))
+        .filter((d): d is string => typeof d === "string"),
+    ),
+  ].sort();
+
+  const agentMemoryLines = prepared.agentMemory.slice(0, 50).map((m) => {
+    const v = previewBodyForUi(m.memoryValue, 200);
+    return `${m.domain} · ${m.memoryKey}: ${v}`;
+  });
+
+  const usageCounterDatesYmd = [...new Set(prepared.usageCounters.map((u) => u.dateYmd))].sort();
+
+  return {
+    entryDatesYmd,
+    imageByKind,
+    tagNames,
+    appLocalCalendarNames,
+    chatThreadSummaries,
+    googleCalendarSampleTitles,
+    memoryLongTermCount: prepared.memoryLongTerm.length,
+    memoryShortTermEntryDates,
+    agentMemoryLines,
+    usageCounterDatesYmd,
+  };
 }
 
 /** バンドルを復号→件数サマリ＋ターゲットの状態を返す（DB 書き込みなし） */
@@ -186,6 +616,17 @@ export async function dryRunImport(
       : {};
   const targetSettingsKeys = Object.keys(targetSettingsObj);
   const conflicting = summary.settingsKeys.filter((k) => targetSettingsKeys.includes(k));
+  const bundleSettingsObj =
+    decrypted.data.user.settings &&
+    typeof decrypted.data.user.settings === "object" &&
+    !Array.isArray(decrypted.data.user.settings)
+      ? (decrypted.data.user.settings as Record<string, unknown>)
+      : {};
+  const conflictingSettingsDetail = buildConflictingSettingsDetail(
+    conflicting,
+    bundleSettingsObj,
+    targetSettingsObj,
+  );
 
   const existingRows = await prisma.dailyEntry.findMany({
     where: { userId: targetUserId },
@@ -227,18 +668,29 @@ export async function dryRunImport(
     if (blob) importPreviewBlobsTotalBytes += blob.bytes.byteLength;
   }
 
+  const { overlapDateRows, newImportDates } = await buildOverlapDateRows(
+    decrypted.data,
+    targetUserId,
+  );
+
+  const importPreviewDetail = buildImportPreviewDetail(preparedPreview);
+
   return {
     ok: true,
     summary,
     targetHasEntries: targetExistingDailyCount > 0,
     targetSettingsKeys,
     conflictingSettingsKeys: conflicting,
+    conflictingSettingsDetail,
     importPlan,
     importPreviewCounts,
     importPreviewBlobs: {
       count: preparedPreview.images.length,
       totalBytes: importPreviewBlobsTotalBytes,
     },
+    importPreviewDetail,
+    overlapDateRows,
+    newImportDates,
   };
 }
 
@@ -257,33 +709,62 @@ export type ImportApplyResult =
  *   それ以外はターゲットの値を維持する。
  *
  * 既に日記があるアカウントでも、バンドル内の日付がすべて埋まっているわけでなければ取り込み可能。
- * 日付が重なる日はスキップし、カレンダーキャッシュ等のスナップショットは部分取り込み時は載せない。
+ * 日付が重なる日は既定でスキップ。overlapChoices で上書き／本文結合を指定可能。
  */
 export async function applyImport(
   bundleJwe: string,
   passphrase: string,
   targetUserId: string,
   settingsSourceKeys: string[],
+  overlapChoices: Record<string, OverlapChoice> = {},
 ): Promise<ImportApplyResult> {
   const decrypted = await decryptBundle(bundleJwe, passphrase);
   const data = decrypted.data;
 
-  const existingRows = await prisma.dailyEntry.findMany({
+  const initialTargets = await prisma.dailyEntry.findMany({
     where: { userId: targetUserId },
-    select: { entryDateYmd: true },
+    select: { id: true, entryDateYmd: true },
   });
-  const existingDates = new Set(existingRows.map((r) => r.entryDateYmd));
-  const targetExistingDailyCount = existingRows.length;
+  const initialExistingDates = new Set(initialTargets.map((r) => r.entryDateYmd));
+  const targetByYmd = new Map(initialTargets.map((t) => [t.entryDateYmd, { id: t.id }]));
+  const targetExistingDailyCount = initialTargets.length;
 
-  const prepared = prepareDataForApply(data, existingDates, targetExistingDailyCount);
+  const replaceDates = [
+    ...new Set(
+      data.dailyEntries
+        .filter((e) => initialExistingDates.has(e.entryDateYmd))
+        .filter((e) => overlapChoices[e.entryDateYmd] === "replace")
+        .map((e) => e.entryDateYmd),
+    ),
+  ];
 
-  if (data.dailyEntries.length > 0 && prepared.dailyEntries.length === 0) {
+  const occupiedAfterReplace = new Set(initialExistingDates);
+  for (const d of replaceDates) occupiedAfterReplace.delete(d);
+
+  const { prepared, mergeJobs } = buildImportPayload(
+    data,
+    overlapChoices,
+    occupiedAfterReplace,
+    targetByYmd,
+  );
+
+  const stripGlobals = shouldStripGlobalsForImport(
+    targetExistingDailyCount > 0,
+    overlapChoices,
+    data,
+    initialExistingDates,
+  );
+  const preparedFinal = stripGlobals ? stripBundledGlobalSnapshotRows(prepared) : prepared;
+
+  const hasDailyOrMerge =
+    preparedFinal.dailyEntries.length > 0 || mergeJobs.length > 0;
+  if (data.dailyEntries.length > 0 && !hasDailyOrMerge) {
     return {
       ok: false,
       error: {
         kind: "all_entries_date_overlap",
         message:
-          "バンドル内の日記の日付が、すべてこのアカウントの既存日記と重なっています。重複しない日付のデータがあるバンドルを使うか、別アカウントでお試しください。",
+          "取り込む日記がありません。重複日で「スキップ」以外を選ぶか、重複しない日付のバンドルをご利用ください。",
       },
     };
   }
@@ -292,34 +773,51 @@ export async function applyImport(
     (s, b) => s + b.bytes.byteLength,
     0,
   );
-  const summary = summarizeBundleData(prepared, blobsTotalBytes);
+  const summary = summarizeBundleData(preparedFinal, blobsTotalBytes);
 
-  const idMap = buildIdMap(prepared);
+  const combinedTags = collectTagsForPreparedAndMerges(
+    preparedFinal,
+    mergeJobs,
+    data.tags,
+  );
+  const preparedForMap = { ...preparedFinal, tags: combinedTags };
+  const idMap = buildIdMap(preparedForMap);
+  allocateIdsForMergeJobs(mergeJobs, idMap);
 
   const existingTags = await prisma.tag.findMany({
     where: { userId: targetUserId },
     select: { id: true, name: true },
   });
   const tagNameToId = new Map(existingTags.map((t) => [t.name, t.id]));
-  for (const t of prepared.tags) {
+  for (const t of combinedTags) {
     const hit = tagNameToId.get(t.name);
     if (hit) idMap.tags.set(t.id, hit);
   }
-  const tagsToCreate = prepared.tags.filter((t) => !tagNameToId.has(t.name));
+  const tagsToCreate = combinedTags.filter((t) => !tagNameToId.has(t.name));
 
-  const stagedKeys = await stageBlobs(decrypted, idMap, targetUserId, prepared.images);
+  const mergeImages = mergeJobs.flatMap((j) => j.images);
+  const allImages = [...preparedFinal.images, ...mergeImages];
+  const stagedKeys = await stageBlobs(decrypted, idMap, targetUserId, allImages);
 
   const skipDuplicateGlobals = targetExistingDailyCount > 0;
 
   try {
     await prisma.$transaction(
       async (tx) => {
-        await applyUserSettings(tx, targetUserId, prepared, settingsSourceKeys);
-        await insertAllRows(tx, targetUserId, prepared, idMap, tagsToCreate, {
+        if (replaceDates.length > 0) {
+          await tx.dailyEntry.deleteMany({
+            where: { userId: targetUserId, entryDateYmd: { in: replaceDates } },
+          });
+        }
+        await applyUserSettings(tx, targetUserId, data, settingsSourceKeys);
+        await insertAllRows(tx, targetUserId, preparedFinal, idMap, tagsToCreate, {
+          skipDuplicateGlobals,
+        });
+        await applyMergeJobsInTx(tx, targetUserId, mergeJobs, idMap, {
           skipDuplicateGlobals,
         });
       },
-      { timeout: 60_000, maxWait: 10_000 },
+      { timeout: 120_000, maxWait: 15_000 },
     );
   } catch (e) {
     await Promise.allSettled(

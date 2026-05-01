@@ -234,7 +234,8 @@ export function UserProfileForm({
     onSavedRef.current = onSaved;
   }, [finalizeOnboarding, onSaved]);
 
-  useLayoutEffect(() => {
+  // useLayoutEffect だと親（設定画面）のマウント完了前に state 更新が走り、React 19 で警告になることがある
+  useEffect(() => {
     if (!controlled) {
       setInternal(initial);
       lastSavedJsonRef.current = fingerprintForProfile(initial, finalizeOnboarding);

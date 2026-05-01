@@ -96,12 +96,10 @@ export function SettingsAccountActions({ email: emailProp }: Props) {
       <div className="mt-6 border-t border-zinc-200 pt-4 dark:border-zinc-700">
         <h3 className="text-sm font-medium text-zinc-900 dark:text-zinc-50">データの引き継ぎ</h3>
         <p className="mt-1 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
-          別のアカウントや別環境（検証→本番など）へデータを移すには、暗号化されたバンドル(.dsbundle)をエクスポートし、
-          移行先のアカウントで再ログインしてからインポートしてください。
+          暗号化バンドル（.dsbundle）をエクスポートし、移行先で再ログインのうえインポートしてください。
         </p>
         <p className="mt-2 text-xs leading-relaxed text-zinc-500">
-          パスフレーズを忘れるとバンドルは復号できません。安全な場所に控えてください。
-          認証情報・セキュリティレビュー履歴などは引き継がれません。
+          パスフレーズ喪失で復号不可。控えを保管してください。認証・レビュー履歴は含まれません。
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
           <button

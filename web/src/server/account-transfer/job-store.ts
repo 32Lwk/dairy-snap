@@ -1,4 +1,8 @@
 import { randomUUID } from "node:crypto";
+import {
+  IMPORT_PASSPHRASE_ATTEMPT_LIMIT,
+  IMPORT_PASSPHRASE_COUNTING_WINDOW_MINUTES,
+} from "@/lib/account-transfer/import-passphrase-policy";
 
 /**
  * エクスポート/インポートのジョブ状態を保持する単一プロセス内のストア。
@@ -92,8 +96,10 @@ const passphraseFailures =
   globalForTransfer.__transfer_passphraseFailures ??
   (globalForTransfer.__transfer_passphraseFailures = new Map());
 
-const PASSPHRASE_WINDOW_MS = 30 * 60 * 1000;
-export const MAX_IMPORT_PASSPHRASE_ATTEMPTS = 10;
+const PASSPHRASE_WINDOW_MS = IMPORT_PASSPHRASE_COUNTING_WINDOW_MINUTES * 60 * 1000;
+
+/** @deprecated IMPORT_PASSPHRASE_ATTEMPT_LIMIT を優先 */
+export const MAX_IMPORT_PASSPHRASE_ATTEMPTS = IMPORT_PASSPHRASE_ATTEMPT_LIMIT;
 
 function passphraseGc() {
   const now = Date.now();
@@ -113,14 +119,26 @@ export function recordPassphraseFailure(userId: string): {
     ? { count: cur.count + 1, expiresAt: cur.expiresAt }
     : { count: 1, expiresAt: now + PASSPHRASE_WINDOW_MS };
   passphraseFailures.set(userId, next);
-  return { count: next.count, exhausted: next.count >= MAX_IMPORT_PASSPHRASE_ATTEMPTS };
+  return {
+    count: next.count,
+    exhausted: next.count >= IMPORT_PASSPHRASE_ATTEMPT_LIMIT,
+  };
 }
 
 export function isPassphraseExhausted(userId: string): boolean {
   passphraseGc();
   const cur = passphraseFailures.get(userId);
   if (!cur) return false;
-  return cur.count >= MAX_IMPORT_PASSPHRASE_ATTEMPTS;
+  return cur.count >= IMPORT_PASSPHRASE_ATTEMPT_LIMIT;
+}
+
+/** 現在のカウント窓における「あと何回誤るとロック」か（今回の失敗は既にカウント済み想定で API 側で渡す） */
+export function getImportPassphraseAttemptsRemaining(userId: string): number {
+  passphraseGc();
+  const cur = passphraseFailures.get(userId);
+  const now = Date.now();
+  if (!cur || cur.expiresAt <= now) return IMPORT_PASSPHRASE_ATTEMPT_LIMIT;
+  return Math.max(0, IMPORT_PASSPHRASE_ATTEMPT_LIMIT - cur.count);
 }
 
 export function clearPassphraseFailures(userId: string) {

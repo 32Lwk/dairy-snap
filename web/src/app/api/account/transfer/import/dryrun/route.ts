@@ -9,10 +9,13 @@ import {
 } from "@/server/account-transfer/bundle-codec";
 import { dryRunImport } from "@/server/account-transfer/import";
 import {
+  getImportPassphraseAttemptsRemaining,
   isPassphraseExhausted,
   recordPassphraseFailure,
 } from "@/server/account-transfer/job-store";
 import { MAX_BUNDLE_PLAINTEXT_BYTES } from "@/lib/account-transfer/bundle-schema";
+import { IMPORT_PASSPHRASE_ATTEMPT_LIMIT } from "@/lib/account-transfer/import-passphrase-policy";
+import { ACCOUNT_TRANSFER_BUNDLE_DECRYPT_FAILED } from "@/lib/account-transfer/transfer-user-messages";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -35,6 +38,7 @@ export async function POST(req: NextRequest) {
       {
         error:
           "パスフレーズの試行回数が上限を超えました。30分待ってから再度お試しください。",
+        passphraseAttemptsRemaining: 0,
       },
       { status: 429 },
     );
@@ -70,7 +74,12 @@ export async function POST(req: NextRequest) {
       conflictKeys: result.conflictingSettingsKeys.length,
       targetHasEntries: result.targetHasEntries,
     });
-    return NextResponse.json(result);
+    const passphraseAttemptsRemaining = getImportPassphraseAttemptsRemaining(resolved.id);
+    return NextResponse.json(
+      passphraseAttemptsRemaining < IMPORT_PASSPHRASE_ATTEMPT_LIMIT
+        ? { ...result, passphraseAttemptsRemaining }
+        : result,
+    );
   } catch (e) {
     return handleImportError(e, resolved.id, "dryrun");
   }
@@ -89,12 +98,16 @@ function handleImportError(e: unknown, userId: string, op: "dryrun" | "apply") {
         {
           error:
             "パスフレーズの試行回数が上限を超えました。30分待ってから再度お試しください。",
+          passphraseAttemptsRemaining: 0,
         },
         { status: 429 },
       );
     }
     return NextResponse.json(
-      { error: "パスフレーズが正しくないか、ファイルが壊れています" },
+      {
+        error: ACCOUNT_TRANSFER_BUNDLE_DECRYPT_FAILED,
+        passphraseAttemptsRemaining: getImportPassphraseAttemptsRemaining(userId),
+      },
       { status: 400 },
     );
   }
