@@ -942,7 +942,7 @@ git log -1 --oneline origin/main
 
 ### 概要（本日の変更の全体像）
 
-1. **開口・会話の「薄い日」補強** — カレンダー未連携・イベント 0・時間割アンカーなしを `opening-sparse-schedule` で一元判定し、**Wikifeeds「今日は何の日」**（ja 404 時は en フォールバック）や**祝日トリビア**を参考コンテキストに載せる。祝日テキストは **`jp-holiday-trivia-paraphrase`** で必要時のみ言い換え。**職業・生活リズム**からの開口ヒント（`opening-occupation-hints`）や、講義断定抑制（`sparse-lecture-ban` 系テスト含む）の整理。
+1. **開口・会話の「薄い日」補強** — カレンダー未連携・イベント 0・時間割アンカーなしを `opening-sparse-schedule` で一元判定し、**月日ベースの記念日・行事一覧（ローカル JSON）**と**祝日トリビア**を参考コンテキストに載せる（**`fd655ee` 時点は Wikifeeds 取得**。**追記バッチ**で Wikifeeds ランタイム取得をやめ、雑学ネタ帳系ページから再生成する **ローカルバンドル**に置換）。祝日テキストは **`jp-holiday-trivia-paraphrase`** で必要時のみ言い換え。**職業・生活リズム**からの開口ヒント（`opening-occupation-hints`）や、講義断定抑制（`sparse-lecture-ban` 系テスト含む）の整理。
 2. **エントリ時刻文脈の拡張** — `entry-temporal-context` の強化と **開口スナップショット**のテスト（`entry-temporal-opening-snapshot.test.ts`）。オーケストレーター／天気ツール／日記ナッジルール（`reflective-chat-diary-nudge-rules`）の追従。
 3. **趣味エージェントと外部取得の枠** — Vertex（Enterprise 設定時）の **検索グラウンディング**（`hobby-vertex-grounding.ts`）、**許可ドメインに限定した公式 URL 抜粋取得**（`safe-allowlisted-fetch` / `interest-official-url-resolve` / キャッシュ）。**日次 `hobbyExternalFetches`** カウンタと `usage.ts` 連携。
 4. **公式 URL 設定と DB** — `user_interest_official_urls`・`interest_url_fetch_cache`、API `GET/POST/DELETE …/api/settings/interest-official-urls`。設定 UI に **`interest-official-urls-editor`**。デフォルト・映画作品 URL 補助（`interest-official-urls-default.ts` / `interest-official-urls-movie-works.ts`）と監査・カバレッジ系テスト。
@@ -951,7 +951,7 @@ git log -1 --oneline origin/main
 7. **会話の深掘り分類** — `topic-deepening-classifier.ts` と関連テスト、オーケストレーター API の軽い追従。
 8. **日付境界 UX** — `DayBoundaryMismatchNotice` で **Today** と **エントリ日** に、有効暦日とカレンダー暦のズレを共通表示。
 9. **ナビ・シェル・各画面の調整** — `entries-nav-sidebar` / `entries-nav-layout-shell`、`today`・`entries/[date]`・検索・設定・オンボーディング等のレイアウト／文言。**天気 AM/PM 表示**・**場所一行**・**マーケティングシェル**・`globals.css` / `layout.tsx` の微調整。
-10. **環境変数** — `env.ts` に Wikifeeds User-Agent 等、外部取得まわりの設定を追加。
+10. **環境変数（`fd655ee` 時点）** — 趣味外部取得など用の User-Agent 等を `env.ts` に追加。**追記バッチ**で **`WIKIFEEDS_USER_AGENT` を削除**（Wikifeeds 呼び出し廃止に合わせる）。
 
 ### データベース（Prisma / マイグレーション）
 
@@ -962,16 +962,16 @@ git log -1 --oneline origin/main
 
 ### 参照パス（主）
 
-- 開口・薄い日: `web/src/lib/opening-sparse-schedule.ts`、`web/src/lib/wikifeeds-onthisday.ts`、`web/src/lib/jp-holiday-trivia.ts`、`web/src/lib/jp-holiday-trivia-paraphrase.ts`、`web/src/lib/opening-occupation-hints.ts`
+- 開口・薄い日: `web/src/lib/opening-sparse-schedule.ts`、`web/src/lib/jp-anniversary-local.ts`、`web/src/data/jp-anniversary-by-day.json`、`web/scripts/fetch-zatsuneta-anniversaries.mjs`、`web/src/lib/jp-holiday-trivia.ts`、`web/src/lib/jp-holiday-trivia-paraphrase.ts`、`web/src/lib/opening-occupation-hints.ts`（**旧** `wikifeeds-onthisday.ts` は削除）
 - 趣味・外部取得: `web/src/lib/hobby-vertex-grounding.ts`、`web/src/lib/safe-allowlisted-fetch.ts`、`web/src/lib/external-fetch-security.ts`、`web/src/server/agents/hobby-agent.ts`、`web/src/server/usage.ts`
 - 公式 URL: `web/src/app/api/settings/interest-official-urls/route.ts`、`web/src/components/interest-official-urls-editor.tsx`、`web/src/lib/interest-official-url-resolve.ts`、`web/src/lib/interest-url-fetch-cache.ts`
 - 日付境界: `web/src/components/day-boundary-mismatch-notice.tsx`
 
 ### ユーザー向けサマリー
 
-- **開口・会話**: カレンダーが空に近い「薄い日」では授業・講義に寄せにくくし、Wikipedia「今日は何の日」（英語版フォールバック）や祝日の短い雑学を参考情報として渡す場合があります。祝日の短文は必要に応じて言い換えます。**同じ条件の通常ターン**にも On this day / 祝日メモを載せることがあります（開口のみの LLM 言い換えは祝日に限定）。**Wikifeeds の主言語**はプロフィールで「英語版から先に取得」にできます。
+- **開口・会話**: カレンダーが空に近い「薄い日」では授業・講義に寄せにくくし、**リポジトリ同梱の記念日・行事一覧**（月日キー、雑学ネタ帳系データの再収録）や祝日の短い雑学を参考情報として渡す場合があります（**Wikipedia / Wikifeeds へのランタイム取得は行わない**）。祝日の短文は必要に応じて言い換えます。**同じ条件の通常ターン**にも記念日メモ / 祝日メモを載せることがあります（開口のみの LLM 言い換えは祝日に限定）。データ更新は開発者向けに **`npm run data:jp-anniversaries`**（各月 HTML を丁寧に取得）で再生成します。
 - **趣味エージェント**: 設定どおり Google Cloud（Enterprise / Vertex）で **検索グラウンディング**が有効なとき、最新の公開情報を要約して参照します。許可したドメインの公式ページ抜粋も使います。**1日あたりの外部取得回数に上限**があります（設定画面の利用状況に表示）。
-- **設定**: Wikipedia / Wikimedia の**短い帰属を開口で出してよい**かのチェック、**趣味タグごとの公式 URL** の登録（許可ドメインのみ）が追加されました。
+- **設定**: （プロフィールの）**短い帰属を開口で出してよい**かのチェック、**趣味タグごとの公式 URL** の登録（許可ドメインのみ）が追加されました。記念日ブロック側はオプションで雑学ネタ帳カテゴリへの短い帰属を指示できます。
 - **日付境界**: 「今日」とカレンダー暦がずれるときの注意を **Today** と **エントリ日ページ** で共通表示します。
 
 ### コミット一覧
@@ -979,6 +979,19 @@ git log -1 --oneline origin/main
 | ハッシュ | メッセージ |
 |----------|------------|
 | `fd655ee` | feat(web): 薄い日開口・Wikifeeds/祝日トリビア・趣味グラウンディング・公式URL・日付境界表示 |
+| `107cd7b` | feat(web): ローカル記念日バンドル・Wikifeeds撤去・エントリヘッダーUI |
+
+### 追記: ローカル記念日バンドル・Wikifeeds 撤去・エントリヘッダー（`107cd7b`）
+
+**背景**: ランタイムで Wikifeeds API を叩くと可用性・ポリシー・レイテンシの変動が直撃する。**月日ごとの記念日名**は、雑学ネタ帳の月カテゴリ HTML からオフライン抽出し **JSON をリポジトリに同梱**する方針へ切り替えた。
+
+1. **削除** — `web/src/lib/wikifeeds-onthisday.ts`、関連テスト（fetch / ユニット）。`env.ts` から **`WIKIFEEDS_USER_AGENT`** を除去。
+2. **追加** — `web/scripts/fetch-zatsuneta-anniversaries.mjs`（`ZATSUNETA_FETCH_DELAY_MS` / `ZATSUNETA_USER_AGENT` で丁寧に取得）、`web/src/data/jp-anniversary-by-day.json`（`_meta` に生成時刻・出典メモ）、`web/src/lib/jp-anniversary-local.ts`（`getJpAnniversaryNamesForYmd` / `formatJpAnniversaryLocalSystemBlock`）、`jp-anniversary-local.test.ts`。`package.json` に **`data:jp-anniversaries`** スクリプト。`tsconfig.json` で JSON を `resolveJsonModule` 経由で取り込み。
+3. **オーケストレーター** — 薄い日コンテキストの「On this day」相当を **ローカル記念日ブロック**に差し替え（import と注入ロジックの整理）。
+4. **祝日トリビア** — `jp-holiday-trivia.ts` / テストを拡張（ローカル記念日・開口文脈との整合）。
+5. **エントリ画面 UI** — `entry-by-date-view.tsx`: 固定ヘッダーに **日付＋タイトル行（未設定時はプレースホルダ）** と **気分** を副題として集約。`EntryTitleWithEdit` の **`variant="toolbar"`** でヘッダー右に編集導線。横パディングをグリッド側へ寄せ、**モバイルは縦スクロール**（`max-md:overflow-y-auto`）を許可。`entry-by-date-main-grid.tsx` / `entry-title-with-edit.tsx` を追従。
+6. **ヘッダー定数** — `app-header-toolbar.ts` を調整（タイトル用クラスの扱いなど、ヘッダー二段構成に合わせる）。
+7. **ログ** — `app-log.ts` の軽微な整理。
 
 ---
 
@@ -1003,7 +1016,7 @@ git log -1 --oneline origin/main
 | 04-28 | あり | 公開 LP／法務／PWA、開口設定モーダル・倍率プリセット、`ResponsiveDialog` 下寄せ、`scoreOpeningTopic` デバッグ、時間割 `st_level` 連携 |
 | 04-30 | 複数 | 設定提案→同意→適用、日付境界/TZ、監査・レート制限、祝日ガード、ストリーム後処理非同期化、レイアウト改善、**構造化ログ・Vitest・チャットから時間割エディタ・開口カテゴリ推定のサーバー共通化**、NextAuth JSON エラー化・埋め込み一括削除。**同日後半**: アカウント移行の初版、開口プロキシ／SSE 堅牢化、CHANGELOG ハッシュ追記 |
 | 05-01 | 複数 | **Cloud Build／Cloud Run デプロイ**、ビルド高速化・起動耐性、**国民の祝日公式同期ワークフロー**と開口のゴースト除去、開口非ストリームフォールバック、**Cloud Tasks JSON を standalone に同梱**、プロンプト・カレンダー／Today UI・設定、**オーケストレーター待機 SSE**、**移行インポートの重複日ごとの方針と dry-run 詳細・パスフレーズ試行制限** |
-| 05-03 | あり | **薄い日開口**（Wikifeeds / 祝日トリビア）、**趣味 Vertex グラウンディング**・**公式 URL 許可取得**・`hobbyExternalFetches`、**日付境界注意表示**、プロフィール（Wikifeeds 言語・帰属）、ナビ／Today／エントリ UI、ニュース抽象化の足場、話題深掘り分類 |
+| 05-03 | あり | **薄い日開口**（**追記**: ローカル記念日 JSON・Wikifeeds 撤去）、祝日トリビア、**趣味 Vertex グラウンディング**・**公式 URL 許可取得**・`hobbyExternalFetches`、**日付境界注意表示**、プロフィール（帰属・言語）、ナビ／Today／エントリ UI（**追記**: ヘッダー内タイトル編集）、ニュース抽象化の足場、話題深掘り分類 |
 
 ---
 
