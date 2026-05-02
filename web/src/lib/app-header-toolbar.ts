@@ -12,6 +12,20 @@ export const TODAY_MAX_LG_CHAT_PANE_HEIGHT =
   "max-lg:h-[calc(100dvh-4rem-3.875rem-1.5rem-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))] md:max-lg:h-[calc(100dvh-4.25rem-3.875rem-1.5rem-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))]";
 
 /**
+ * エントリ日・チャット列ラッパー（`EntryByDateMainGrid` 内）。
+ * - max-md: ビューポートからヘッダー・底ナビ・セーフエリア・控え 1.25rem を引いた `h`/`min-h`（`flex-1` だと潰れるため `flex-none`）。
+ * - md〜lg: 2 列時は同じ控えを `max-h` に反映。
+ */
+export const ENTRY_BY_DATE_CHAT_PANE_SHELL =
+  [
+    "max-md:flex-none max-md:shrink-0",
+    "max-md:h-[calc(100dvh-3.75rem-3.875rem-1.25rem-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))]",
+    "max-md:min-h-[calc(100dvh-3.75rem-3.875rem-1.25rem-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))]",
+    "md:max-lg:min-h-0 md:max-lg:flex-1 md:max-lg:max-h-[calc(100dvh-3.875rem-3.875rem-1.25rem-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))]",
+    "lg:flex-1 lg:min-h-0 lg:h-auto lg:max-h-none",
+  ].join(" ");
+
+/**
  * エントリ日ページ用：ツールバー実高（約 3.75rem）＋わずかな余白。主文・一覧ドロワー・lg サイドバーを揃える。
  */
 export const APP_MAIN_PT_BELOW_FIXED_HEADER_COMPACT =

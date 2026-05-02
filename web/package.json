@@ -11,6 +11,7 @@
     "env:decrypt": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/env-decrypt.ps1",
     "build:schools": "node scripts/build-schools-index.mjs",
     "sync:jp-holidays": "node scripts/sync-jp-national-holidays.mjs",
+    "data:jp-anniversaries": "node scripts/fetch-zatsuneta-anniversaries.mjs",
     "lint": "eslint",
     "test": "vitest run",
     "verify-interest-urls": "npx --yes tsx ./verify-interest-urls.mts",

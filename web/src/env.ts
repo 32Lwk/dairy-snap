@@ -34,7 +34,6 @@ const _env = createEnv({
     HOBBY_GROUNDING_MODEL: z.string().optional(),
     VERTEX_GEMINI_GROUNDING_MODEL: z.string().optional(),
     HOBBY_FETCH_USER_AGENT: z.string().optional(),
-    WIKIFEEDS_USER_AGENT: z.string().optional(),
   },
   client: {
     NEXT_PUBLIC_APP_ORIGIN: z.string().url(),
@@ -58,7 +57,6 @@ const _env = createEnv({
     HOBBY_GROUNDING_MODEL: process.env.HOBBY_GROUNDING_MODEL,
     VERTEX_GEMINI_GROUNDING_MODEL: process.env.VERTEX_GEMINI_GROUNDING_MODEL,
     HOBBY_FETCH_USER_AGENT: process.env.HOBBY_FETCH_USER_AGENT,
-    WIKIFEEDS_USER_AGENT: process.env.WIKIFEEDS_USER_AGENT,
     NEXT_PUBLIC_APP_ORIGIN: process.env.NEXT_PUBLIC_APP_ORIGIN,
   },
 });

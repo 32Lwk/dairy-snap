@@ -51,9 +51,9 @@ import {
 } from "@/lib/time/entry-temporal-context";
 import { hasInterestProfileSignals, isSparseSchedule } from "@/lib/opening-sparse-schedule";
 import {
-  fetchOnThisDaySelectedForPrompt,
-  formatOnThisDaySystemBlock,
-} from "@/lib/wikifeeds-onthisday";
+  formatJpAnniversaryLocalSystemBlock,
+  getJpAnniversaryNamesForYmd,
+} from "@/lib/jp-anniversary-local";
 import { triviaLineForJapaneseHoliday } from "@/lib/jp-holiday-trivia";
 import { paraphraseHolidayTriviaForOpening } from "@/lib/jp-holiday-trivia-paraphrase";
 import { inferCalendarEventCategory } from "@/lib/calendar-opening-infer-event";
@@ -743,22 +743,11 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
       profile?.occupationRole === "student" && hasTimetableLecturesToday,
   });
 
-  /** ja を先に試し、空・失敗時は fetch 側で en へフォールバック（ユーザー設定は廃止） */
-  const wikiLangPrimary = "ja";
-
-  let onThisDaySystemBlock = "";
+  let jpAnniversarySystemBlock = "";
   if (!jpHolidayNameJa && sparseSchedule) {
-    const parts = entryDateYmd.split("-");
-    const mm = parts[1] ?? "01";
-    const dd = parts[2] ?? "01";
-    const otd = await fetchOnThisDaySelectedForPrompt({
-      wikiLangPrimary,
-      month: mm,
-      day: dd,
-      correlationId,
-    });
-    if (otd) {
-      onThisDaySystemBlock = formatOnThisDaySystemBlock(otd, entryDateYmd, {
+    const names = getJpAnniversaryNamesForYmd(entryDateYmd);
+    if (names?.length) {
+      jpAnniversarySystemBlock = formatJpAnniversaryLocalSystemBlock(names, entryDateYmd, {
         showUserFacingAttribution: true,
       });
     }
@@ -913,7 +902,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
       : "",
     holidayGuardBlock,
     "",
-    isOpening && onThisDaySystemBlock ? onThisDaySystemBlock : "",
+    isOpening && jpAnniversarySystemBlock ? jpAnniversarySystemBlock : "",
     isOpening && holidayTriviaSystemBlock ? holidayTriviaSystemBlock : "",
     !isOpening && sparseThreadHintBlock ? sparseThreadHintBlock : "",
     !isOpening && topicDeepening ? formatOrchestratorTopicDeepeningBlock() : "",

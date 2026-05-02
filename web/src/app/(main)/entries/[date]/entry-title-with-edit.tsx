@@ -49,10 +49,13 @@ export function EntryTitleWithEdit({
   initialTitle,
   /** 指定時は「編集」で AI 日記草案プレビュー（`JournalDraftPanel` と同じシート）を開く */
   onOpenJournalPreview,
+  /** 固定ヘッダー内など、コンパクトなボタン */
+  variant = "default",
 }: {
   entryId: string;
   initialTitle: string;
   onOpenJournalPreview?: () => void;
+  variant?: "default" | "toolbar";
 }) {
   const router = useRouter();
   const titleId = useId();
@@ -102,7 +105,11 @@ export function EntryTitleWithEdit({
           setDraft(initialTitle);
           setOpen(true);
         }}
-        className="shrink-0 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-800 shadow-sm hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-600 dark:hover:bg-zinc-900"
+        className={
+          variant === "toolbar"
+            ? "shrink-0 rounded-md border border-zinc-200 bg-white px-2 py-1 text-[10px] font-medium leading-none text-zinc-800 shadow-sm hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-600 dark:hover:bg-zinc-900 sm:px-2.5 sm:text-xs"
+            : "shrink-0 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-800 shadow-sm hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:border-zinc-600 dark:hover:bg-zinc-900"
+        }
       >
         編集
       </button>

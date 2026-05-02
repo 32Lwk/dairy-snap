@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { PlutchikEntryDetailMobile } from "@/components/plutchik-entry-detail-mobile";
 import { parsePlutchikStoredJson } from "@/lib/emotion/plutchik";
+import { ENTRY_BY_DATE_CHAT_PANE_SHELL } from "@/lib/app-header-toolbar";
 import { EntryActions } from "./entry-actions";
 import { EntryChat } from "./entry-chat";
 import { EntryImages } from "./entry-images";
@@ -78,21 +79,24 @@ export function EntryByDateMainGrid({
   return (
     <div
       className={[
-        "grid min-h-0 flex-1 grid-cols-1 gap-6 pt-4 sm:gap-7 sm:pt-5 md:grid-cols-12 md:grid-rows-[minmax(0,1fr)] md:gap-6 md:min-h-0 lg:gap-8",
+        "relative isolate grid min-h-0 flex-1 grid-cols-1 gap-4 pt-2 sm:gap-6 sm:pt-2.5 md:min-h-0 md:flex-1 md:grid-cols-12 md:grid-rows-[minmax(0,1fr)] md:gap-6 md:pt-3 lg:gap-8 lg:pt-3",
         "md:items-stretch",
-        "max-md:min-h-[22rem]",
       ].join(" ")}
     >
-      <div className="order-1 min-h-0 md:col-span-7 md:order-1 md:flex md:h-full md:min-h-0 md:flex-col md:overflow-hidden lg:col-span-6">
-        <div className="flex min-h-0 flex-1 flex-col md:min-h-0">
-          {hasSavedBody ? (
-            <article className="mb-4 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
-              <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">本文</h2>
-              <pre className="mt-2 max-h-[min(52dvh,28rem)] overflow-y-auto overscroll-y-contain whitespace-pre-wrap rounded-2xl border border-zinc-200 bg-zinc-50/80 p-4 text-sm text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-100">
-                {body}
-              </pre>
-            </article>
-          ) : null}
+      <div className="order-1 flex min-h-0 min-w-0 flex-col md:col-span-7 md:order-1 md:h-full md:min-h-0 md:overflow-hidden lg:col-span-6">
+        {hasSavedBody ? (
+          <article className="mb-3 shrink-0 rounded-xl border border-zinc-200 bg-white p-3 sm:mb-4 sm:p-4 dark:border-zinc-800 dark:bg-zinc-950 md:mb-4 md:max-h-[min(42dvh,22rem)] md:min-h-0 md:overflow-hidden">
+            <h2 className="text-xs font-semibold text-zinc-800 sm:text-sm dark:text-zinc-200">本文</h2>
+            <pre className="mt-2 max-h-[min(40dvh,16rem)] overflow-y-auto overscroll-y-contain whitespace-pre-wrap rounded-2xl border border-zinc-200 bg-zinc-50/80 p-3 text-xs text-zinc-900 sm:max-h-[min(52dvh,28rem)] sm:p-4 sm:text-sm dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-100 md:max-h-[min(36dvh,18rem)]">
+              {body}
+            </pre>
+          </article>
+        ) : null}
+        <div
+          className={["flex min-h-0 w-full min-w-0 flex-col overflow-hidden", ENTRY_BY_DATE_CHAT_PANE_SHELL].join(
+            " ",
+          )}
+        >
           <EntryChat
             key={`${entryId}-${initialThreadId ?? "new"}-${initialMessages.length}`}
             entryId={entryId}
@@ -101,7 +105,7 @@ export function EntryByDateMainGrid({
             pendingSettingsSummaryJa={pendingSettingsSummaryJa}
             initialMessages={initialMessages}
             variant="default"
-            layoutHeight="fill"
+            layoutHeight="scrollStack"
             journalDraftPlacement="none"
             conversationAccordion={hasSavedBody}
             onThreadIdChange={onThreadIdChange}
@@ -112,7 +116,7 @@ export function EntryByDateMainGrid({
       </div>
       <div
         className={[
-          "order-2 space-y-6 md:col-span-5 md:order-2 md:min-h-0 md:overflow-y-auto md:overscroll-y-contain md:pr-0.5 lg:col-span-6",
+          "order-2 min-h-0 min-w-0 space-y-4 sm:space-y-6 md:col-span-5 md:order-2 md:min-h-0 md:space-y-6 md:overflow-y-auto md:overscroll-y-contain md:pr-6 md:-mr-6 xl:-mr-8 xl:pr-8 lg:col-span-6",
         ].join(" ")}
       >
         {!hasSavedBody ? (
