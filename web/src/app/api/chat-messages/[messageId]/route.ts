@@ -66,7 +66,13 @@ export async function PATCH(
 
   let editOutcome: "kept_tail" | "regenerated_tail" = "kept_tail";
   let removedFollowingCount = 0;
-  let newAssistant: { id: string; role: string; content: string; model: string | null } | null = null;
+  let newAssistant: {
+    id: string;
+    role: string;
+    content: string;
+    model: string | null;
+    sentAt: string;
+  } | null = null;
 
   if (wantRegenerate) {
     if (!process.env.OPENAI_API_KEY?.trim()) {
@@ -98,6 +104,7 @@ export async function PATCH(
         role: "assistant",
         content: regen.assistant.content,
         model: regen.assistant.model,
+        sentAt: regen.assistant.sentAt,
       };
       editOutcome = "regenerated_tail";
 

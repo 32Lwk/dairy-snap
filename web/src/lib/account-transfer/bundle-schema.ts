@@ -206,6 +206,8 @@ const chatMessageRowSchema = z.object({
   tokenEstimate: z.number().int().nullable(),
   agentName: z.string().nullable(),
   createdAt: isoDateString,
+  /** v1 後方互換: 未設定時は import 側で createdAt と同じにする */
+  updatedAt: isoDateString.optional(),
 });
 
 const aiArtifactRowSchema = z.object({

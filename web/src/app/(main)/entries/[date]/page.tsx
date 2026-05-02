@@ -98,6 +98,7 @@ export default async function EntryByDatePage({
           role: m.role,
           content: m.content,
           model: m.model,
+          sentAt: m.updatedAt.toISOString(),
         })) ?? []
       }
       latitude={entry.latitude}

@@ -1173,6 +1173,7 @@ async function insertAllRows(
         .map((r) => {
           const t = idMap.chatThreads.get(r.threadId);
           if (!t) return null;
+          const created = new Date(r.createdAt);
           return {
             id: idMap.chatMessages.get(r.id)!,
             threadId: t,
@@ -1182,7 +1183,8 @@ async function insertAllRows(
             latencyMs: r.latencyMs,
             tokenEstimate: r.tokenEstimate,
             agentName: r.agentName,
-            createdAt: new Date(r.createdAt),
+            createdAt: created,
+            updatedAt: r.updatedAt ? new Date(r.updatedAt) : created,
           };
         })
         .filter((x): x is NonNullable<typeof x> => x !== null),

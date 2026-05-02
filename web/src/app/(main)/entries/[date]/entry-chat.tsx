@@ -51,6 +51,8 @@ type Msg = {
   role: string;
   content: string;
   model?: string | null;
+  /** メッセージ行の `updatedAt`（ISO）。開口は本文確定時刻に近い */
+  sentAt?: string | null;
   /** このアシスタント発話直後にチャットから設定が適用されたとき（セッション中のみ） */
   settingsChangeTip?: SettingsChangeTip;
 };
@@ -124,6 +126,24 @@ function stripLightMarkdownForChatDisplay(text: string): string {
   return s.replace(/\*([^*\n]+?)\*/g, "$1");
 }
 
+function formatAssistantSentAtTokyo(iso: string): string {
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return new Intl.DateTimeFormat("ja-JP", {
+      timeZone: "Asia/Tokyo",
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).format(d);
+  } catch {
+    return iso;
+  }
+}
+
 function UserMessageBubble({
   m,
   onUpdated,
@@ -137,7 +157,7 @@ function UserMessageBubble({
     content: string,
     meta?: {
       editOutcome?: "kept_tail" | "regenerated_tail";
-      newAssistant?: { id: string; role: string; content: string; model?: string | null };
+      newAssistant?: { id: string; role: string; content: string; model?: string | null; sentAt?: string | null };
     },
   ) => void;
   /** 楽観的 UI は親で行い、ここでは ID のみ通知 */
@@ -186,7 +206,7 @@ function UserMessageBubble({
       const data = (await res.json().catch(() => ({}))) as {
         editOutcome?: "kept_tail" | "regenerated_tail";
         error?: string;
-        newAssistant?: { id: string; role: string; content: string; model?: string | null };
+        newAssistant?: { id: string; role: string; content: string; model?: string | null; sentAt?: string | null };
       };
       if (!res.ok) {
         setSaveError(typeof data.error === "string" ? data.error : "保存に失敗しました");
@@ -360,6 +380,7 @@ function AssistantBubble({
   content,
   streaming,
   subNote,
+  sentAtIso,
   settingsChangeTip,
   onUndoSettings,
   undoBusy,
@@ -369,6 +390,8 @@ function AssistantBubble({
   streaming?: boolean;
   /** 待機中など、本文の下に控えめに表示する補足 */
   subNote?: string;
+  /** DB のメッセージ更新時刻（開口・応答の生成・送信の記録） */
+  sentAtIso?: string | null;
   settingsChangeTip?: SettingsChangeTip;
   onUndoSettings?: () => void;
   undoBusy?: boolean;
@@ -385,6 +408,15 @@ function AssistantBubble({
         ) : null}
         {streaming && <span className="ml-0.5 inline-block h-3 w-0.5 animate-pulse bg-emerald-500 align-middle" />}
       </div>
+      {sentAtIso && !streaming ? (
+        <time
+          dateTime={sentAtIso}
+          className="max-w-[min(100%,28rem)] pl-0.5 text-[10px] font-normal tabular-nums leading-none text-zinc-400 dark:text-zinc-500"
+          title={`${sentAtIso}（記録時刻・東京表示）`}
+        >
+          生成・送信 {formatAssistantSentAtTokyo(sentAtIso)}
+        </time>
+      ) : null}
       {!streaming && settingsChangeTip ? (
         <div className="max-w-[min(100%,28rem)] rounded-xl border border-emerald-200/90 bg-emerald-50/95 px-3 py-2 text-[11px] leading-snug text-emerald-950 dark:border-emerald-900/50 dark:bg-emerald-950/45 dark:text-emerald-100">
           <p>
@@ -932,6 +964,7 @@ export function EntryChat({
       let doneUserMessageId: string | undefined;
       let doneAssistantMessageId: string | undefined;
       let doneAssistantModel: string | null | undefined;
+      let doneAssistantSentAt: string | undefined;
       let triggerJournalDraft = false;
       let streamingSettingsUndo: SettingsChangeTip | undefined;
       let doneSeen = false;
@@ -956,6 +989,7 @@ export function EntryChat({
               userMessageId?: string;
               assistantMessageId?: string;
               assistantModel?: string | null;
+              assistantSentAt?: string;
               triggerJournalDraft?: boolean;
               settingsUndo?: SettingsChangeTip;
               navigateToEntryYmd?: string;
@@ -978,6 +1012,8 @@ export function EntryChat({
               if (typeof json.userMessageId === "string") doneUserMessageId = json.userMessageId;
               if (typeof json.assistantMessageId === "string") doneAssistantMessageId = json.assistantMessageId;
               if (json.assistantModel !== undefined) doneAssistantModel = json.assistantModel ?? null;
+              if (typeof json.assistantSentAt === "string" && json.assistantSentAt.trim())
+                doneAssistantSentAt = json.assistantSentAt.trim();
               if (json.triggerJournalDraft === true) triggerJournalDraft = true;
               if (json.settingsUndo?.previous && json.settingsUndo?.next) {
                 streamingSettingsUndo = json.settingsUndo as SettingsChangeTip;
@@ -1017,6 +1053,7 @@ export function EntryChat({
             role: "assistant",
             content: assistant,
             model: doneAssistantModel ?? null,
+            sentAt: doneAssistantSentAt ?? new Date().toISOString(),
             ...(streamingSettingsUndo ? { settingsChangeTip: streamingSettingsUndo } : {}),
           },
         ];
@@ -1093,6 +1130,7 @@ export function EntryChat({
                             role: "assistant",
                             content: a.content,
                             model: a.model ?? null,
+                            sentAt: a.sentAt ?? null,
                           },
                         ];
                       }
@@ -1116,6 +1154,7 @@ export function EntryChat({
                     : m.content
                 }
                 streaming={isOpeningPendingModel(m.model) && !m.content.trim()}
+                sentAtIso={m.sentAt ?? null}
                 settingsChangeTip={m.settingsChangeTip}
                 undoBusy={settingsUndoBusy}
                 onUndoSettings={

@@ -8,7 +8,7 @@ import { EntryImages } from "../entries/[date]/entry-images";
 import { JournalDraftPanel } from "../entries/[date]/journal-draft-panel";
 import { useTodayJournalDraftControls } from "./today-journal-draft-bridge";
 
-type Msg = { id: string; role: string; content: string; model?: string | null };
+type Msg = { id: string; role: string; content: string; model?: string | null; sentAt?: string | null };
 
 export function TodayMainGrid({
   entryId,

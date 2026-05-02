@@ -10,7 +10,7 @@ import { buildSecurityReviewPayload, scheduleSecurityReview } from "@/server/sec
 
 export type ReflectiveChatRegenerateResult = {
   removedFollowingCount: number;
-  assistant: { id: string; content: string; model: string | null };
+  assistant: { id: string; content: string; model: string | null; sentAt: string };
 };
 
 /**
@@ -222,6 +222,11 @@ export async function regenerateReflectiveChatTail(args: {
 
   return {
     removedFollowingCount,
-    assistant: { id: assistant.id, content: storedAssistant, model: assistant.model },
+    assistant: {
+      id: assistant.id,
+      content: storedAssistant,
+      model: assistant.model,
+      sentAt: assistant.updatedAt.toISOString(),
+    },
   };
 }

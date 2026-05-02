@@ -399,6 +399,8 @@ model ChatMessage {
   agentName     String?
 
   createdAt DateTime @default(now())
+  /** 開口プレースホルダ→本文確定など、行が更新された時刻（表示は主にこちらを使用） */
+  updatedAt DateTime @updatedAt
 
   thread          ChatThread       @relation(fields: [threadId], references: [id], onDelete: Cascade)
   securityReview  SecurityReview?

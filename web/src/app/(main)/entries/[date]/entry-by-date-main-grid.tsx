@@ -9,7 +9,7 @@ import { EntryChat } from "./entry-chat";
 import { EntryImages } from "./entry-images";
 import { JournalDraftPanel } from "./journal-draft-panel";
 
-type Msg = { id: string; role: string; content: string; model?: string | null };
+type Msg = { id: string; role: string; content: string; model?: string | null; sentAt?: string | null };
 
 type AppendEv = { id: string; occurredAt: string; fragment: string };
 

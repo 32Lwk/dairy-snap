@@ -116,6 +116,7 @@ export default async function TodayPage() {
                 role: m.role,
                 content: m.content,
                 model: m.model,
+                sentAt: m.updatedAt.toISOString(),
               })) ?? []
             }
             latitude={entry.latitude}

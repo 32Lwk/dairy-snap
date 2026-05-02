@@ -452,6 +452,7 @@ export async function POST(req: NextRequest) {
               userMessageId: userMsg.id,
               assistantMessageId: assistant.id,
               assistantModel: orchestratorModel,
+              assistantSentAt: assistant.updatedAt.toISOString(),
               triggerJournalDraft,
               journalDraftMaterial,
               settingsUndo: settingsUndoPayload,

@@ -229,6 +229,7 @@ async function readUserBundleData(userId: string): Promise<BundleData> {
       tokenEstimate: r.tokenEstimate ?? null,
       agentName: r.agentName ?? null,
       createdAt: r.createdAt.toISOString(),
+      updatedAt: r.updatedAt.toISOString(),
     })),
     aiArtifacts: aiArtifacts
       .filter((r) => !r.entryId || !skippedEntryIds.has(r.entryId))
