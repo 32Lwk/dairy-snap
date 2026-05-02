@@ -254,13 +254,17 @@ export function EntryActions({
   }, [entryId, wj, fetchWeather]);
 
   return (
-    <div className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
-      {msg ? <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">{msg}</p> : null}
+    <div className="rounded-xl border border-zinc-200 p-3 sm:p-3.5 md:max-lg:p-3 lg:p-4 dark:border-zinc-800">
+      {msg ? (
+        <p className="mt-2 text-[11px] text-zinc-600 sm:text-xs lg:text-sm dark:text-zinc-400">{msg}</p>
+      ) : null}
       {prependWeather ? <div className="mt-4">{prependWeather}</div> : null}
 
       <div className={!msg && !prependWeather ? "mt-0" : "mt-6"}>
-        <h3 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">天気・位置（Open-Meteo）</h3>
-        <p className="mt-1 text-xs text-zinc-500">
+        <h3 className="text-[11px] font-medium text-zinc-700 sm:text-xs lg:text-sm dark:text-zinc-300">
+          天気・位置（Open-Meteo）
+        </h3>
+        <p className="mt-1 text-[10px] leading-snug text-zinc-500 sm:text-[11px] md:text-xs lg:text-sm lg:leading-normal">
           位置を保存すると、その日のその地点で午前・午後の天気を自動記録します。手動の「天気を取得」も同様です。エントリに位置がない場合は設定の既定地点、なければ東京代表地点を使います。
         </p>
         {wj?.kind === "am_pm" && wj.am && wj.pm ? (
@@ -272,7 +276,7 @@ export function EntryActions({
             locationNote={wj.locationNote}
           />
         ) : wj?.weatherLabel != null ? (
-          <p className="mt-2 text-sm text-zinc-700 dark:text-zinc-300">
+          <p className="mt-2 text-[11px] text-zinc-700 sm:text-xs lg:text-sm dark:text-zinc-300">
             最終取得: {wj.weatherLabel}
             {wj.temperature_2m != null ? ` / ${wj.temperature_2m}°C` : ""}
             {wj.period ? `（${wj.period}）` : ""}
@@ -292,12 +296,12 @@ export function EntryActions({
             />
           );
         })()}
-        <div className="mt-2 flex flex-wrap items-end gap-2">
+        <div className="mt-2 flex flex-wrap items-end gap-1.5 sm:gap-2">
           <button
             type="button"
             disabled={busy !== null}
             onClick={() => openLocationMap()}
-            className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm dark:border-zinc-700"
+            className="rounded-lg border border-zinc-200 px-2.5 py-1 text-[11px] dark:border-zinc-700 sm:px-3 sm:py-1.5 sm:text-sm"
           >
             {"地図で指定"}
           </button>
@@ -305,7 +309,7 @@ export function EntryActions({
             type="button"
             disabled={busy !== null}
             onClick={() => void saveLocation()}
-            className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm dark:border-zinc-700"
+            className="rounded-lg border border-zinc-200 px-2.5 py-1 text-[11px] dark:border-zinc-700 sm:px-3 sm:py-1.5 sm:text-sm"
           >
             {busy === "loc" ? "…" : "位置を保存"}
           </button>
@@ -313,7 +317,7 @@ export function EntryActions({
             type="button"
             disabled={busy !== null}
             onClick={() => void requestGeolocation()}
-            className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm dark:border-zinc-700"
+            className="rounded-lg border border-zinc-200 px-2.5 py-1 text-[11px] dark:border-zinc-700 sm:px-3 sm:py-1.5 sm:text-sm"
           >
             {busy === "geo" ? "…" : "現在地"}
           </button>
@@ -321,7 +325,7 @@ export function EntryActions({
             type="button"
             disabled={busy !== null}
             onClick={() => void fetchWeather({ silent: false })}
-            className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm dark:border-zinc-700"
+            className="rounded-lg border border-zinc-200 px-2.5 py-1 text-[11px] dark:border-zinc-700 sm:px-3 sm:py-1.5 sm:text-sm"
           >
             {busy === "wx" ? "…" : "天気を取得"}
           </button>

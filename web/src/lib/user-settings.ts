@@ -1052,7 +1052,6 @@ function parseProfile(raw: unknown): UserProfileSettings | undefined {
   const timeZoneRaw = str("timeZone");
   const timeZone =
     timeZoneRaw && timeZoneRaw.length <= 120 && isValidIanaTimeZone(timeZoneRaw) ? timeZoneRaw.trim() : undefined;
-
   if (nickname) out.nickname = nickname;
   if (birthDate) out.birthDate = birthDate;
   if (zodiac) out.zodiac = zodiac;
@@ -1211,7 +1210,7 @@ export function serializeProfileForApi(
     }
   }
 
-  return {
+  const base: UserProfileSettings = {
     nickname: t(form.nickname),
     birthDate,
     zodiac: t(form.zodiac),
@@ -1244,6 +1243,7 @@ export function serializeProfileForApi(
     ...(studentTimetable ? { studentTimetable } : {}),
     ...(workLifeAnswers ? { workLifeAnswers } : {}),
   };
+  return base;
 }
 
 /**
@@ -1328,12 +1328,16 @@ export function formatUserProfileForPrompt(profile: UserProfileSettings | undefi
   return lines.length > 0 ? lines.join("\n") : "（未登録）";
 }
 
+/**
+ * オーケストレータ静的プロフィールの上限。
+ * 薄い日・趣味シグナル強化でプロンプトが伸びるため、2026-05 時点で全体を引き上げた。
+ */
 const ORCH_STATIC_TRUNC = {
-  studentLifeNotes: 520,
-  education: 720,
-  preferences: 420,
-  interestPicks: 960,
-  timetableSlice: 1000,
+  studentLifeNotes: 640,
+  education: 880,
+  preferences: 520,
+  interestPicks: 1200,
+  timetableSlice: 1200,
 } as const;
 
 function truncProfileField(s: string | undefined, max: number): string {

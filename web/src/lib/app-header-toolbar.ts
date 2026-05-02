@@ -6,6 +6,45 @@ export const APP_MAIN_PT_BELOW_FIXED_HEADER =
   "pt-[calc(4rem+env(safe-area-inset-top,0px))] md:pt-[calc(4.25rem+env(safe-area-inset-top,0px))]";
 
 /**
+ * 今日ページ max-lg：固定ヘッダー（`APP_MAIN_PT` 相当）＋`MainLayoutBody` の底ナビ予約（3.875rem＋safe-bottom）を除いたチャットペイン高。
+ */
+export const TODAY_MAX_LG_CHAT_PANE_HEIGHT =
+  "max-lg:h-[calc(100dvh-4rem-3.875rem-1.5rem-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))] md:max-lg:h-[calc(100dvh-4.25rem-3.875rem-1.5rem-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))]";
+
+/**
+ * エントリ日ページ用：ツールバー実高（約 3.75rem）＋わずかな余白。主文・一覧ドロワー・lg サイドバーを揃える。
+ */
+export const APP_MAIN_PT_BELOW_FIXED_HEADER_COMPACT =
+  "pt-[calc(3.75rem+env(safe-area-inset-top,0px))] md:pt-[calc(3.875rem+env(safe-area-inset-top,0px))]";
+
+/** 固定ヘッダー直下からドロワーを開始する場合の `top`（`APP_MAIN_PT_BELOW_FIXED_HEADER` と同じオフセット） */
+export const APP_FIXED_HEADER_TOP_FOR_OVERLAY =
+  "top-[calc(4rem+env(safe-area-inset-top,0px))] md:top-[calc(4.25rem+env(safe-area-inset-top,0px))]";
+
+/** `APP_MAIN_PT_BELOW_FIXED_HEADER_COMPACT` と同じ基準のドロワー `top` */
+export const APP_FIXED_HEADER_TOP_FOR_OVERLAY_COMPACT =
+  "top-[calc(3.75rem+env(safe-area-inset-top,0px))] md:top-[calc(3.875rem+env(safe-area-inset-top,0px))]";
+
+/**
+ * エントリ一覧の `aside` が `lg:static` のとき、全幅固定ヘッダーと重ならないよう主文と同じ上余白を確保する。
+ * （ビューポート幅 lg 以上では md も有効のため 4.25rem 側に揃える）
+ */
+export const APP_ENTRIES_NAV_SIDEBAR_LG_PT_BELOW_FIXED_HEADER =
+  "lg:pt-[calc(4.25rem+env(safe-area-inset-top,0px))]";
+
+/** コンパクト主文（エントリ日）と揃える lg サイドバー上余白 */
+export const APP_ENTRIES_NAV_SIDEBAR_LG_PT_BELOW_FIXED_HEADER_COMPACT =
+  "lg:pt-[calc(3.875rem+env(safe-area-inset-top,0px))]";
+
+/** 上記オフセット分を除いたビューポート高（モバイル固定ドロワーの `h` / `max-h`） */
+export const APP_FIXED_HEADER_SUBTRACT_FROM_100DVH =
+  "h-[calc(100dvh-4rem-env(safe-area-inset-top,0px))] max-h-[calc(100dvh-4rem-env(safe-area-inset-top,0px))] md:h-[calc(100dvh-4.25rem-env(safe-area-inset-top,0px))] md:max-h-[calc(100dvh-4.25rem-env(safe-area-inset-top,0px))]";
+
+/** `APP_FIXED_HEADER_TOP_FOR_OVERLAY_COMPACT` に対応するドロワー高 */
+export const APP_FIXED_HEADER_SUBTRACT_FROM_100DVH_COMPACT =
+  "h-[calc(100dvh-3.75rem-env(safe-area-inset-top,0px))] max-h-[calc(100dvh-3.75rem-env(safe-area-inset-top,0px))] md:h-[calc(100dvh-3.875rem-env(safe-area-inset-top,0px))] md:max-h-[calc(100dvh-3.875rem-env(safe-area-inset-top,0px))]";
+
+/**
  * アプリ共通：ヘッダー内1行ツールバー（設定ページと同一の pt/pb/gap で高さを統一）
  */
 export const APP_HEADER_TOOLBAR_INNER =

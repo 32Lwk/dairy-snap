@@ -242,6 +242,7 @@ export async function GET(req: NextRequest) {
         imageGenerations: counter.imageGenerations,
         dailySummaries: counter.dailySummaries,
         settingsChanges: counter.settingsChanges,
+        hobbyExternalFetches: counter.hobbyExternalFetches,
       },
       promptVersions: PROMPT_VERSIONS,
     },

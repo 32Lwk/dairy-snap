@@ -23,7 +23,7 @@ export default async function EntriesIndexPage() {
   const entries = await getRecentEntriesForNav(r.user.id);
 
   return (
-    <>
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto lg:overflow-hidden">
       <div className="mx-auto w-full px-4 py-6 lg:hidden md:max-w-2xl">
         <header className="mb-6">
           <Link href="/today" className="text-sm text-emerald-700 hover:underline dark:text-emerald-400">
@@ -60,7 +60,7 @@ export default async function EntriesIndexPage() {
         )}
       </div>
 
-      <div className="hidden min-h-[50vh] flex-col items-center justify-center px-6 py-12 text-center lg:flex">
+      <div className="hidden min-h-0 flex-1 flex-col items-center justify-center px-6 py-12 text-center lg:flex">
         <p className="max-w-sm text-sm text-zinc-600 dark:text-zinc-400">
           左の一覧から日付を選ぶと、ここにエントリの詳細が表示されます。
         </p>
@@ -71,6 +71,6 @@ export default async function EntriesIndexPage() {
           全文検索へ
         </Link>
       </div>
-    </>
+    </div>
   );
 }

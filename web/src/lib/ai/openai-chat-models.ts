@@ -177,6 +177,26 @@ export function getSupervisorChatFallbackModel(): string | null {
   );
 }
 
+/**
+ * 振り返りチャットの「深掘りモード」二値分類。既定はソーシャル mini（軽量）。
+ * `OPENAI_TOPIC_DEEPENING_CLASSIFIER_MODEL=none` で無効化。
+ */
+export function getTopicDeepeningClassifierChatModel(): string | null {
+  const raw = process.env.OPENAI_TOPIC_DEEPENING_CLASSIFIER_MODEL;
+  if (raw !== undefined && (/^none$/i.test(raw.trim()) || raw.trim() === "")) {
+    return null;
+  }
+  const m = raw?.trim();
+  return m || getAgentSocialMiniChatModel();
+}
+
+export function getTopicDeepeningClassifierChatFallbackModel(): string | null {
+  return envFallbackOrDefault(
+    "OPENAI_TOPIC_DEEPENING_CLASSIFIER_FALLBACK_MODEL",
+    getAgentSocialMiniChatFallbackModel() ?? OPENAI_CHAT_MODEL_FALLBACK_DEFAULT.socialMini,
+  );
+}
+
 export function getCalendarClassifyOpenAiModel(): string {
   return process.env.OPENAI_AUTO_CLASSIFY_MODEL?.trim() || OPENAI_CHAT_MODEL_SNAPSHOT.calendarAutoClassifyOpenAi;
 }

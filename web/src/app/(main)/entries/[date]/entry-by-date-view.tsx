@@ -7,7 +7,7 @@ import { useEntriesNavDrawer } from "@/components/entries-nav-layout-shell";
 import {
   APP_HEADER_TITLE,
   APP_HEADER_TOOLBAR_INNER,
-  APP_MAIN_PT_BELOW_FIXED_HEADER,
+  APP_MAIN_PT_BELOW_FIXED_HEADER_COMPACT,
 } from "@/lib/app-header-toolbar";
 import { EntryByDateMainGrid } from "./entry-by-date-main-grid";
 import { EntryTitleWithEdit } from "./entry-title-with-edit";
@@ -32,10 +32,10 @@ export function EntryByDateView(
 
   return (
     <div
-      className={`mx-auto w-full px-4 pb-6 sm:px-6 md:max-w-5xl lg:max-w-6xl lg:px-10 ${APP_MAIN_PT_BELOW_FIXED_HEADER}`}
+      className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden w-full px-4 pb-1.5 sm:px-6 sm:pb-2 lg:px-6 xl:px-8 ${APP_MAIN_PT_BELOW_FIXED_HEADER_COMPACT}`}
     >
       <header className="fixed left-0 right-0 top-0 z-30 border-b border-zinc-200/90 bg-white/95 backdrop-blur-md dark:border-zinc-800/90 dark:bg-zinc-950/95">
-        <div className={`${APP_HEADER_TOOLBAR_INNER} max-w-5xl lg:max-w-6xl`}>
+        <div className={`${APP_HEADER_TOOLBAR_INNER} w-full min-w-0 max-w-none`}>
           <div className="flex min-h-9 min-w-0 flex-1 items-center gap-x-3">
             <Link
               href={`/calendar/${date}`}
@@ -57,7 +57,7 @@ export function EntryByDateView(
         </div>
       </header>
 
-      <div className="mt-3 space-y-2 sm:mt-4">
+      <div className="shrink-0 mt-1.5 space-y-1.5 sm:mt-2">
         <div className="flex items-start justify-end gap-2 md:items-center">
           <p
             className={`min-w-0 flex-1 text-base leading-snug ${
@@ -77,13 +77,15 @@ export function EntryByDateView(
         {mood ? <p className="text-sm text-zinc-500">気分: {mood}</p> : null}
       </div>
 
-      <EntryByDateMainGrid
-        {...grid}
-        entryId={entryId}
-        journalDraftOpenPreviewSignal={journalDraftOpenPreviewSignal}
-        savedEntryTitle={initialTitle}
-        savedEntryTagsCsv={savedEntryTagsCsv}
-      />
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <EntryByDateMainGrid
+          {...grid}
+          entryId={entryId}
+          journalDraftOpenPreviewSignal={journalDraftOpenPreviewSignal}
+          savedEntryTitle={initialTitle}
+          savedEntryTagsCsv={savedEntryTagsCsv}
+        />
+      </div>
     </div>
   );
 }

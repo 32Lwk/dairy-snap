@@ -41,6 +41,9 @@ export type WeatherContext = {
   narrativeHint?: string;
   /** オーケストレーター system 用（英語）：東京の壁時計・同一日なら太陽位相 */
   wallClockDaylightBlockEn?: string;
+  /** wallClock 再生成用（オーケストレーターで時間割連動を付けるときに利用） */
+  promptLat?: number;
+  promptLon?: number;
   /** エントリ日が東京「今日」のときの太陽位相（`query_weather` 応答メモ用） */
   entryTodaySolarPhase?: LocalSolarPhase;
   /** Open-Meteo forecast 取得時に併せて取った現況（任意） */
@@ -207,7 +210,7 @@ export const ORCHESTRATOR_TOOLS = [
     function: {
       name: "query_hobby",
       description:
-        "ユーザーの趣味・関心タグ・興味分野をもとに会話の糸口を提案する。MBTI が外向・感情系（E/F）の場合は積極的に呼ぶ。",
+        "ユーザーの趣味・関心タグ・興味分野をもとに会話の糸口を提案する。サーバー側で許可ドメインの抜粋・（設定時）検索グラウンディングを取り込む。MBTI が外向・感情系（E/F）のときは呼びやすい。**開口では必須ではない**（遅延・コスト）。カレンダーが薄く時間割アンカーも無いときは **query_school より query_hobby を優先**しやすい。**Topic deepening**（日記草案前の深掘り・詰まり回復）では、予定の薄さに関係なく呼びやすい。",
       parameters: {
         type: "object",
         properties: {

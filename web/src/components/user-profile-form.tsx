@@ -49,6 +49,7 @@ import {
 import { OCCUPATION_ROLE_OPTIONS } from "@/lib/occupation-role";
 import { emptyTimetable, serializeTimetable } from "@/lib/timetable";
 import { emitLocalSettingsSavedFromJson } from "@/lib/settings-sync-client";
+import { InterestOfficialUrlsEditor } from "@/components/interest-official-urls-editor";
 import { serializeProfileForApi, type UserProfileSettings } from "@/lib/user-settings";
 import { westernZodiacJaFromYmd } from "@/lib/zodiac-western";
 
@@ -1213,6 +1214,15 @@ export function UserProfileForm({
           onChange={(next) => set("interestPicks", next)}
         />
       </div>
+
+      <details className="rounded-xl border border-zinc-200 dark:border-zinc-800">
+        <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-medium text-zinc-600 dark:text-zinc-300">
+          趣味タグ向け公式 URL（上級・任意）
+        </summary>
+        <div className="border-t border-zinc-100 px-2 pb-2 pt-1 dark:border-zinc-800">
+          <InterestOfficialUrlsEditor />
+        </div>
+      </details>
 
       <AgentPersonaPreferences form={form} patchForm={patchForm} />
 

@@ -17,6 +17,7 @@ import {
 import { withChatModelFallbackAndModel } from "@/lib/ai/openai-model-fallback";
 import {
   diffCalendarDaysInZone,
+  formatYmdInTimeZone,
   getEffectiveTodayYmd,
   resolveDayBoundaryEndTime,
   resolveUserTimeZone,
@@ -43,13 +44,23 @@ import {
   formatOrchestratorDayBoundaryBlock,
   formatOrchestratorConversationScopeBlock,
   formatOrchestratorScheduleGroundingBlock,
+  formatOrchestratorSparseThreadHintBlock,
   formatOrchestratorTemporalBlock,
   formatOrchestratorWallClockDaylightBlock,
   ORCHESTRATOR_DAY_CALENDAR_HEADING,
 } from "@/lib/time/entry-temporal-context";
+import { hasInterestProfileSignals, isSparseSchedule } from "@/lib/opening-sparse-schedule";
+import {
+  fetchOnThisDaySelectedForPrompt,
+  formatOnThisDaySystemBlock,
+} from "@/lib/wikifeeds-onthisday";
+import { triviaLineForJapaneseHoliday } from "@/lib/jp-holiday-trivia";
+import { paraphraseHolidayTriviaForOpening } from "@/lib/jp-holiday-trivia-paraphrase";
 import { inferCalendarEventCategory } from "@/lib/calendar-opening-infer-event";
 import {
+  countSubstantiveCalendarPlanEvents,
   filterCalendarEventsForAiNationalHolidaySanity,
+  isDecorativeNationalHolidayLikeCalendarEvent,
   resolveJapaneseHolidayNameForEntry,
 } from "@/lib/jp-holiday";
 import { AppLogScope, newCorrelationId, scheduleAppLog } from "@/lib/server/app-log";
@@ -57,8 +68,11 @@ import { DEFAULT_WEATHER_LATITUDE, DEFAULT_WEATHER_LONGITUDE } from "@/lib/locat
 import {
   formatOrchestratorDiaryProposalGateBlock,
   formatOrchestratorEventSceneFollowupBlock,
+  formatOrchestratorTopicDeepeningBlock,
   getDiaryProposalMinUserTurns,
   getEventSceneFollowupIntensity,
+  shouldApplyTopicDeepeningMode,
+  type JournalDraftMaterialTier,
 } from "@/lib/reflective-chat-diary-nudge-rules";
 import { loadAgentPrompt } from "@/server/agents/utils";
 import { getWeatherContext, formatWeatherForPrompt, formatWeatherToolReply } from "@/server/agents/weather-tool";
@@ -74,6 +88,7 @@ import { ORCHESTRATOR_TOOLS } from "@/server/agents/types";
 import { loadShortTermContextForEntry } from "@/server/mas-memory";
 import { scoreOpeningTopic } from "@/server/chat-context";
 import { runProposeSettingsChangeTool } from "@/server/agents/settings-agent";
+import { classifyTopicDeepeningParallel } from "@/server/topic-deepening-classifier";
 
 const OPENING_OMIT_TOOLS = new Set([
   "query_weather",
@@ -307,11 +322,19 @@ type OpeningHint = {
   openingNote: string;
 };
 
+type BuildOpeningHintOpts = {
+  /** 国民祝日かつ実質タイムド予定なし: 開口で労働系カレンダーを推奨しない（バイト前提のフレーミングを弱める） */
+  omitCalendarWorkForNationalHolidayNoPlans?: boolean;
+  /** 薄い日または祝日ラベル付きで、関心タグがあるとき `query_hobby` を推奨（E/F 以外でも） */
+  suggestHobbyForRichProfileLightDay?: boolean;
+};
+
 function buildOpeningHint(
   occupationRole: string | undefined,
   hasCalendar: boolean,
   weather: WeatherContext,
   persona: PersonaContext,
+  opts?: BuildOpeningHintOpts,
 ): OpeningHint {
   const agents: string[] = [];
   const notes: string[] = [];
@@ -326,13 +349,13 @@ function buildOpeningHint(
 
   if (occupationRole === "student") {
     agents.push("query_school");
-  } else if (occupationRole) {
+  } else if (occupationRole && !opts?.omitCalendarWorkForNationalHolidayNoPlans) {
     agents.push("query_calendar_work");
   }
 
   const mbti = persona.mbti ?? "";
   const isEF = mbti.startsWith("E") && mbti[2] === "F";
-  if (isEF) {
+  if (isEF || opts?.suggestHobbyForRichProfileLightDay) {
     agents.push("query_hobby");
   }
 
@@ -380,6 +403,8 @@ export type OrchestratorParams = {
   currentBody: string;
   /** Normal chat only: user message count including this send (for diary-draft suggestion gate). */
   reflectiveUserTurnIncludingCurrent?: number;
+  /** Reflective chat: journal material tier from the same classifier as the chat route (deepening mode). */
+  reflectiveJournalMaterialTier?: JournalDraftMaterialTier;
   /** 短文だけのターン: mini モデル＋ツールなしで軽量応答 */
   preferMiniOrchestrator?: boolean;
   /** クライアント送信時刻を反映した壁時計（未指定時は呼び出し側で `new Date()` を渡す） */
@@ -425,6 +450,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     isOpening,
     currentBody,
     reflectiveUserTurnIncludingCurrent,
+    reflectiveJournalMaterialTier,
     preferMiniOrchestrator,
     clockNow,
     threadId,
@@ -434,13 +460,6 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
 
   const correlationId = newCorrelationId();
   const orchestratorNow = clockNow ?? new Date();
-  const useMini = Boolean(preferMiniOrchestrator) && !isOpening;
-  let primaryModel = isOpening ? getOrchestratorOpeningChatModel() : getOrchestratorChatModel();
-  let fallbackModel = isOpening ? getOrchestratorOpeningChatFallbackModel() : getOrchestratorChatFallbackModel();
-  if (useMini) {
-    primaryModel = getAgentSocialMiniChatModel();
-    fallbackModel = getAgentSocialMiniChatFallbackModel();
-  }
 
   const userRow = await prisma.user.findUnique({
     where: { id: userId },
@@ -454,30 +473,79 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
   const todayYmd = getEffectiveTodayYmd(orchestratorNow, userTimeZone, boundaryResolved);
   const temporalOpts = { timeZone: userTimeZone, dayBoundaryEndTime };
 
-  const [longTermContext, shortTermContext, weather, calendarRes] = await Promise.all([
-    loadLongTermContext(userId),
-    loadShortTermContextForEntry(userId, entryId),
-    getWeatherContext({ userId, entryId, entryDateYmd, now: orchestratorNow }).catch(
-      (): WeatherContext => ({
-        dateYmd: entryDateYmd,
-        amLabel: "不明",
-        amTempC: null,
-        pmLabel: "不明",
-        pmTempC: null,
-        source: "none",
-        narrativeHint: "天気情報を取得できなかった。",
-        wallClockDaylightBlockEn: formatOrchestratorWallClockDaylightBlock({
-          entryDateYmd,
-          now: orchestratorNow,
-          lat: DEFAULT_WEATHER_LATITUDE,
-          lon: DEFAULT_WEATHER_LONGITUDE,
-          timeZone: userTimeZone,
-          dayBoundaryEndTime,
+  const diaryProposalMinUserTurns = getDiaryProposalMinUserTurns({
+    aiDepthLevel: profile?.aiDepthLevel,
+    aiChatTone: profile?.aiChatTone,
+  });
+  const ruleTopicDeepening =
+    !isOpening &&
+    typeof reflectiveUserTurnIncludingCurrent === "number" &&
+    shouldApplyTopicDeepeningMode(
+      userMessage,
+      reflectiveUserTurnIncludingCurrent,
+      diaryProposalMinUserTurns,
+      reflectiveJournalMaterialTier ?? "empty",
+    );
+
+  const preferMiniInitial = Boolean(preferMiniOrchestrator) && !isOpening;
+  let useMini = preferMiniInitial;
+  let primaryModel = isOpening ? getOrchestratorOpeningChatModel() : getOrchestratorChatModel();
+  let fallbackModel = isOpening ? getOrchestratorOpeningChatFallbackModel() : getOrchestratorChatFallbackModel();
+  if (useMini) {
+    primaryModel = getAgentSocialMiniChatModel();
+    fallbackModel = getAgentSocialMiniChatFallbackModel();
+  }
+
+  const classifierSkip =
+    isOpening ||
+    ruleTopicDeepening ||
+    !userMessage.trim() ||
+    typeof reflectiveUserTurnIncludingCurrent !== "number";
+
+  const [longTermContext, shortTermContext, weather, calendarRes, topicDeepeningFromModel] =
+    await Promise.all([
+      loadLongTermContext(userId),
+      loadShortTermContextForEntry(userId, entryId),
+      getWeatherContext({ userId, entryId, entryDateYmd, now: orchestratorNow }).catch(
+        (): WeatherContext => ({
+          dateYmd: entryDateYmd,
+          amLabel: "不明",
+          amTempC: null,
+          pmLabel: "不明",
+          pmTempC: null,
+          source: "none",
+          narrativeHint: "天気情報を取得できなかった。",
+          wallClockDaylightBlockEn: formatOrchestratorWallClockDaylightBlock({
+            entryDateYmd,
+            now: orchestratorNow,
+            lat: DEFAULT_WEATHER_LATITUDE,
+            lon: DEFAULT_WEATHER_LONGITUDE,
+            timeZone: userTimeZone,
+            dayBoundaryEndTime,
+            beforeSunriseLectureHook: true,
+          }),
+          promptLat: DEFAULT_WEATHER_LATITUDE,
+          promptLon: DEFAULT_WEATHER_LONGITUDE,
         }),
+      ),
+      fetchCalendarEventsForDay(userId, entryDateYmd),
+      classifyTopicDeepeningParallel({
+        skip: classifierSkip,
+        userMessage,
+        historyMessages,
+        reflectiveUserTurnIncludingCurrent: reflectiveUserTurnIncludingCurrent ?? 0,
+        diaryProposalMinUserTurns,
+        materialTier: reflectiveJournalMaterialTier ?? "empty",
+        correlationId,
       }),
-    ),
-    fetchCalendarEventsForDay(userId, entryDateYmd),
-  ]);
+    ]);
+
+  const topicDeepening = ruleTopicDeepening || topicDeepeningFromModel;
+  if (topicDeepening && preferMiniInitial && !isOpening) {
+    useMini = false;
+    primaryModel = getOrchestratorChatModel();
+    fallbackModel = getOrchestratorChatFallbackModel();
+  }
   const calendarAvailable = isCalendarToolEligible(calendarRes);
   const calendarEventsForOrchestrator = calendarRes.ok
     ? filterCalendarEventsForAiNationalHolidaySanity(entryDateYmd, calendarRes.events)
@@ -487,6 +555,14 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
   const calendarHolidayTitle =
     holidaySignal?.hasHolidayLikeAllDay ? (holidaySignal.titles[0] ?? null) : null;
   const jpHolidayNameJa = resolveJapaneseHolidayNameForEntry(entryDateYmd, calendarHolidayTitle);
+  /** 祝日カレンダー終日など「実質予定なし」に近い行は除外（薄い日・祝日雑学条件の整合） */
+  const calendarPlanEventCount = countSubstantiveCalendarPlanEvents(
+    calendarEventsForOrchestrator,
+    jpHolidayNameJa,
+  );
+  const calendarEventsSubstantive = calendarEventsForOrchestrator.filter(
+    (ev) => !isDecorativeNationalHolidayLikeCalendarEvent(ev, jpHolidayNameJa),
+  );
 
   const personaLines = formatAgentPersonaForPrompt({
     aiAddressStyle: profile?.aiAddressStyle,
@@ -510,10 +586,6 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
   const mbtiHint = buildMbtiHint(mbti, loveMbti);
   const corrections = profile?.aiCorrections ?? [];
 
-  const diaryProposalMinUserTurns = getDiaryProposalMinUserTurns({
-    aiDepthLevel: profile?.aiDepthLevel,
-    aiChatTone: profile?.aiChatTone,
-  });
   const eventFollowupIntensity = getEventSceneFollowupIntensity({
     aiDepthLevel: profile?.aiDepthLevel,
     aiChatTone: profile?.aiChatTone,
@@ -530,23 +602,11 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
 
   const weatherText = formatWeatherForPrompt(weather);
 
-  const openingHint = buildOpeningHint(
-    profile?.occupationRole,
-    calendarAvailable,
-    weather,
-    persona,
-  );
-
-  const openingRecommendedForPrompt = openingHint.recommendedAgents.filter((n) => {
-    if (n === "propose_settings_change") return Boolean(openingAllowSettingsTool);
-    return !OPENING_OMIT_TOOLS.has(n);
-  });
-
   let calendarOrderedEvIdx: number[] | undefined;
   let openingCalendarPriorityJa = "";
-  if (isOpening && calendarRes.ok && calendarEventsForOrchestrator.length > 0) {
+  if (isOpening && calendarRes.ok && calendarEventsSubstantive.length > 0) {
     const sco = scoreOpeningTopic({
-      dayEvents: calendarEventsForOrchestrator,
+      dayEvents: calendarEventsSubstantive,
       occupationRole: profile?.occupationRole ?? "",
       calendarOpening: profile?.calendarOpening,
       profileSignals: profile
@@ -576,7 +636,9 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
       entryId,
       threadId: threadId ?? null,
       entryDateYmd,
-      calendarEventCount: calendarEventsForOrchestrator.length,
+      calendarEventCount: calendarEventsSubstantive.length,
+      calendarDecorativeStripped:
+        calendarEventsForOrchestrator.length - calendarEventsSubstantive.length,
       jpHolidayNameJa,
       calendarHolidaySignalTitle: calendarHolidayTitle,
       entryIsEffectiveToday: diffCalendarDaysInZone(entryDateYmd, todayYmd, userTimeZone) === 0,
@@ -601,7 +663,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
           }
         : null,
       orderedEvIdxHead: sco.orderedEvIdx.slice(0, 12),
-      eventCategoriesSample: calendarEventsForOrchestrator.slice(0, 8).map((ev, i) => ({
+      eventCategoriesSample: calendarEventsSubstantive.slice(0, 8).map((ev, i) => ({
         i,
         title: ev.title?.slice(0, 80) ?? "",
         start: ev.start,
@@ -616,7 +678,8 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
       entryDateYmd,
       calendarOk: calendarRes.ok,
       calendarFailReason: calendarRes.ok ? undefined : calendarRes.reason,
-      calendarEventCount: calendarRes.ok ? calendarEventsForOrchestrator.length : 0,
+      calendarEventCount: calendarRes.ok ? calendarEventsSubstantive.length : 0,
+      calendarRawCount: calendarRes.ok ? calendarEventsForOrchestrator.length : 0,
       jpHolidayNameJa,
       calendarHolidaySignalTitle: calendarHolidayTitle,
       primary: null,
@@ -638,6 +701,112 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
         )
       : "";
   const hasTimetableLecturesToday = Boolean(timetableOpeningFocusJa);
+
+  const sparseSchedule = isSparseSchedule({
+    calendarLinked: calendarRes.ok,
+    calendarEventCount: calendarRes.ok ? calendarPlanEventCount : 0,
+    hasTimetableLecturesToday,
+  });
+  const hasInterestSignals = hasInterestProfileSignals(profile ?? {});
+  const wallCalendarYmd = formatYmdInTimeZone(orchestratorNow, userTimeZone);
+
+  const openingHint = buildOpeningHint(
+    profile?.occupationRole,
+    calendarAvailable,
+    weather,
+    persona,
+    {
+      omitCalendarWorkForNationalHolidayNoPlans: Boolean(
+        jpHolidayNameJa && calendarPlanEventCount === 0,
+      ),
+      suggestHobbyForRichProfileLightDay: Boolean(
+        hasInterestSignals && (sparseSchedule || Boolean(jpHolidayNameJa)),
+      ),
+    },
+  );
+
+  const openingRecommendedForPrompt = openingHint.recommendedAgents.filter((n) => {
+    if (n === "propose_settings_change") return Boolean(openingAllowSettingsTool);
+    return !OPENING_OMIT_TOOLS.has(n);
+  });
+
+  const wallLat = weather.promptLat ?? DEFAULT_WEATHER_LATITUDE;
+  const wallLon = weather.promptLon ?? DEFAULT_WEATHER_LONGITUDE;
+  const wallClockBlockEn = formatOrchestratorWallClockDaylightBlock({
+    entryDateYmd,
+    now: orchestratorNow,
+    lat: wallLat,
+    lon: wallLon,
+    timeZone: userTimeZone,
+    dayBoundaryEndTime,
+    beforeSunriseLectureHook:
+      profile?.occupationRole === "student" && hasTimetableLecturesToday,
+  });
+
+  /** ja を先に試し、空・失敗時は fetch 側で en へフォールバック（ユーザー設定は廃止） */
+  const wikiLangPrimary = "ja";
+
+  let onThisDaySystemBlock = "";
+  if (!jpHolidayNameJa && sparseSchedule) {
+    const parts = entryDateYmd.split("-");
+    const mm = parts[1] ?? "01";
+    const dd = parts[2] ?? "01";
+    const otd = await fetchOnThisDaySelectedForPrompt({
+      wikiLangPrimary,
+      month: mm,
+      day: dd,
+      correlationId,
+    });
+    if (otd) {
+      onThisDaySystemBlock = formatOnThisDaySystemBlock(otd, entryDateYmd, {
+        showUserFacingAttribution: true,
+      });
+    }
+  }
+
+  let holidayTriviaSystemBlock = "";
+  /** 実質タイムド予定が無い（またはカレンダー未取得で見えない）祝日に雑学を載せる。`calendarRes.ok` 必須だと連携失敗時に一切付かないため緩和する */
+  const holidayTriviaEligible =
+    Boolean(jpHolidayNameJa) &&
+    (isOpening || sparseSchedule) &&
+    (!calendarRes.ok || calendarPlanEventCount === 0);
+  if (holidayTriviaEligible) {
+    const triv = triviaLineForJapaneseHoliday(jpHolidayNameJa!);
+    if (triv) {
+      const soft = isOpening
+        ? ((await paraphraseHolidayTriviaForOpening({
+            holidayNameJa: jpHolidayNameJa!,
+            builtinFact: triv,
+          })) ?? triv)
+        : triv;
+      const openingTriviaGuide = isOpening
+        ? [
+            "この開口の日本語に、コロン**後**の短文に書かれた**具体**（施行・由来・過ごし方のヒントなど）を**少なくともひとかたまり**入れる。祝日名だけを繰り返すのは足りない。",
+            "説教調・長い解説・条文調は避ける。",
+            hasInterestSignals
+              ? "静的プロフィールの趣味・関心タグと**無理のない接続**があれば優先（タグにない話題は捏造しない）。"
+              : "",
+            "ユーザー画面にはこのブロックは出ない。断定せず、本文やユーザーの訂正を優先する。",
+          ]
+            .filter(Boolean)
+            .join("\n")
+        : "断定せず雑談程度に。本文やユーザーの訂正を優先する。";
+      holidayTriviaSystemBlock = [
+        "## 祝日メモ（参考）",
+        `「${jpHolidayNameJa}」: ${soft}`,
+        openingTriviaGuide,
+      ].join("\n");
+    }
+  }
+
+  const sparseThreadHintBlock =
+    !isOpening && sparseSchedule && !topicDeepening
+      ? formatOrchestratorSparseThreadHintBlock({
+          isSparseSchedule: true,
+          hasTimetableLecturesToday,
+          occupationRole: profile?.occupationRole,
+        })
+      : "";
 
   const rawBody = (currentBody ?? "").trim();
   const bodyForPrompt =
@@ -678,7 +847,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     "",
     formatOrchestratorTemporalBlock(entryDateYmd, orchestratorNow, temporalOpts),
     "",
-    weather.wallClockDaylightBlockEn ?? "",
+    wallClockBlockEn,
     "",
     formatOrchestratorDayBoundaryBlock({
       entryDateYmd,
@@ -712,9 +881,16 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
           {
             hasDiaryBody: rawBody.length > 0,
             calendarLinked: calendarRes.ok,
-            calendarEventCount: calendarRes.ok ? calendarEventsForOrchestrator.length : 0,
+            calendarEventCount: calendarRes.ok ? calendarPlanEventCount : 0,
             hasTimetableLecturesToday,
             holidayNameJa: jpHolidayNameJa,
+            isSparseSchedule: sparseSchedule,
+            occupationRole: profile?.occupationRole,
+            hasInterestSignals,
+            hasMemorySnippets: Boolean(
+              (longTermContext ?? "").trim() || (shortTermContext ?? "").trim(),
+            ),
+            wallCalendarYmd,
           },
           temporalOpts,
         )
@@ -729,13 +905,18 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
       : "",
     calendarRes.ok
       ? `${ORCHESTRATOR_DAY_CALENDAR_HEADING}\n${formatOpeningDayCalendarBrief(
-          calendarEventsForOrchestrator,
+          calendarEventsSubstantive,
           calendarOrderedEvIdx,
           userTimeZone,
           profile?.calendarOpening,
         )}`
       : "",
     holidayGuardBlock,
+    "",
+    isOpening && onThisDaySystemBlock ? onThisDaySystemBlock : "",
+    isOpening && holidayTriviaSystemBlock ? holidayTriviaSystemBlock : "",
+    !isOpening && sparseThreadHintBlock ? sparseThreadHintBlock : "",
+    !isOpening && topicDeepening ? formatOrchestratorTopicDeepeningBlock() : "",
     "",
     !calendarAvailable
       ? "※ Google カレンダー未連携、またはトークン無効のためカレンダー系ツールは呼ばない。"
@@ -756,7 +937,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
       "",
       "## Brief-turn mode（軽量・低コスト）",
       "このターンのユーザー発言は短い確認／依頼のみと判定されている。**利用できるツールは `propose_settings_change` のみ**（日付区切り・TZ・カレンダー開口・AI 嗜好・時間割エディタ提案の保留）。天気・カレンダー・学校など **query_* は呼ばない**。",
-      "長文の日記草案はこの返答では書かず、**1〜3文**の自然な日本語で十分。必要ならユーザーに、右欄の「会話から草案を生成」で整形できることを**一文で**添えてよい。",
+      "長文の日記草案はこの返答では書かず、**1〜3文**の自然な日本語で十分。必要ならユーザーに、右欄の「会話から草案を生成」で整形できることを**一文で**添えてよい。**意味のまとまりごとに改行してよい**（文数・分量は上のルールのまま、短くしない）。",
     ].join("\n");
   }
 

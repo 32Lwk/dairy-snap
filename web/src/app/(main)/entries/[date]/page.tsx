@@ -8,6 +8,8 @@ import {
   formatPendingSettingsChangeSummaryJa,
   type NormalizedCalendarOpeningPatch,
 } from "@/lib/settings-proposal-tool";
+import { DayBoundaryMismatchNotice } from "@/components/day-boundary-mismatch-notice";
+import { getUserEffectiveDayContext } from "@/lib/server/user-effective-day";
 import { EntryByDateView } from "./entry-by-date-view";
 
 const entryByDateInclude = {
@@ -62,6 +64,8 @@ export default async function EntryByDatePage({
   resetAt.setDate(resetAt.getDate() + 1);
   const resetAtIso = resetAt.toISOString();
 
+  const dayCtx = await getUserEffectiveDayContext(r.user.id);
+
   const cn = (chatThread?.conversationNotes as Record<string, unknown>) ?? {};
   const pendingRaw = cn.pendingSettingsChange as Record<string, unknown> | undefined;
   let pendingSettingsSummaryJa: string | null = null;
@@ -82,45 +86,52 @@ export default async function EntryByDatePage({
   }
 
   return (
-    <EntryByDateView
-      date={date}
-      entryId={entry.id}
-      initialTitle={entry.title ?? ""}
-      savedEntryTagsCsv={savedEntryTagsCsv}
-      mood={entry.mood}
-      entryDateYmd={date}
-      chatSecurityNoticeJa={chatSecurityNoticeJa}
-      pendingSettingsSummaryJa={pendingSettingsSummaryJa}
-      initialThreadId={chatThread?.id ?? null}
-      initialMessages={
-        chatThread?.messages.map((m) => ({
-          id: m.id,
-          role: m.role,
-          content: m.content,
-          model: m.model,
-          sentAt: m.updatedAt.toISOString(),
-        })) ?? []
-      }
-      latitude={entry.latitude}
-      longitude={entry.longitude}
-      weatherJson={entry.weatherJson}
-      body={entry.body}
-      appendEvents={entry.appendEvents.map((ev) => ({
-        id: ev.id,
-        occurredAt: ev.occurredAt.toISOString(),
-        fragment: ev.fragment,
-      }))}
-      images={(entry.images ?? []).map((i) => ({
-        id: i.id,
-        mimeType: i.mimeType,
-        byteSize: i.byteSize,
-        rotationQuarterTurns: i.rotationQuarterTurns,
-        caption: i.caption,
-      }))}
-      photosDailyQuota={{ remaining, dailyLimit, resetAt: resetAtIso }}
-      dominantEmotion={entry.dominantEmotion}
-      initialPlutchikAnalysis={entry.plutchikAnalysis}
-      transcriptCharCount={transcriptMeta.charCount}
-    />
+    <>
+      {date === dayCtx.effectiveYmd && dayCtx.calendarYmd !== date ? (
+        <div className="mx-auto w-full max-w-5xl px-4 pt-2 sm:px-6 lg:max-w-6xl lg:px-10">
+          <DayBoundaryMismatchNotice variant="entry" effectiveYmd={date} calendarYmd={dayCtx.calendarYmd} />
+        </div>
+      ) : null}
+      <EntryByDateView
+        date={date}
+        entryId={entry.id}
+        initialTitle={entry.title ?? ""}
+        savedEntryTagsCsv={savedEntryTagsCsv}
+        mood={entry.mood}
+        entryDateYmd={date}
+        chatSecurityNoticeJa={chatSecurityNoticeJa}
+        pendingSettingsSummaryJa={pendingSettingsSummaryJa}
+        initialThreadId={chatThread?.id ?? null}
+        initialMessages={
+          chatThread?.messages.map((m) => ({
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            model: m.model,
+            sentAt: m.updatedAt.toISOString(),
+          })) ?? []
+        }
+        latitude={entry.latitude}
+        longitude={entry.longitude}
+        weatherJson={entry.weatherJson}
+        body={entry.body}
+        appendEvents={entry.appendEvents.map((ev) => ({
+          id: ev.id,
+          occurredAt: ev.occurredAt.toISOString(),
+          fragment: ev.fragment,
+        }))}
+        images={(entry.images ?? []).map((i) => ({
+          id: i.id,
+          mimeType: i.mimeType,
+          byteSize: i.byteSize,
+          rotationQuarterTurns: i.rotationQuarterTurns,
+          caption: i.caption,
+        }))}
+        photosDailyQuota={{ remaining, dailyLimit, resetAt: resetAtIso }}
+        dominantEmotion={entry.dominantEmotion}
+        initialPlutchikAnalysis={entry.plutchikAnalysis}
+        transcriptCharCount={transcriptMeta.charCount}
+      />
+    </>
   );
 }

@@ -6,6 +6,7 @@ import { EntryActions } from "../entries/[date]/entry-actions";
 import { EntryChat } from "../entries/[date]/entry-chat";
 import { EntryImages } from "../entries/[date]/entry-images";
 import { JournalDraftPanel } from "../entries/[date]/journal-draft-panel";
+import { TODAY_MAX_LG_CHAT_PANE_HEIGHT } from "@/lib/app-header-toolbar";
 import { useTodayJournalDraftControls } from "./today-journal-draft-bridge";
 
 type Msg = { id: string; role: string; content: string; model?: string | null; sentAt?: string | null };
@@ -64,14 +65,17 @@ export function TodayMainGrid({
   return (
     <div
       className={[
-        // ヘッダー直下の余白はブレークポイントごとに固定（sticky ヘッダー高に依存しない）
-        "mt-2 grid min-h-[22rem] grid-cols-1 gap-3 sm:mt-2.5 sm:gap-4 md:mt-3 md:grid-cols-12 md:gap-6 lg:gap-8",
-        // md+: 行高は右カラムに合わせ、左チャットも同じ高さまで伸ばしてメッセージ欄だけ内部スクロール
-        "md:min-h-0 md:flex-1 md:items-stretch",
+        // max-lg: チャット＝ビューポート−ヘッダー−底ナビの高さ、下に写真・天気（親スクロール）。lg+: 2 カラム。
+        "mt-2 flex min-h-0 flex-col gap-3 sm:mt-2.5 sm:gap-4 md:mt-3 max-lg:shrink-0 lg:grid lg:min-h-0 lg:flex-1 lg:grid-cols-12 lg:grid-rows-[minmax(0,1fr)] lg:items-stretch lg:gap-6 lg:gap-8 lg:overflow-hidden",
       ].join(" ")}
     >
-      <div className="order-1 min-h-0 md:col-span-7 md:order-1 md:flex md:h-full md:min-h-0 md:flex-col md:overflow-hidden lg:col-span-7">
-        <div className="flex min-h-0 flex-1 flex-col md:min-h-0">
+      <div
+        className={[
+          "order-1 flex min-h-0 w-full flex-col overflow-hidden lg:col-span-7 lg:h-full lg:min-h-0 lg:overflow-hidden",
+          TODAY_MAX_LG_CHAT_PANE_HEIGHT,
+        ].join(" ")}
+      >
+        <div className="flex h-full min-h-0 flex-1 flex-col lg:min-h-0">
           <EntryChat
             key={`${entryId}-${initialThreadId ?? "new"}-${initialMessages.length}`}
             entryId={entryId}
@@ -80,7 +84,7 @@ export function TodayMainGrid({
             pendingSettingsSummaryJa={pendingSettingsSummaryJa}
             initialMessages={initialMessages}
             variant="default"
-            layoutHeight="fill"
+            layoutHeight="scrollStack"
             journalDraftPlacement="none"
             onThreadIdChange={onThreadIdChange}
             onJournalDraftGenerateRequest={bumpAutoGenerate}
@@ -90,10 +94,7 @@ export function TodayMainGrid({
       </div>
       <div
         className={[
-          "order-2 space-y-3 sm:space-y-4 md:col-span-5 md:order-2 md:min-h-0 md:space-y-5 md:overflow-y-auto md:overscroll-y-contain md:pr-0.5 lg:col-span-5 lg:space-y-6",
-          // ヘッダー・底ナビ・余白を控えた固定高（右欄のみスクロール）
-          "md:h-[calc(100svh-11rem-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))]",
-          "md:max-h-[calc(100svh-11rem-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))]",
+          "order-2 w-full shrink-0 space-y-3 sm:space-y-4 lg:col-span-5 lg:min-h-0 lg:space-y-6 lg:overflow-y-auto lg:overscroll-y-contain lg:pr-0.5",
         ].join(" ")}
       >
         {!hasSavedBody ? (

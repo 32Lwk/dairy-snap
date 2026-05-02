@@ -7,6 +7,8 @@ export const LIMITS = {
   DAILY_SUMMARY_PER_DAY: 5,
   /** チャットからの設定自動適用（24h あたり、AuditLog ベースで別途上限） */
   SETTINGS_APPLY_PER_24H: 5,
+  /** 趣味系: Vertex グラウンディング・allowlist GET 等の合算（目安） */
+  HOBBY_EXTERNAL_FETCH_PER_DAY: 10,
 } as const;
 
 async function effectiveUsageDateYmd(userId: string): Promise<string> {
@@ -77,4 +79,27 @@ export async function incrementSettingsChange(userId: string) {
     create: { userId, dateYmd, settingsChanges: 1 },
     update: { settingsChanges: { increment: 1 } },
   });
+}
+
+/**
+ * 趣味の外部取得 1 回ぶん。上限超過なら allowed: false（カウントは増やさない）。
+ */
+export async function tryIncrementHobbyExternalFetch(userId: string): Promise<{
+  allowed: boolean;
+  count: number;
+}> {
+  const dateYmd = await effectiveUsageDateYmd(userId);
+  const row = await prisma.usageCounter.upsert({
+    where: { userId_dateYmd: { userId, dateYmd } },
+    create: { userId, dateYmd },
+    update: {},
+  });
+  if (row.hobbyExternalFetches >= LIMITS.HOBBY_EXTERNAL_FETCH_PER_DAY) {
+    return { allowed: false, count: row.hobbyExternalFetches };
+  }
+  const next = await prisma.usageCounter.update({
+    where: { userId_dateYmd: { userId, dateYmd } },
+    data: { hobbyExternalFetches: { increment: 1 } },
+  });
+  return { allowed: true, count: next.hobbyExternalFetches };
 }

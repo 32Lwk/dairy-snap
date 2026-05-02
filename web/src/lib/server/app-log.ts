@@ -27,6 +27,8 @@ export const AppLogScope = {
   journal: "journal",
   account: "account",
   memory: "memory",
+  wikifeeds: "wikifeeds",
+  hobby: "hobby",
 } as const;
 
 const SEVERITY_ORDER: Record<AppLogLevel, number> = {

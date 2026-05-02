@@ -176,6 +176,7 @@ export async function POST(req: NextRequest) {
     parsed.data.message,
     lastAssistantText,
     journalDraftMaterial,
+    reflectiveUserTurnIncludingCurrent,
   );
   const triggerJournalDraft = shouldTriggerJournalDraftPanelAfterSend(
     parsed.data.message,
@@ -286,6 +287,7 @@ export async function POST(req: NextRequest) {
           encryptionMode: entry.encryptionMode,
           currentBody: entry.body,
           reflectiveUserTurnIncludingCurrent,
+          reflectiveJournalMaterialTier: journalDraftMaterial.tier,
           preferMiniOrchestrator,
           clockNow: orchestratorNow,
           threadId: thread.id,

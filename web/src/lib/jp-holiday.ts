@@ -60,13 +60,13 @@ export function resolveJapaneseHolidayNameForEntry(
   return cal;
 }
 
-function isAllDayStyleCalendarStart(start: string): boolean {
+export function isAllDayStyleCalendarStart(start: string): boolean {
   const s = (start ?? "").trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return true;
   return /^\d{4}-\d{2}-\d{2}T00:00:00/.test(s);
 }
 
-function looksLikeHolidayCalendarIdOrName(ev: { calendarId?: string; calendarName?: string }): boolean {
+export function looksLikeHolidayCalendarIdOrName(ev: { calendarId?: string; calendarName?: string }): boolean {
   const id = (ev.calendarId ?? "").toLowerCase();
   const name = (ev.calendarName ?? "").toLowerCase();
   if (id.includes("#holiday@")) return true;
@@ -74,6 +74,43 @@ function looksLikeHolidayCalendarIdOrName(ev: { calendarId?: string; calendarNam
   if (name.includes("祝日") || name.includes("holiday")) return true;
   if (name.includes("日本の祝日") || name.includes("祝日カレンダー")) return true;
   return false;
+}
+
+/** 終日タイトルが休日・祝日ラベルっぽいか（カレンダー名が無いソース向け） */
+export function looksLikeHolidayTitle(titleRaw: string): boolean {
+  const t = (titleRaw ?? "").trim();
+  if (!t) return false;
+  if (t.includes("祝日")) return true;
+  if (t.includes("休日")) return true;
+  if (t.includes("振替休日")) return true;
+  if (t.includes("代休")) return true;
+  if (t === "休み" || t === "お休み") return true;
+  if (/^(休み|お休み)(（|$)/.test(t)) return true;
+  return false;
+}
+
+/**
+ * 薄い日・祝日雑学用: 「実質的な予定」ではない終日イベント（祝日カレンダー・休日風タイトル・当日の公式祝日名と一致する終日など）。
+ * Google の終日は `YYYY-MM-DD` または `T00:00:00` 始まりで来ることがある。
+ */
+export function isDecorativeNationalHolidayLikeCalendarEvent<
+  T extends { title?: string; start?: string; calendarId?: string; calendarName?: string },
+>(ev: T, entryHolidayNameJa: string | null): boolean {
+  if (!isAllDayStyleCalendarStart((ev.start ?? "").trim())) return false;
+  const title = (ev.title ?? "").trim();
+  if (!title) return false;
+  if (looksLikeHolidayCalendarIdOrName(ev)) return true;
+  if (looksLikeHolidayTitle(title)) return true;
+  const h = (entryHolidayNameJa ?? "").trim();
+  if (h && nationalHolidayTitleMatches(title, h)) return true;
+  return false;
+}
+
+/** 開口の「予定件数」相当: 装飾的な祝日終日を除いた件数（0 なら実質カレンダー空に近い） */
+export function countSubstantiveCalendarPlanEvents<
+  T extends { title?: string; start?: string; calendarId?: string; calendarName?: string },
+>(events: T[], entryHolidayNameJa: string | null): number {
+  return events.filter((ev) => !isDecorativeNationalHolidayLikeCalendarEvent(ev, entryHolidayNameJa)).length;
 }
 
 /**

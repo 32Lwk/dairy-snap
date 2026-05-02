@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { buildEntryChatTranscript } from "@/lib/chat/build-entry-chat-transcript";
 import { parseUserSettings } from "@/lib/user-settings";
 import { getUserEffectiveDayContext } from "@/lib/server/user-effective-day";
@@ -12,6 +11,7 @@ import {
   type NormalizedCalendarOpeningPatch,
 } from "@/lib/settings-proposal-tool";
 import { APP_HEADER_TITLE_INLINE, APP_HEADER_TOOLBAR_INNER } from "@/lib/app-header-toolbar";
+import { DayBoundaryMismatchNotice } from "@/components/day-boundary-mismatch-notice";
 import { TodayJournalDraftProvider, TodayMobileJournalDraftHeaderButton } from "./today-journal-draft-bridge";
 import { TodayMainGrid } from "./today-main-grid";
 
@@ -66,8 +66,8 @@ export default async function TodayPage() {
 
   return (
     <TodayJournalDraftProvider>
-      <div className="flex min-h-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 w-full shrink-0 border-b border-zinc-200/90 bg-white/95 backdrop-blur-md dark:border-zinc-800/90 dark:bg-zinc-950/95">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <header className="z-30 w-full shrink-0 border-b border-zinc-200/90 bg-white/95 backdrop-blur-md max-lg:fixed max-lg:left-0 max-lg:right-0 max-lg:top-0 lg:static dark:border-zinc-800/90 dark:bg-zinc-950/95">
           <div className={`${APP_HEADER_TOOLBAR_INNER} max-w-5xl lg:max-w-6xl`}>
             <div className="flex min-h-9 min-w-0 flex-1 items-center gap-2">
               <span className="shrink-0 text-xs font-medium uppercase tracking-wide text-zinc-500">今日</span>
@@ -77,54 +77,57 @@ export default async function TodayPage() {
           </div>
         </header>
 
-        {dayCtx.calendarYmd !== ymd ? (
-          <div className="mx-auto w-full max-w-5xl px-4 pt-2 sm:px-6 lg:max-w-6xl lg:px-10">
-            <p className="max-w-xl text-[11px] leading-snug text-zinc-500 sm:text-xs sm:leading-relaxed dark:text-zinc-400">
-              いま開いているのは{" "}
-              <span className="font-medium text-zinc-700 dark:text-zinc-300">{ymd}</span> の振り返りです（設定どおり「まだ前日の続き」）。
-              カレンダーでは今日は{" "}
-              <span className="font-medium text-zinc-700 dark:text-zinc-300">{dayCtx.calendarYmd}</span> です。
-              <Link
-                href={`/entries/${dayCtx.calendarYmd}`}
-                className="ml-1.5 font-medium text-emerald-700 underline decoration-emerald-600/40 underline-offset-2 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300"
-              >
-                カレンダー上の「今日」のエントリを開く
-              </Link>
-            </p>
-          </div>
-        ) : null}
+        <div
+          className={[
+            "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
+            "max-lg:pt-[calc(4rem+env(safe-area-inset-top,0px))] md:max-lg:pt-[calc(4.25rem+env(safe-area-inset-top,0px))]",
+            "lg:pt-0",
+          ].join(" ")}
+        >
+          {dayCtx.calendarYmd !== ymd ? (
+            <div className="mx-auto w-full max-w-5xl shrink-0 px-4 pt-2 sm:px-6 lg:max-w-6xl lg:px-10">
+              <DayBoundaryMismatchNotice variant="today" effectiveYmd={ymd} calendarYmd={dayCtx.calendarYmd} />
+            </div>
+          ) : null}
 
-        <div className="mx-auto flex min-h-0 w-full flex-1 flex-col px-4 pb-4 sm:px-6 md:max-w-5xl md:pb-5 lg:max-w-6xl lg:px-10 lg:pb-6">
-          <TodayMainGrid
-            entryId={entry.id}
-            entryDateYmd={ymd}
-            diaryBody={entry.body ?? ""}
-            photosDailyQuota={{ remaining, dailyLimit, resetAt: resetAtIso }}
-            chatSecurityNoticeJa={chatSecurityNoticeJa}
-            pendingSettingsSummaryJa={pendingSettingsSummaryJa}
-            images={(entry.images ?? []).map((i) => ({
-              id: i.id,
-              mimeType: i.mimeType,
-              byteSize: i.byteSize,
-              rotationQuarterTurns: i.rotationQuarterTurns,
-              caption: i.caption,
-            }))}
-            initialThreadId={chatThread?.id ?? null}
-            initialMessages={
-              chatThread?.messages.map((m) => ({
-                id: m.id,
-                role: m.role,
-                content: m.content,
-                model: m.model,
-                sentAt: m.updatedAt.toISOString(),
-              })) ?? []
-            }
-            latitude={entry.latitude}
-            longitude={entry.longitude}
-            weatherJson={entry.weatherJson}
-            initialPlutchikAnalysis={entry.plutchikAnalysis}
-            transcriptCharCount={transcriptMeta.charCount}
-          />
+          <div
+            className={[
+              "mx-auto flex min-h-0 w-full min-w-0 flex-1 flex-col px-4 pb-4 sm:px-6 md:max-w-5xl md:pb-5 lg:max-w-6xl lg:px-10 lg:pb-6",
+              "max-lg:overflow-y-auto max-lg:overscroll-y-contain",
+              "lg:overflow-hidden",
+            ].join(" ")}
+          >
+            <TodayMainGrid
+              entryId={entry.id}
+              entryDateYmd={ymd}
+              diaryBody={entry.body ?? ""}
+              photosDailyQuota={{ remaining, dailyLimit, resetAt: resetAtIso }}
+              chatSecurityNoticeJa={chatSecurityNoticeJa}
+              pendingSettingsSummaryJa={pendingSettingsSummaryJa}
+              images={(entry.images ?? []).map((i) => ({
+                id: i.id,
+                mimeType: i.mimeType,
+                byteSize: i.byteSize,
+                rotationQuarterTurns: i.rotationQuarterTurns,
+                caption: i.caption,
+              }))}
+              initialThreadId={chatThread?.id ?? null}
+              initialMessages={
+                chatThread?.messages.map((m) => ({
+                  id: m.id,
+                  role: m.role,
+                  content: m.content,
+                  model: m.model,
+                  sentAt: m.updatedAt.toISOString(),
+                })) ?? []
+              }
+              latitude={entry.latitude}
+              longitude={entry.longitude}
+              weatherJson={entry.weatherJson}
+              initialPlutchikAnalysis={entry.plutchikAnalysis}
+              transcriptCharCount={transcriptMeta.charCount}
+            />
+          </div>
         </div>
       </div>
     </TodayJournalDraftProvider>

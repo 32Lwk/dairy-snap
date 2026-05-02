@@ -73,6 +73,8 @@ model User {
   memoryShortTerms MemoryShortTerm[]
   appLocalCalendars     AppLocalCalendar[]
   appLocalCalendarEvents AppLocalCalendarEvent[]
+  interestOfficialUrls   UserInterestOfficialUrl[]
+  interestUrlFetchCaches InterestUrlFetchCache[]
 
   @@map("users")
 }
@@ -565,6 +567,8 @@ model UsageCounter {
   memorySubAgentCalls Int @default(0)
   /** チャット経由の設定自動適用（成功時にインクリメント／日） */
   settingsChanges Int @default(0)
+  /** 趣味系外部取得（グラウンディング・allowlist GET 等）の日次カウント */
+  hobbyExternalFetches Int @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -573,6 +577,42 @@ model UsageCounter {
 
   @@unique([userId, dateYmd])
   @@map("usage_counters")
+}
+
+/// ユーザーが作品・趣味タグごとに登録した公式サイト等の URL（中央マップの上書き）
+model UserInterestOfficialUrl {
+  id     String @id @default(cuid())
+  userId String
+  /** interest taxonomy の pick id（例: media_anime:slug） */
+  pickId String @db.VarChar(160)
+  url    String @db.VarChar(2048)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, pickId, url])
+  @@index([userId, pickId])
+  @@map("user_interest_official_urls")
+}
+
+/// allowlist 内 URL 取得結果の短いキャッシュ（再取得抑制・要約用）
+model InterestUrlFetchCache {
+  id       String @id @default(cuid())
+  userId   String
+  urlNorm  String @db.VarChar(2048)
+  urlHash  String @db.VarChar(64)
+  pickId   String? @db.VarChar(160)
+  httpStatus Int?
+  excerpt  String @default("") @db.Text
+  fetchedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, urlHash])
+  @@index([userId, fetchedAt])
+  @@map("interest_url_fetch_cache")
 }
 
 model AgentMemory {

@@ -163,6 +163,8 @@ function attachPromptLayers(
     ...base,
     entryTodaySolarPhase: solar?.phase,
     narrativeHint: buildWeatherNarrativeHintJa(base, { daysDiff, solarPhase }),
+    promptLat: lat,
+    promptLon: lon,
     wallClockDaylightBlockEn: formatOrchestratorWallClockDaylightBlock({
       entryDateYmd: req.entryDateYmd,
       now,
@@ -170,6 +172,7 @@ function attachPromptLayers(
       lon,
       timeZone: userTz,
       dayBoundaryEndTime: dayBoundaryRaw,
+      beforeSunriseLectureHook: true,
     }),
   };
 }
@@ -257,6 +260,8 @@ export async function getWeatherContext(req: WeatherToolRequest): Promise<Weathe
         ),
         solarPhase: "unknown",
       }),
+      promptLat: resolved.lat,
+      promptLon: resolved.lon,
       wallClockDaylightBlockEn: formatOrchestratorWallClockDaylightBlock({
         entryDateYmd: req.entryDateYmd,
         now,
@@ -264,6 +269,7 @@ export async function getWeatherContext(req: WeatherToolRequest): Promise<Weathe
         lon: resolved.lon,
         timeZone: userTz,
         dayBoundaryEndTime: dayBoundaryRaw,
+        beforeSunriseLectureHook: true,
       }),
     };
   }

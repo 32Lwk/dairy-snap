@@ -18,7 +18,7 @@ export default async function OnboardingPage() {
   }
 
   return (
-    <div className="mx-auto flex h-[100dvh] min-w-0 max-w-lg flex-col px-4">
+    <div className="mx-auto flex min-h-0 w-full max-w-lg flex-1 flex-col overflow-y-auto px-4">
       <OnboardingClient
         userId={r.user.id}
         initialProfile={profile ?? {}}

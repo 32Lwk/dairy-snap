@@ -892,3 +892,83 @@ export function formatInterestPicksForPrompt(picks: string[] | undefined): strin
     .filter(Boolean);
   return lines.length ? lines.map((l) => `- ${l}`).join("\n") : "";
 }
+
+function walkInterestFineIds(f: InterestFine, out: Set<string>): void {
+  out.add(f.id);
+  for (const m of f.micro ?? []) walkInterestFineIds(m, out);
+  for (const w of f.works ?? []) walkInterestFineIds(w, out);
+}
+
+function fineTreeContainsPickId(f: InterestFine, pickId: string): boolean {
+  if (f.id === pickId) return true;
+  for (const m of f.micro ?? []) {
+    if (fineTreeContainsPickId(m, pickId)) return true;
+  }
+  for (const w of f.works ?? []) {
+    if (fineTreeContainsPickId(w, pickId)) return true;
+  }
+  return false;
+}
+
+/**
+ * 正準 pickId（小分類・詳細・works 等）が属する小分類 id。見つからなければ null。
+ */
+export function subIdForCanonicalInterestPick(pickId: string): string | null {
+  for (const cat of INTEREST_CATEGORIES) {
+    for (const sub of cat.subs) {
+      if (pickId === sub.id) return sub.id;
+      for (const f of defaultFinesForSub(sub)) {
+        if (fineTreeContainsPickId(f, pickId)) return sub.id;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * タクソノミー定義上の pickId をすべて列挙（大分類・小分類・詳細・micro・works）。
+ * ユーザーの自由入力 `interestFree:` / `:user:` は含まない。
+ */
+export function collectAllCanonicalInterestPickIds(): string[] {
+  const out = new Set<string>();
+  for (const cat of INTEREST_CATEGORIES) {
+    for (const sub of cat.subs) {
+      out.add(sub.id);
+      for (const f of defaultFinesForSub(sub)) {
+        walkInterestFineIds(f, out);
+      }
+    }
+  }
+  return [...out].sort();
+}
+
+export type CanonicalPickOption = { id: string; pathLabel: string };
+
+/** 設定 UI 用: 大分類（optgroup）→ パスラベル付きの正準 pickId 一覧 */
+export function buildCanonicalInterestPickOptionGroups(): {
+  categoryLabel: string;
+  options: CanonicalPickOption[];
+}[] {
+  const byCat = new Map<string, CanonicalPickOption[]>();
+  for (const id of collectAllCanonicalInterestPickIds()) {
+    const categoryLabel = interestCategoryLabelForPick(id) ?? "その他";
+    const pathLabel = labelForInterestPick(id) ?? id;
+    const row = { id, pathLabel };
+    const list = byCat.get(categoryLabel);
+    if (list) list.push(row);
+    else byCat.set(categoryLabel, [row]);
+  }
+  const groups: { categoryLabel: string; options: CanonicalPickOption[] }[] = [];
+  for (const cat of INTEREST_CATEGORIES) {
+    const opts = byCat.get(cat.label);
+    if (!opts?.length) continue;
+    opts.sort((a, b) => a.pathLabel.localeCompare(b.pathLabel, "ja"));
+    groups.push({ categoryLabel: cat.label, options: opts });
+  }
+  const rest = byCat.get("その他");
+  if (rest?.length) {
+    rest.sort((a, b) => a.pathLabel.localeCompare(b.pathLabel, "ja"));
+    groups.push({ categoryLabel: "その他", options: rest });
+  }
+  return groups;
+}

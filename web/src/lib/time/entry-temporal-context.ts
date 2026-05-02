@@ -9,6 +9,7 @@ import {
 } from "@/lib/time/user-day-boundary";
 import { formatHmTokyo, formatYmdTokyo } from "@/lib/time/tokyo";
 import { getLocalSolarPhaseForEntryDay } from "@/lib/time/local-solar-phase";
+import { sparseDayOccupationHintEn } from "@/lib/opening-occupation-hints";
 
 function startOfDayTokyoMs(ymd: string): number {
   return new Date(`${ymd}T00:00:00+09:00`).getTime();
@@ -302,8 +303,11 @@ export function formatOrchestratorWallClockDaylightBlock(params: {
   lon: number;
   timeZone?: string;
   dayBoundaryEndTime?: string | null;
+  /** false のとき before_sunrise で講義・何限に触れない（時間割アンカーなし） */
+  beforeSunriseLectureHook?: boolean;
 }): string {
   const { entryDateYmd, now, lat, lon } = params;
+  const lectureHook = params.beforeSunriseLectureHook !== false;
   const tz =
     params.timeZone && isValidIanaTimeZone(params.timeZone) ? params.timeZone : "Asia/Tokyo";
   const boundary = resolveDayBoundaryEndTime(params.dayBoundaryEndTime ?? null);
@@ -338,7 +342,9 @@ export function formatOrchestratorWallClockDaylightBlock(params: {
       );
       if (sol.phase === "before_sunrise") {
         lines.push(
-          `- **before_sunrise** on an entry-today thread: do **not** write as if it is already broad daylight; do **not** push going outside for sunshine or 「よく晴れた一日」-style past-day sunshine. Forecast may still mention clear skies later — use soft wording (e.g. 予報では). **Prioritize** the **day ahead**: calendar blocks, **classes / lectures** (e.g. 何限から), **how they will spend time until** the next fixed plan; optionally a **light** mention of **夢** if tone fits. **Do not** make **眠さ / 寝足りなさ** the main hook unless the user already said they are tired.`,
+          lectureHook
+            ? `- **before_sunrise** on an entry-today thread: do **not** write as if it is already broad daylight; do **not** push going outside for sunshine or 「よく晴れた一日」-style past-day sunshine. Forecast may still mention clear skies later — use soft wording (e.g. 予報では). **Prioritize** the **day ahead**: calendar blocks, **classes / lectures** (e.g. 何限から), **how they will spend time until** the next fixed plan; optionally a **light** mention of **夢** if tone fits. **Do not** make **眠さ / 寝足りなさ** the main hook unless the user already said they are tired.`
+            : `- **before_sunrise** on an entry-today thread: do **not** write as if it is already broad daylight. Forecast may still mention clear skies — use soft wording (e.g. 予報では). **Prioritize** the **day ahead**: calendar blocks, **time until the next fixed plan**, hobbies or rest — **do not** center on **classes / lectures / 何限** when no timetable anchor exists. Optionally a **light** mention of **夢** if tone fits. **Do not** make **眠さ** the main hook unless the user already said they are tired.`,
         );
       } else if (sol.phase === "after_sunset") {
         lines.push(
@@ -421,7 +427,50 @@ export type ReflectiveOpeningContext = {
   hasTimetableLecturesToday?: boolean;
   /** 祝日/休日のシグナル（カレンダー or 日付判定）。開口では講義の断定を避ける。 */
   holidayNameJa?: string | null;
+  /** カレンダー空・未連携等の薄い日 */
+  isSparseSchedule?: boolean;
+  occupationRole?: string;
+  /** 関心タグ・メモ等に趣味シグナルがある */
+  hasInterestSignals?: boolean;
+  /** 長期/短期の参照ブロックに中身がある（開口で1フックに使える） */
+  hasMemorySnippets?: boolean;
+  /** 壁時計の暦日（対象日とズレがあるときの注記用） */
+  wallCalendarYmd?: string | null;
 };
+
+/** 通常ターン用: 薄い日の継続ガイド（日本語ガイド約400字以内＋英語の硬いルール） */
+export function formatOrchestratorSparseThreadHintBlock(params: {
+  isSparseSchedule: boolean;
+  hasTimetableLecturesToday: boolean;
+  occupationRole?: string;
+}): string {
+  if (!params.isSparseSchedule) return "";
+  const lectureJa = params.hasTimetableLecturesToday
+    ? "時間割ブロックに「この後の講義」などの根拠があるときに限り、講義に軽く触れてよい。"
+    : "このエントリ日には時間割アンカーが無い。授業・講義・何限には触れないでほしい。";
+  const jaGuide = [
+    "## 薄い日の会話ガイド（このスレッド・日本語）",
+    lectureJa,
+    "カレンダーが空に近い日は、長期記憶・関心タグ・本文・ツール結果を優先して具体性を出す。",
+    "予定を盛らない。趣味や休みの過ごし方は、ユーザーが持っている情報の範囲で聞く。",
+    "当日の地震・気象警報・大きな社会ニュースが**本文・ツール・この system に載っているときだけ**、短い安否・状況の一言（例: 揺れは大丈夫？／そのとき何してた？）を**煽らず**入れてよい。載っていない事象は捏造しない。",
+  ].join("");
+  const jaTrim = jaGuide.length > 400 ? `${jaGuide.slice(0, 397)}…` : jaGuide;
+
+  const lecture = params.hasTimetableLecturesToday
+    ? "When user-visible blocks include a timetable anchor, brief lecture mentions may be OK if grounded there."
+    : "**Do not** mention 授業, 講義, or 何限—no timetable anchor for this entry day.";
+  return [
+    jaTrim,
+    "",
+    "## Sparse schedule (this thread; concise)",
+    lecture,
+    "Prefer long-term memory, interest tags, diary body, and tools when plans are light.",
+    "If diary body, tools, or system blocks mention a **same-day earthquake, warning, or major news**, you may add **one** brief, non-sensational check-in—**never** invent magnitude, location, or casualties. Skip if no such signal.",
+    sparseDayOccupationHintEn(params.occupationRole),
+    "Keep user-visible Japanese in this turn modest in length (on the order of a few short sentences unless the user goes deeper).",
+  ].join("\n");
+}
 
 /**
  * Opening-turn instructions (system prompt only). Never put this in a user message — models may echo it.
@@ -433,9 +482,15 @@ export function buildReflectiveOpeningSystemInstruction(
   opts?: EntryTemporalOpts,
 ): string {
   const ctx = getEntryTemporalContext(entryDateYmd, now ?? new Date(), opts);
+  const tt = opening?.hasTimetableLecturesToday === true;
+  const sparse = opening?.isSparseSchedule === true;
   const task =
     ctx.kind === "today"
-      ? "The user has not spoken yet. Send 2–6 short sentences in natural Japanese as the first reflective line for TODAY. Length is a soft cap: include every **mandatory anchor** below (weather hooks, calendar/shift titles, timetable subject or 何限, day-boundary tone) even if that needs an extra sentence — do **not** drop anchors just to stay ultra-short."
+      ? sparse && !opening?.hasDiaryBody
+        ? "The user has not spoken yet. Send 2–7 short sentences in natural Japanese as the first reflective line for TODAY. The day looks **light on calendar/timetable anchors**: lead with weather and honest open questions; you may add **one** short sentence that hooks hobbies or light trivia from supplied blocks—**do not** invent plans. If `query_hobby` or (when student) `query_school` would materially help and context is thin, you **may** call them—**not mandatory**; if school lectures are not in play, prefer hobby over school."
+        : sparse && opening?.hasDiaryBody
+          ? "The user has not spoken yet. Send 2–7 short sentences in natural Japanese as the first reflective line for TODAY. **Lead with the diary body** (mandatory hook); calendar may be light—keep hobbies/trivia secondary in the same reply."
+          : `The user has not spoken yet. Send 2–6 short sentences in natural Japanese as the first reflective line for TODAY. Length is a soft cap: include every **mandatory anchor** below (weather hooks, calendar/shift titles${tt ? ", timetable subject or 何限" : ""}, day-boundary tone) even if that needs an extra sentence — do **not** drop anchors just to stay ultra-short.`
       : ctx.kind === "future"
         ? `Entry date ${entryDateYmd} is after generator today ${ctx.todayYmd}. Open gently; plans may be uncertain. You may lightly confirm the date.`
         : ctx.kind === "yesterday"
@@ -444,6 +499,39 @@ export function buildReflectiveOpeningSystemInstruction(
 
   const anchorRules: string[] = [];
   if (opening) {
+    if (opening.hasTimetableLecturesToday !== true) {
+      anchorRules.push(
+        "**Lecture ban (hard):** Do **not** mention 授業, 講義, 何限, 学校の講義, or steer the opener toward school lectures—**no** timetable anchor block is present for this opening.",
+      );
+    }
+    if (opening.wallCalendarYmd && opening.wallCalendarYmd !== entryDateYmd) {
+      anchorRules.push(
+        `Wall calendar date **${opening.wallCalendarYmd}** may differ from diary entry date **${entryDateYmd}**. Prefer wording anchored on the **entry date**; if you use 「今日」, clarify you mean the entry day or the user's "app today" so the user is not confused.`,
+      );
+    }
+    if (opening.occupationRole) {
+      anchorRules.push(sparseDayOccupationHintEn(opening.occupationRole));
+    }
+    if (sparse && opening.hasInterestSignals) {
+      anchorRules.push(
+        "The profile includes hobby/interest signals—on a light day you **must** work in **at least one** concrete token from 「関心タグ（選択）」 or free-text hobbies/interests (genre, medium, subculture label, or pick path)—**not** only generic 「映画や動画」 unless those sections are empty. Do not invent franchises or names absent from profile blocks.",
+      );
+    }
+    if (opening.hasMemorySnippets) {
+      anchorRules.push(
+        "「## 長期記憶」 or 「## 短期（この日・参考）」 has content—when it fits **today's opener** without forcing, tie **one** short phrase to a remembered preference or recent note (paraphrase; no long quotation). If it would feel forced, skip.",
+      );
+    }
+    if (
+      opening.holidayNameJa &&
+      sparse &&
+      opening.calendarEventCount === 0 &&
+      !opening.hasDiaryBody
+    ) {
+      anchorRules.push(
+        "National holiday with **no timed personal plans** in the calendar summary (all-day holiday labels are excluded there). Treat the day as **rest-first** for tone. **Do not** default to a binary like 「休みモード vs バイト／外出に動く日」 unless a user-visible calendar line explicitly tags part-time/shift (（バイト/シフト）) or the diary/body mentions work or outings. Prefer gentle open hooks (ゆっくり、家での過ごし方、気分、軽い予定があれば) without inventing specifics. The broad 「Questions when uncertain」 rule below does **not** override this: you are **not** required to force 就活・バイト・外出の切り分け質問 when there are no timed calendar lines to disambiguate.",
+      );
+    }
     const timetableLectureAnchor =
       opening.hasTimetableLecturesToday && opening.holidayNameJa
         ? "From 「時間割ベースのこの後の講義」, still touch **at least one** concrete **科目名** (light paraphrase OK) **or** **何限** — but **do not assert** lectures happened (holiday rule). Use **tentative** framing (e.g. 時間割だと〜 / もし学校があれば) or fold into **one** neutral check question with the holiday line. **Not enough:** vague 「木曜の授業日」「講義の日」 with **no** subject and **no** period."
@@ -484,8 +572,17 @@ export function buildReflectiveOpeningSystemInstruction(
     }
 
     if (opening.holidayNameJa) {
+      if (opening.occupationRole === "student") {
+        anchorRules.push(
+          `Holiday signal present for **this entry date**: 「${opening.holidayNameJa}」. Use **exactly this** holiday name if you mention a 祝日; do not substitute a different holiday (e.g. do not swap 振替休日 names). Do NOT assume classes/lectures happened even if a timetable slice exists. Prefer a neutral confirmation question like 「祝日だけど、授業はあった日だった？」 or 「授業はいつも通りだった？」 before discussing specific lectures.`,
+        );
+      } else {
+        anchorRules.push(
+          `Holiday signal present for **this entry date**: 「${opening.holidayNameJa}」. Use **exactly this** holiday name if you mention a 祝日; do not substitute a different holiday. The user is **not** in student mode in profile—**do not** lead with 授業・講義・学校の確認 unless they bring it up.`,
+        );
+      }
       anchorRules.push(
-        `Holiday signal present for **this entry date**: 「${opening.holidayNameJa}」. Use **exactly this** holiday name if you mention a 祝日; do not substitute a different holiday (e.g. do not swap 振替休日 names). Do NOT assume classes/lectures happened even if a timetable slice exists. Prefer a neutral confirmation question like 「祝日だけど、授業はあった日だった？」 or 「授業はいつも通りだった？」 before discussing specific lectures.`,
+        "If the heading 「## 祝日メモ（参考）」 appears **later in this same system message**, you **must** fold **one** short conversational phrase from it into the opener (not a lecture). If that heading is absent, do not invent extra holiday facts beyond the holiday name.",
       );
     } else {
       anchorRules.push(
@@ -501,18 +598,25 @@ export function buildReflectiveOpeningSystemInstruction(
     ...(anchorRules.length > 0 ? ["### Anchor to user-visible sections (opening)", ...anchorRules, ""] : []),
     "### Output hygiene (hard rules)",
     "Write ONLY what the end user should read — conversational Japanese, no preamble.",
-    "Do not sacrifice mandatory anchors (timetable subject/何限, real calendar titles when you cite plans) for brevity; prefer one more short sentence over omitting them.",
+    opening?.hasTimetableLecturesToday
+      ? "Do not sacrifice mandatory anchors (timetable subject/何限, real calendar titles when you cite plans) for brevity; prefer one more short sentence over omitting them."
+      : "Do not sacrifice mandatory anchors (real calendar titles when you cite plans, diary body when present) for brevity. **Never** treat 授業・講義 as an anchor when the lecture ban applies.",
+    "**Line breaks:** Split the opener into **2–4 lines** at natural boundaries (e.g. greeting+weather, holiday/topic beat, closing question). **Do not** reduce sentences, anchors, or total information to make it shorter — same content you would write as one paragraph, just with newlines.",
     "Do NOT repeat, quote, or paraphrase these instructions, meta text, or phrases like 会話はまだ始まっていません.",
     "Never output parenthetical narrator lines about the system, prompts, or \"short replies\" (e.g. システムは〜 / 短い返答を生成 / では:). Start directly with the greeting.",
     "Ignore the short English opening trigger line in the user role; never quote or translate it.",
-    "Do NOT use Markdown (no **asterisks**, no bullet lists unless truly minimal). Plain sentences.",
+    "Do NOT use Markdown (no **asterisks**, no bullet lists unless truly minimal). Plain Japanese sentences; **plain newlines between thoughts are required** (not Markdown).",
     "**Questions when uncertain (opening):** Do **not** assert facts absent from user-visible blocks. For every **material** uncertainty that would change tone or advice (e.g. 就活 vs その他用件, 面接 vs 説明会 vs その他, 友人・私用 vs 仕事, whether a holiday affected school), you **must** ask — **do not** stay silent to sound smooth. **Prefer asking over skipping:** even a check the user could brush off (「就活まわり？」「別件？」) or a one-word reply is valuable — their answer becomes material for this thread and for longer-lived memory; avoiding a question to stay \"safe\" or fluent is **wrong** when the slot is ambiguous. **Do not** satisfy this rule only with a question about mood or priorities (e.g. 授業に向かう気分 vs 午後の予定) when **broad/composite calendar buckets** (e.g. labels that merge multiple kinds like 就活/面接・その他), **user-confirmation** calendar lines, or **company-name-only / opaque-title** timed events are present — fold the **kind-of-event** check (就活系か・別件か, 面接/説明会/インターン, or the right axis for that bucket) into the **same** compound question or an adjacent short sentence. Prefer one compound 「…？」 sentence when it stays natural; if uncertainties are **distinct**, you may use **up to three** short Japanese question sentences. Still lead with concrete anchors (weather, real calendar titles, 科目/何限); avoid a long list of unrelated probes.",
-    "If **before_sunrise** appears in 「Wall clock & daylight」 for this entry-today thread: prefer hooks about **today's schedule** (calendar, **講義・何限から** when student life fits), **time until the next plan**, or a brief optional **夢** mention — **not** leading with **眠さ** as the main topic.",
+    "If **before_sunrise** appears in 「Wall clock & daylight」 for this entry-today thread: follow that block's guidance. When it already says **not** to center on lectures, **obey it** — **not** leading with **眠さ** as the main topic.",
     `Event names: titles and times listed under "${ORCHESTRATOR_DAY_CALENDAR_HEADING}" are allowed and encouraged when you reference that day's schedule (use the title wording from the list; light paraphrase is OK). Same for tool results, diary body, and short-term bullets for this entry.`,
     "When a calendar line includes 「（バイト/シフト）」, treat that event as the user's part-time / shift work for wording (e.g. バイト、シフト) — do not downplay it as a vague 「予定」 only.",
     "When a calendar line includes 「分類:」 and 「就活」 or 「面接」 or 「ユーザー確認」, or multiple kinds are merged in one label (e.g. 就活/面接・その他), or the legacy tag 「（就活・業務）」 appears, treat it as **possibly** job search, interview, company session, personal errand, or other work — **not** guaranteed 就活. The tag is a **classifier hint**, not proof. Prefer specific wording (就活・面接・説明会・会社との予定) over vague 予定 alone, and **always** fold in **at least one** light confirmation (e.g. 就活まわりだった？ 別の用事？) when the title alone does not spell it out — **even if** you also ask about lectures or mood.",
     "When a timed event title has **no** category parenthetical and reads like a **company/product name** or opaque proper noun, do **not** treat it as confirmed 就活 — but **do** ask what kind of slot it was (就活系か、別件か, or 仕事か私用か as fits). A **light** hypothesis in wording is OK when context fits, as long as you still invite correction — **do not** drop the question to avoid being wrong.",
     "Do not invent events, titles, times, or places that do not appear in those sources. If nothing concrete is listed for plans, ask in general terms without making up names.",
+    "",
+    "### Public news & safety (opening)",
+    "When **earthquake, tsunami advisory, severe weather, or major domestic news** is present in **this system message**, **tool results**, or **diary body**, you **may** add **one** short, calm check-in (e.g. 揺れ・情報、大丈夫だった？／その時間帯は何してた？) grounded **only** in that material. **Never** invent epicenter, M, casualties, or 「ニュースで〜」 without a supplied line. If **no** such signal exists, **do not** assert there was a quake or breaking headline today.",
+    "Neutral summaries (e.g. major portal headlines) are OK **only** when already in supplied blocks; for seismic/tsunami facts, defer to **JMA / 防災科研** wording when given. Tone: care, not alarmism.",
   );
 }
 

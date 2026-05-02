@@ -78,12 +78,14 @@ type SettingsPayload = {
     CHAT_PER_DAY: number;
     IMAGE_GEN_PER_DAY: number;
     DAILY_SUMMARY_PER_DAY: number;
+    HOBBY_EXTERNAL_FETCH_PER_DAY?: number;
   };
   usageToday: {
     chatMessages: number;
     imageGenerations: number;
     dailySummaries: number;
     settingsChanges?: number;
+    hobbyExternalFetches?: number;
   };
   promptVersions: Record<string, string>;
   serverSyncToken?: string;
@@ -877,6 +879,13 @@ export function SettingsForm({ userId }: { userId: string }) {
           <li>
             日次要約: {data.usageToday.dailySummaries} / {data.limits.DAILY_SUMMARY_PER_DAY}
           </li>
+          {typeof data.limits.HOBBY_EXTERNAL_FETCH_PER_DAY === "number" &&
+          typeof data.usageToday.hobbyExternalFetches === "number" ? (
+            <li>
+              趣味・外部取得: {data.usageToday.hobbyExternalFetches} /{" "}
+              {data.limits.HOBBY_EXTERNAL_FETCH_PER_DAY}
+            </li>
+          ) : null}
         </ul>
       </section>
 

@@ -27,6 +27,14 @@ const _env = createEnv({
     DATABASE_URL: z.string().url(),
     UPLOADS_DIR: z.string().min(1),
     OPENAI_API_KEY: z.string().min(1).optional(),
+    /** Vertex / Enterprise Gemini（@google/genai）。未設定でもビルド可。 */
+    GOOGLE_GENAI_USE_ENTERPRISE: z.string().optional(),
+    GOOGLE_CLOUD_PROJECT: z.string().optional(),
+    GOOGLE_CLOUD_LOCATION: z.string().optional(),
+    HOBBY_GROUNDING_MODEL: z.string().optional(),
+    VERTEX_GEMINI_GROUNDING_MODEL: z.string().optional(),
+    HOBBY_FETCH_USER_AGENT: z.string().optional(),
+    WIKIFEEDS_USER_AGENT: z.string().optional(),
   },
   client: {
     NEXT_PUBLIC_APP_ORIGIN: z.string().url(),
@@ -44,6 +52,13 @@ const _env = createEnv({
     DATABASE_URL: process.env.DATABASE_URL,
     UPLOADS_DIR: process.env.UPLOADS_DIR,
     OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+    GOOGLE_GENAI_USE_ENTERPRISE: process.env.GOOGLE_GENAI_USE_ENTERPRISE,
+    GOOGLE_CLOUD_PROJECT: process.env.GOOGLE_CLOUD_PROJECT,
+    GOOGLE_CLOUD_LOCATION: process.env.GOOGLE_CLOUD_LOCATION,
+    HOBBY_GROUNDING_MODEL: process.env.HOBBY_GROUNDING_MODEL,
+    VERTEX_GEMINI_GROUNDING_MODEL: process.env.VERTEX_GEMINI_GROUNDING_MODEL,
+    HOBBY_FETCH_USER_AGENT: process.env.HOBBY_FETCH_USER_AGENT,
+    WIKIFEEDS_USER_AGENT: process.env.WIKIFEEDS_USER_AGENT,
     NEXT_PUBLIC_APP_ORIGIN: process.env.NEXT_PUBLIC_APP_ORIGIN,
   },
 });

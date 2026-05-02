@@ -401,7 +401,7 @@ function AssistantBubble({
   return (
     <div className="flex flex-col items-start gap-1">
       <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">AI</span>
-      <div className="max-w-[min(100%,28rem)] rounded-2xl rounded-bl-md border border-zinc-200/80 bg-white px-3 py-2 text-[13px] leading-snug text-zinc-900 shadow-sm sm:px-3.5 sm:py-2.5 sm:text-sm sm:leading-relaxed dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100">
+      <div className="max-w-[min(100%,28rem)] rounded-2xl rounded-bl-md border border-zinc-200/80 bg-white px-2.5 py-1.5 text-[12px] leading-snug text-zinc-900 shadow-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 lg:px-3.5 lg:py-2.5 lg:text-sm lg:leading-relaxed">
         <p className="whitespace-pre-wrap">{shown}</p>
         {subNote ? (
           <p className="mt-1.5 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">{subNote}</p>
@@ -414,7 +414,7 @@ function AssistantBubble({
           className="max-w-[min(100%,28rem)] pl-0.5 text-[10px] font-normal tabular-nums leading-none text-zinc-400 dark:text-zinc-500"
           title={`${sentAtIso}（記録時刻・東京表示）`}
         >
-          生成・送信 {formatAssistantSentAtTokyo(sentAtIso)}
+          {formatAssistantSentAtTokyo(sentAtIso)}
         </time>
       ) : null}
       {!streaming && settingsChangeTip ? (
@@ -479,8 +479,9 @@ export function EntryChat({
   /**
    * `fill`: 親（例: 今日ページの左カラム）が高さを与えるとき、md 以上でメッセージ＋入力を列いっぱいに伸ばす。
    * モバイルは従来どおり dvh ベースの高さ。
+   * `scrollStack`: 今日ページのモバイル／タブレット用。親が縦スクロールし、チャットは max-lg で高さ上限＋内部スクロール、lg+ は fill と同様に列内で伸縮。
    */
-  layoutHeight?: "default" | "fill";
+  layoutHeight?: "default" | "fill" | "scrollStack";
   conversationAccordion?: boolean;
 }) {
   const router = useRouter();
@@ -719,7 +720,9 @@ export function EntryChat({
   const panelBodyClass =
     layoutHeight === "fill" && variant === "default"
       ? `flex min-h-0 flex-1 flex-col ${DEFAULT_CHAT_PANEL_MOBILE_HEIGHT} md:min-h-0 md:max-h-none md:flex-1`
-      : `flex flex-col ${panelHeight}`;
+      : layoutHeight === "scrollStack" && variant === "default"
+        ? "flex h-full min-h-0 min-w-0 flex-1 flex-col lg:min-h-0 lg:flex-1"
+        : `flex flex-col ${panelHeight}`;
 
   const panelShellStyle: CSSProperties | undefined = vvShellStyle ? { ...vvShellStyle, minHeight: 0 } : undefined;
 
@@ -1089,13 +1092,15 @@ export function EntryChat({
 
   const accordionLayout = conversationAccordion && variant === "default";
 
+  const messagesListClassName =
+    layoutHeight === "scrollStack"
+      ? "min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain px-2 py-2 sm:space-y-2.5 sm:px-3 sm:py-3 lg:space-y-4 lg:px-4 lg:py-4"
+      : "min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain px-2 py-2 sm:space-y-2.5 sm:px-3 sm:py-3 lg:space-y-4 lg:px-4 lg:py-4";
+
   function renderMessagesAndComposer() {
     return (
       <>
-        <div
-          ref={messagesScrollRef}
-          className="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain px-2 py-2 sm:space-y-2.5 sm:px-3 sm:py-3 lg:space-y-4 lg:px-4 lg:py-4"
-        >
+        <div ref={messagesScrollRef} className={messagesListClassName}>
           {messages.length === 0 && !streaming && !busy && (
             <p className="rounded-xl bg-zinc-100/80 px-3 py-2 text-center text-xs text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
               何もない日でも大丈夫。AI がすぐに話しかけます。気分や小さな出来事から返してみてください。
@@ -1190,7 +1195,7 @@ export function EntryChat({
               value={input}
               onChange={(e) => setInput(e.target.value)}
               rows={variant === "compact" ? 2 : 2}
-              className="entry-chat-compose-textarea min-h-[2.5rem] flex-1 resize-none rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-zinc-900 shadow-inner outline-none ring-emerald-500/30 placeholder:text-zinc-400 focus:border-emerald-500/50 focus:ring-2 sm:min-h-[2.75rem] sm:rounded-xl sm:px-3 sm:py-2 lg:min-h-[2.75rem] dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50"
+              className="entry-chat-compose-textarea min-h-[2.25rem] flex-1 resize-none rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-zinc-900 shadow-inner outline-none ring-emerald-500/30 placeholder:text-zinc-400 placeholder:text-[11px] focus:border-emerald-500/50 focus:ring-2 sm:min-h-[2.5rem] sm:px-2.5 sm:py-1.5 sm:placeholder:text-xs md:min-h-[2.625rem] md:px-3 md:py-2 lg:min-h-[2.75rem] lg:rounded-xl lg:placeholder:text-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50"
               placeholder="気づいたこと、感情、今日の予定とのこと…"
               disabled={busy}
               onKeyDown={(e) => {
@@ -1221,12 +1226,14 @@ export function EntryChat({
       className={
         layoutHeight === "fill" && variant === "default"
           ? "flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-zinc-200/90 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
-          : [
-              "overflow-hidden rounded-2xl border border-zinc-200/90 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950",
-              conversationAccordion && variant === "default" ? "flex min-h-0 flex-col" : "",
-            ]
-              .filter(Boolean)
-              .join(" ")
+          : layoutHeight === "scrollStack" && variant === "default"
+            ? "flex h-full min-h-0 w-full flex-col overflow-hidden rounded-2xl border border-zinc-200/90 bg-white shadow-sm lg:min-h-0 lg:flex-1 dark:border-zinc-800 dark:bg-zinc-950"
+            : [
+                "overflow-hidden rounded-2xl border border-zinc-200/90 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950",
+                conversationAccordion && variant === "default" ? "flex min-h-0 flex-col" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")
       }
     >
       <div className="shrink-0 border-b border-zinc-100 bg-zinc-50/90 px-3 py-2 sm:px-3.5 sm:py-2.5 lg:px-4 lg:py-3 dark:border-zinc-800 dark:bg-zinc-900/80">

@@ -117,7 +117,7 @@ export default async function CalendarByDatePage({
   const nextYm = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
   return (
     <div
-      className={`mx-auto w-full min-w-0 max-w-3xl overflow-x-hidden px-3 pb-4 sm:px-4 sm:pb-6 lg:max-w-5xl xl:max-w-6xl ${APP_MAIN_PT_BELOW_FIXED_HEADER}`}
+      className={`mx-auto flex min-h-0 w-full min-w-0 max-w-3xl flex-1 flex-col overflow-x-hidden overflow-y-auto px-3 pb-4 sm:px-4 sm:pb-6 lg:max-w-5xl xl:max-w-6xl ${APP_MAIN_PT_BELOW_FIXED_HEADER}`}
     >
       <CalendarClient
         ym={ym}

@@ -20,7 +20,7 @@ export default async function SettingsPage() {
 
   return (
     <div
-      className={`mx-auto w-full min-w-0 max-w-lg px-4 pb-10 sm:max-w-2xl sm:px-6 md:max-w-3xl md:pb-12 lg:max-w-4xl lg:px-10 xl:max-w-5xl 2xl:max-w-6xl ${APP_MAIN_PT_BELOW_FIXED_HEADER}`}
+      className={`mx-auto flex min-h-0 w-full min-w-0 max-w-lg flex-1 flex-col overflow-y-auto px-4 pb-10 sm:max-w-2xl sm:px-6 md:max-w-3xl md:pb-12 lg:max-w-4xl lg:px-10 xl:max-w-5xl 2xl:max-w-6xl ${APP_MAIN_PT_BELOW_FIXED_HEADER}`}
     >
       <header className="fixed left-0 right-0 top-0 z-30 border-b border-zinc-200/90 bg-white/95 backdrop-blur-md dark:border-zinc-800/90 dark:bg-zinc-950/95">
         <div

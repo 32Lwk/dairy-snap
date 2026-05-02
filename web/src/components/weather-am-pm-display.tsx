@@ -40,12 +40,18 @@ export function WeatherAmPmDisplay({
   compact?: boolean;
 }) {
   return (
-    <div className={compact ? "mt-2 @container/wx space-y-2" : "mt-3 @container/wx space-y-3"}>
+    <div
+      className={
+        compact
+          ? "mt-2 @container/wx space-y-2"
+          : "mt-3 @container/wx space-y-3 max-lg:mt-2 max-lg:space-y-2"
+      }
+    >
       <div
         className={
           compact
             ? "flex flex-wrap items-center gap-1.5 text-[10px] text-zinc-500"
-            : "flex flex-wrap items-center gap-2 text-xs text-zinc-500"
+            : "flex flex-wrap items-center gap-2 text-xs text-zinc-500 max-lg:gap-1.5 max-lg:text-[10px]"
         }
       >
         {date && <span className="rounded-full bg-zinc-100 px-2 py-0.5 dark:bg-zinc-800">対象日 {date}</span>}
@@ -64,8 +70,8 @@ export function WeatherAmPmDisplay({
       <div
         className={
           compact
-            ? "grid grid-cols-1 gap-2 @md/wx:grid-cols-2"
-            : "grid grid-cols-1 gap-3 @md/wx:grid-cols-2"
+            ? "grid max-lg:grid-cols-2 max-lg:gap-1.5 lg:grid-cols-1 lg:gap-2 @md/wx:grid-cols-2"
+            : "grid max-lg:grid-cols-2 max-lg:gap-1.5 sm:max-lg:gap-2 lg:grid-cols-1 lg:gap-3 @md/wx:grid-cols-2"
         }
       >
         <WeatherSlotCard label="午前" slot={am} compact={compact} />
@@ -82,10 +88,10 @@ function WeatherSlotCard({ label, slot, compact }: { label: string; slot: Slot; 
 
   return (
     <div
-      className={`flex items-start rounded-2xl border shadow-sm ${compact ? "gap-2 p-2" : "gap-3 p-3"} ${tone}`}
+      className={`min-w-0 flex items-start rounded-2xl border shadow-sm ${compact ? "gap-2 p-2" : "gap-3 p-3 max-lg:gap-1.5 max-lg:p-1.5 sm:max-lg:gap-2 sm:max-lg:p-2"} ${tone}`}
     >
       <span
-        className={`select-none leading-none ${compact ? "text-2xl" : "text-3xl"}`}
+        className={`select-none leading-none ${compact ? "text-2xl" : "text-3xl max-lg:text-2xl"}`}
         title={slot.weatherLabel ?? ""}
         aria-hidden
       >
@@ -96,7 +102,7 @@ function WeatherSlotCard({ label, slot, compact }: { label: string; slot: Slot; 
           className={
             compact
               ? "text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400"
-              : "text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400"
+              : "text-xs font-semibold uppercase tracking-wide text-zinc-500 max-lg:text-[10px] dark:text-zinc-400"
           }
         >
           {label}
@@ -105,7 +111,7 @@ function WeatherSlotCard({ label, slot, compact }: { label: string; slot: Slot; 
           className={
             compact
               ? "mt-0.5 truncate text-xs font-medium leading-snug text-zinc-900 dark:text-zinc-50"
-              : "mt-0.5 truncate text-sm font-medium text-zinc-900 dark:text-zinc-50"
+              : "mt-0.5 truncate text-sm font-medium text-zinc-900 max-lg:text-xs max-lg:leading-snug dark:text-zinc-50"
           }
           title={slot.weatherLabel ? String(slot.weatherLabel) : undefined}
         >
@@ -116,11 +122,15 @@ function WeatherSlotCard({ label, slot, compact }: { label: string; slot: Slot; 
             className={
               compact
                 ? "mt-0.5 text-sm font-semibold tabular-nums text-zinc-800 dark:text-zinc-100"
-                : "mt-1 text-lg font-semibold tabular-nums text-zinc-800 dark:text-zinc-100"
+                : "mt-1 text-lg font-semibold tabular-nums text-zinc-800 max-lg:mt-0.5 max-lg:text-sm dark:text-zinc-100"
             }
           >
             {Math.round(slot.temperatureC * 10) / 10}
-            <span className={compact ? "text-xs font-normal text-zinc-500" : "text-sm font-normal text-zinc-500"}>
+            <span
+              className={
+                compact ? "text-xs font-normal text-zinc-500" : "text-sm font-normal text-zinc-500 max-lg:text-xs"
+              }
+            >
               °C
             </span>
           </p>
@@ -130,11 +140,18 @@ function WeatherSlotCard({ label, slot, compact }: { label: string; slot: Slot; 
             className={
               compact
                 ? "mt-0.5 break-words font-mono text-[9px] leading-tight tabular-nums text-zinc-500 dark:text-zinc-500"
-                : "mt-1 font-mono text-[10px] text-zinc-500 dark:text-zinc-500"
+                : "mt-1 font-mono text-[10px] text-zinc-500 max-lg:mt-0.5 max-lg:text-[9px] dark:text-zinc-500"
             }
             title={slot.time}
           >
-            {compact ? formatCompactSlotTime(slot.time) : slot.time}
+            {compact ? (
+              formatCompactSlotTime(slot.time)
+            ) : (
+              <>
+                <span className="lg:hidden">{formatCompactSlotTime(slot.time)}</span>
+                <span className="hidden lg:inline">{slot.time}</span>
+              </>
+            )}
           </p>
         )}
       </div>

@@ -1,5 +1,9 @@
 import { stripAssistantMetaEchoPrefix } from "@/lib/chat-assistant-sanitize";
-import { countUserTurnsIncludingCurrent } from "@/lib/reflective-chat-diary-nudge-rules";
+import {
+  classifyJournalDraftMaterial,
+  countUserTurnsIncludingCurrent,
+} from "@/lib/reflective-chat-diary-nudge-rules";
+import { parseUserSettings } from "@/lib/user-settings";
 import { prisma } from "@/server/db";
 import { PROMPT_VERSIONS } from "@/server/prompts";
 import { upsertTextEmbedding } from "@/server/embeddings";
@@ -75,6 +79,16 @@ export async function regenerateReflectiveChatTail(args: {
   }));
   const reflectiveUserTurnIncludingCurrent = countUserTurnsIncludingCurrent(historyMessages);
 
+  const userRow = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { settings: true },
+  });
+  const profile = parseUserSettings(userRow?.settings ?? {}).profile;
+  const journalDraftMaterial = classifyJournalDraftMaterial(
+    chatPairs.map((m) => ({ role: m.role, content: m.content })),
+    { aiDepthLevel: profile?.aiDepthLevel, aiChatTone: profile?.aiChatTone },
+  );
+
   const started = Date.now();
   const { stream, agentsUsed, personaInstructions, mbtiHint, orchestratorModel } = await runOrchestrator({
     userId,
@@ -86,6 +100,7 @@ export async function regenerateReflectiveChatTail(args: {
     encryptionMode: entry.encryptionMode,
     currentBody: entry.body,
     reflectiveUserTurnIncludingCurrent,
+    reflectiveJournalMaterialTier: journalDraftMaterial.tier,
     clockNow: new Date(),
   });
 

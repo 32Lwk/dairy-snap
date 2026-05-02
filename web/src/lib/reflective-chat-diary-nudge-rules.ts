@@ -112,6 +112,51 @@ export function assistantHintsJournalDraftFollowup(assistantText: string): boole
 
 export type JournalDraftMaterialTier = "rich" | "thin" | "empty";
 
+/** 会話が伸び悩んでいる・題材が思い浮かばない等（趣味エージェントや話題展開のトリガー用） */
+export function userMessageSuggestsConversationStuckJa(raw: string): boolean {
+  const s = raw.trim().replace(/\u3000/g, " ");
+  if (s.length < 4) return false;
+  return (
+    /(何|なに)(を|が)?話せ?ば|話題|つまらな|詰まっ|わからな(い|く)|困っ|ネタ|浮かば|思いつか|ひらめか|弾まない|続かない|会話が.{0,4}続|どう話せ|話すことがな|言うことがな/u.test(
+      s,
+    ) ||
+    /(もう|マジ)(無理|だめ)|沈黙|白け|冷め/u.test(s)
+  );
+}
+
+/**
+ * 日記草案直前の「深掘り」モード。素材が十分なとき・ターン閾値到達時・ユーザーが詰まりを示したときに true。
+ * このときは薄い日・イベント無し等の制約を会話展開の可否に使わない（事実捏造は禁止のまま）。
+ */
+export function shouldApplyTopicDeepeningMode(
+  userMessage: string,
+  userTurnsIncludingThis: number,
+  minUserTurnsBeforeDiaryProposal: number,
+  materialTier: JournalDraftMaterialTier,
+): boolean {
+  if (userMessageSuggestsConversationStuckJa(userMessage)) return true;
+  if (materialTier === "rich") return true;
+  if (userTurnsIncludingThis >= minUserTurnsBeforeDiaryProposal) return true;
+  return false;
+}
+
+/** オーケストレーター system 用: 深掘りフェーズの英語ブロック */
+export function formatOrchestratorTopicDeepeningBlock(): string {
+  return [
+    "## Topic deepening & memory-first (this turn — priority override)",
+    "This thread is in a **deepening phase**: the user may be about to wrap toward a diary draft, may feel **stuck**, or you should **understand them better before closing**.",
+    "",
+    "**Overrides:** Treat earlier guidance about **sparse schedules**, **no calendar events**, **no school timetable**, or **light days** as **irrelevant to whether you broaden the conversation** with hobbies, gentle news hooks, or memory-oriented questions. You must still **never invent** calendar events, classes, or plans.",
+    "",
+    "**Aims (before suggesting the diary-draft UI when the turn-count rule allows it):**",
+    "1. **Memory-worthy learning**: Naturally weave **1–2 concrete, light questions** whose answers would plausibly belong in short-term or long-term memory (preferences, ongoing threads, emotional color). Avoid a rigid interview.",
+    "2. **Interests & `query_hobby`**: If hobby/interest signals exist in the profile **or** the user names a hobby, title, or fandom, **call `query_hobby`** when a little fresh, allowlisted texture would help the thread (angle, official-site hook, gentle ice-breaker). **Not** only on “light” days — deepening may use it **even on busy calendar days**. Same-day calendar titles may still be mentioned when real, but **an empty calendar is not a reason to skip** hobby deepening.",
+    "3. **Stuck recovery**: If the user signals blockage, prefer **`query_hobby`** (when interests exist), **diary body**, or **memory bullets** over repeating generic sympathy with no new angle.",
+    "",
+    "Do not stall forever: after a meaningful deepening beat or two, you may invite the diary draft when permitted above.",
+  ].join("\n");
+}
+
 /**
  * カレンダー分類の確認（就活か・面接か等）への**短い答え**は、10文字未満でも日記・記憶の材料になり得る。
  */
@@ -242,7 +287,18 @@ export function shouldUseMiniOrchestratorForReflectiveChat(
   userMessage: string,
   lastAssistant: string | null,
   material: JournalDraftMaterial,
+  userTurnsIncludingThis: number,
 ): boolean {
+  if (
+    shouldApplyTopicDeepeningMode(
+      userMessage,
+      userTurnsIncludingThis,
+      material.minTurnsForRich,
+      material.tier,
+    )
+  ) {
+    return false;
+  }
   if (shouldTriggerJournalDraftPanelAfterSend(userMessage, lastAssistant, material)) return false;
   const s = userMessage.trim().replace(/\u3000/g, " ");
   if (!s || s.length > 40) return false;

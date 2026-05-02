@@ -19,7 +19,7 @@ export default function Bb84Page() {
   const keyBits = sifted.filter((x) => x !== null) as number[];
 
   return (
-    <div className="mx-auto max-w-lg px-4 py-8">
+    <div className="mx-auto max-w-lg min-h-0 flex-1 overflow-y-auto px-4 py-8">
       <Link href="/settings" className="text-sm text-blue-600 hover:underline dark:text-blue-400">
         ← 設定
       </Link>
