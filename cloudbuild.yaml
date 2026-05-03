@@ -1,3 +1,9 @@
+# イメージ・スキャン・ストレージのメモ:
+# - 新しい digest がレジストリに載るたびに脆弱性スキャンが走りやすい。コストを抑えるには「不要なビルドを減らす」（トリガーを main のみ・paths フィルタ等）が最も効く。
+# - 同一ビルドで付ける :latest と :$SHORT_SHA は同一 digest。タグが2つあってもスキャンは digest ベースで重複しにくい。
+# - 古い :$SHORT_SHA の滞留はストレージ課金の原因。Artifact Registry の「クリーンアップポリシー」（例: 最新10件を残す）をコンソールまたは gcloud で設定する。
+# - 下記では明示的な docker push のみとし、末尾の `images:` は使わない（Cloud Build がビルド後に同じタグを再プッシュするのを避け、転送と後処理を減らす）。
+
 substitutions:
   # NOTE: `snap.yutok.dev` が向いている Cloud Run の service / region に合わせる。
   # Cloud Run リクエストログ上は `service_name=dairy-snap`, `location=asia-northeast1`。
@@ -62,10 +68,6 @@ steps:
         "managed",
         "--quiet",
       ]
-
-images:
-  - "${_RUN_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:$SHORT_SHA"
-  - "${_RUN_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_IMAGE_NAME}:latest"
 
 options:
   logging: CLOUD_LOGGING_ONLY

@@ -1,3 +1,4 @@
+import type { Prisma } from "@/generated/prisma/client";
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { requireSession } from "@/lib/api/require-session";
@@ -7,7 +8,8 @@ import { claimThreadForOpening } from "@/server/opening-thread-claim";
 import { LIMITS, getTodayCounter, incrementChat, incrementOrchestratorCalls } from "@/server/usage";
 import { runOrchestrator, triggerSupervisorAsync } from "@/server/orchestrator";
 import { runMasMemoryExtraction } from "@/server/mas-memory";
-import { PROMPT_VERSIONS } from "@/server/prompts";
+import { digestToolFactCards } from "@/lib/tool-fact-card";
+import { resolvePolicyVersion, resolvePromptVersion } from "@/server/prompts";
 import { upsertTextEmbedding } from "@/server/embeddings";
 import { computeAssistantStreamDelta, stripAssistantMetaEchoPrefix } from "@/lib/chat-assistant-sanitize";
 import { buildSecurityReviewPayload, scheduleSecurityReview } from "@/server/security-review-queue";
@@ -219,7 +221,8 @@ export async function postAiOpening(req: NextRequest): Promise<Response> {
           model: "rule_based_opening",
           latencyMs,
           agentsUsed: ["rule_based_settings_prompt"],
-          promptVersion: PROMPT_VERSIONS.reflective_chat,
+          promptVersion: resolvePromptVersion("reflective_chat"),
+          policyVersion: resolvePolicyVersion("opening_default"),
         },
       },
     });
@@ -229,7 +232,8 @@ export async function postAiOpening(req: NextRequest): Promise<Response> {
         userId: session.user.id,
         entryId: entry.id,
         kind: "CHAT_MESSAGE",
-        promptVersion: PROMPT_VERSIONS.reflective_chat,
+        promptVersion: resolvePromptVersion("reflective_chat"),
+        policyVersion: resolvePolicyVersion("opening_default"),
         model: "rule_based_opening",
         latencyMs,
         tokenEstimate: Math.ceil(msg.length / 4),
@@ -277,21 +281,31 @@ export async function postAiOpening(req: NextRequest): Promise<Response> {
         .join("\n")
     : "";
 
-  const { stream, agentsUsed, personaInstructions, mbtiHint, orchestratorModel, correlationId } =
-    await runOrchestrator({
-      userId: session.user.id,
-      entryId: entry.id,
-      entryDateYmd: entry.entryDateYmd,
-      userMessage: "",
-      historyMessages: [],
-      isOpening: true,
-      encryptionMode: entry.encryptionMode,
-      currentBody: entry.body,
-      clockNow: orchestratorNow,
-      threadId,
-      extraSystemAppend: openingExtraAppend,
-      openingAllowSettingsTool,
-    });
+  const {
+    stream,
+    agentsUsed,
+    personaInstructions,
+    mbtiHint,
+    orchestratorModel,
+    correlationId,
+    policyVersion,
+    toolFactCards,
+  } = await runOrchestrator({
+    userId: session.user.id,
+    entryId: entry.id,
+    entryDateYmd: entry.entryDateYmd,
+    userMessage: "",
+    historyMessages: [],
+    isOpening: true,
+    encryptionMode: entry.encryptionMode,
+    currentBody: entry.body,
+    clockNow: orchestratorNow,
+    threadId,
+    extraSystemAppend: openingExtraAppend,
+    openingAllowSettingsTool,
+  });
+
+  const toolCardsDigest = digestToolFactCards(toolFactCards);
 
   const encoder = new TextEncoder();
   let assistantText = "";
@@ -335,7 +349,9 @@ export async function postAiOpening(req: NextRequest): Promise<Response> {
             model: orchestratorModel,
             latencyMs,
             agentsUsed,
-            promptVersion: PROMPT_VERSIONS.reflective_chat,
+            promptVersion: resolvePromptVersion("reflective_chat"),
+            policyVersion,
+            toolCardsDigest,
           },
         },
       });
@@ -345,7 +361,8 @@ export async function postAiOpening(req: NextRequest): Promise<Response> {
           userId: session.user.id,
           entryId: entry.id,
           kind: "CHAT_MESSAGE",
-          promptVersion: PROMPT_VERSIONS.reflective_chat,
+          promptVersion: resolvePromptVersion("reflective_chat"),
+          policyVersion: resolvePolicyVersion("opening_default"),
           model: orchestratorModel,
           latencyMs,
           tokenEstimate: assistant.tokenEstimate,
@@ -359,6 +376,22 @@ export async function postAiOpening(req: NextRequest): Promise<Response> {
           },
         },
       });
+
+      void prisma.turnContextSnapshot
+        .create({
+          data: {
+            userId: session.user.id,
+            threadId,
+            entryId: entry.id,
+            userMessageId: null,
+            assistantMessageId: assistant.id,
+            promptVersion: resolvePromptVersion("reflective_chat"),
+            policyVersion,
+            toolCardsJson: toolFactCards as unknown as Prisma.InputJsonValue,
+            digest: toolCardsDigest,
+          },
+        })
+        .catch(() => {});
 
       triggerSupervisorAsync({
         userId: session.user.id,
@@ -402,6 +435,9 @@ export async function postAiOpening(req: NextRequest): Promise<Response> {
           model: orchestratorModel,
           agentsUsed,
           assistantChars: storedAssistant.length,
+          promptVersion: resolvePromptVersion("reflective_chat"),
+          policyVersion,
+          toolCardsDigest,
         },
         { correlationId },
       );
@@ -513,7 +549,9 @@ export async function postAiOpening(req: NextRequest): Promise<Response> {
               model: orchestratorModel,
               latencyMs,
               agentsUsed,
-              promptVersion: PROMPT_VERSIONS.reflective_chat,
+              promptVersion: resolvePromptVersion("reflective_chat"),
+              policyVersion,
+              toolCardsDigest,
             },
           },
         });
@@ -523,7 +561,8 @@ export async function postAiOpening(req: NextRequest): Promise<Response> {
             userId: session.user.id,
             entryId: entry.id,
             kind: "CHAT_MESSAGE",
-            promptVersion: PROMPT_VERSIONS.reflective_chat,
+            promptVersion: resolvePromptVersion("reflective_chat"),
+            policyVersion: resolvePolicyVersion("opening_default"),
             model: orchestratorModel,
             latencyMs,
             tokenEstimate: assistant.tokenEstimate,
@@ -536,6 +575,22 @@ export async function postAiOpening(req: NextRequest): Promise<Response> {
             },
           },
         });
+
+        void prisma.turnContextSnapshot
+          .create({
+            data: {
+              userId: session.user.id,
+              threadId,
+              entryId: entry.id,
+              userMessageId: null,
+              assistantMessageId: assistant.id,
+              promptVersion: resolvePromptVersion("reflective_chat"),
+              policyVersion,
+              toolCardsJson: toolFactCards as unknown as Prisma.InputJsonValue,
+              digest: toolCardsDigest,
+            },
+          })
+          .catch(() => {});
 
         triggerSupervisorAsync({
           userId: session.user.id,
@@ -579,6 +634,9 @@ export async function postAiOpening(req: NextRequest): Promise<Response> {
             model: orchestratorModel,
             agentsUsed,
             assistantChars: storedAssistant.length,
+            promptVersion: resolvePromptVersion("reflective_chat"),
+            policyVersion,
+            toolCardsDigest,
           },
           { correlationId },
         );

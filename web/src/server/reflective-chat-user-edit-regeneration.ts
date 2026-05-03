@@ -1,3 +1,5 @@
+import type { Prisma } from "@/generated/prisma/client";
+import { digestToolFactCards } from "@/lib/tool-fact-card";
 import { stripAssistantMetaEchoPrefix } from "@/lib/chat-assistant-sanitize";
 import {
   classifyJournalDraftMaterial,
@@ -5,12 +7,13 @@ import {
 } from "@/lib/reflective-chat-diary-nudge-rules";
 import { parseUserSettings } from "@/lib/user-settings";
 import { prisma } from "@/server/db";
-import { PROMPT_VERSIONS } from "@/server/prompts";
+import { resolvePromptVersion } from "@/server/prompts";
 import { upsertTextEmbedding } from "@/server/embeddings";
 import { runOrchestrator, triggerSupervisorAsync } from "@/server/orchestrator";
 import { runMasMemoryExtraction } from "@/server/mas-memory";
 import { LIMITS, getTodayCounter, incrementChat, incrementOrchestratorCalls } from "@/server/usage";
 import { buildSecurityReviewPayload, scheduleSecurityReview } from "@/server/security-review-queue";
+import { scheduleConversationEvalSampleInsert } from "@/server/eval/conversation-eval-sample";
 
 export type ReflectiveChatRegenerateResult = {
   removedFollowingCount: number;
@@ -81,7 +84,7 @@ export async function regenerateReflectiveChatTail(args: {
 
   const userRow = await prisma.user.findUnique({
     where: { id: userId },
-    select: { settings: true },
+    select: { settings: true, evaluationFullLogOptIn: true },
   });
   const profile = parseUserSettings(userRow?.settings ?? {}).profile;
   const journalDraftMaterial = classifyJournalDraftMaterial(
@@ -90,7 +93,8 @@ export async function regenerateReflectiveChatTail(args: {
   );
 
   const started = Date.now();
-  const { stream, agentsUsed, personaInstructions, mbtiHint, orchestratorModel } = await runOrchestrator({
+  const { stream, agentsUsed, personaInstructions, mbtiHint, orchestratorModel, policyVersion, toolFactCards } =
+    await runOrchestrator({
     userId,
     entryId: entry.id,
     entryDateYmd: entry.entryDateYmd,
@@ -142,19 +146,51 @@ export async function regenerateReflectiveChatTail(args: {
         model: orchestratorModel,
         latencyMs,
         agentsUsed,
-        promptVersion: PROMPT_VERSIONS.reflective_chat,
+        promptVersion: resolvePromptVersion("reflective_chat"),
+        policyVersion,
         editedUserMessageId,
         removedFollowingCount,
       },
     },
   });
 
+  const toolCardsDigest = digestToolFactCards(toolFactCards);
+  void prisma.turnContextSnapshot
+    .create({
+      data: {
+        userId,
+        threadId,
+        entryId: entry.id,
+        userMessageId: editedUserMessageId,
+        assistantMessageId: assistant.id,
+        promptVersion: resolvePromptVersion("reflective_chat"),
+        policyVersion,
+        toolCardsJson: toolFactCards as unknown as Prisma.InputJsonValue,
+        digest: toolCardsDigest,
+      },
+    })
+    .catch(() => {});
+
+  if (userRow?.evaluationFullLogOptIn === true && entry.encryptionMode === "STANDARD") {
+    scheduleConversationEvalSampleInsert({
+      userId,
+      threadId,
+      userMessageId: editedUserMessageId,
+      assistantMessageId: assistant.id,
+      promptVersion: resolvePromptVersion("reflective_chat"),
+      policyVersion,
+      userContent: latestUserText,
+      assistantContent: storedAssistant,
+    });
+  }
+
   await prisma.aIArtifact.create({
     data: {
       userId,
       entryId: entry.id,
       kind: "CHAT_MESSAGE",
-      promptVersion: PROMPT_VERSIONS.reflective_chat,
+      promptVersion: resolvePromptVersion("reflective_chat"),
+      policyVersion,
       model: orchestratorModel,
       latencyMs,
       tokenEstimate: assistant.tokenEstimate,

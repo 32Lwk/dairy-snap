@@ -69,7 +69,7 @@ export function TodayMobileJournalDraftHeaderButton() {
   return (
     <button
       type="button"
-      className={`${APP_HEADER_TOOLBAR_BUTTON} md:hidden`}
+      className={`${APP_HEADER_TOOLBAR_BUTTON} !text-xs md:hidden`}
       onClick={() => bumpUserUiJournalDraft()}
     >
       草案を作成

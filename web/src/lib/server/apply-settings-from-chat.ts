@@ -8,7 +8,7 @@ import {
   type SettingsProposalPatch,
 } from "@/lib/settings-proposal-tool";
 import { incrementSettingsChange } from "@/server/usage";
-import { PROMPT_VERSIONS } from "@/server/prompts";
+import { resolvePolicyVersion, resolvePromptVersion } from "@/server/prompts";
 
 export type ApplySettingsResult =
   | {
@@ -38,7 +38,7 @@ async function auditReject(params: {
       metadata: {
         threadId: params.threadId,
         reason: params.reason,
-        promptVersion: PROMPT_VERSIONS.reflective_chat,
+        promptVersion: resolvePromptVersion("reflective_chat"),
         ...params.detail,
       },
     },
@@ -112,7 +112,7 @@ export async function applySettingsPatchFromChat(params: {
           threadId: params.threadId,
           patch: { openStudentTimetableEditor: true },
           previous: { dayBoundaryEndTime: prevBoundary, timeZone: prevTz },
-          promptVersion: PROMPT_VERSIONS.reflective_chat,
+          promptVersion: resolvePromptVersion("reflective_chat"),
           noPersist: true,
           patchKinds: patchKindList(normPatch),
         },
@@ -220,7 +220,7 @@ export async function applySettingsPatchFromChat(params: {
         threadId: params.threadId,
         patch: normPatch,
         previous: { dayBoundaryEndTime: prevBoundary, timeZone: prevTz },
-        promptVersion: PROMPT_VERSIONS.reflective_chat,
+        promptVersion: resolvePromptVersion("reflective_chat"),
         patchKinds: patchKindList(normPatch),
       },
     },
@@ -231,7 +231,8 @@ export async function applySettingsPatchFromChat(params: {
       userId: params.userId,
       entryId: params.entryId,
       kind: "SETTINGS_PATCH",
-      promptVersion: PROMPT_VERSIONS.reflective_chat,
+      promptVersion: resolvePromptVersion("reflective_chat"),
+      policyVersion: resolvePolicyVersion("auxiliary_default"),
       metadata: {
         threadId: params.threadId,
         patch: normPatch,

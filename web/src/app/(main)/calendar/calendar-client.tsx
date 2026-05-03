@@ -138,6 +138,31 @@ function parseCalendarPageSettingsPayload(profile: Record<string, unknown> | nul
   return { calendarOpening };
 }
 
+function formatGithubRelativeSync(iso: string): string {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "";
+  const diff = Math.max(0, Date.now() - t);
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return "1分未満前";
+  if (m < 60) return `${m}分前`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h}時間前`;
+  return `${Math.floor(h / 24)}日前`;
+}
+
+/** 同期エラー表示が必要か（成功時の 200 / 304 のみはバナー不要） */
+function shouldShowGithubCalendarBanner(s: {
+  linked?: boolean;
+  lastSyncError?: string | null;
+  lastHttpStatus?: number | null;
+}): boolean {
+  if (!s.linked) return false;
+  if (s.lastSyncError) return true;
+  const h = s.lastHttpStatus;
+  if (h == null) return false;
+  return h !== 200 && h !== 304;
+}
+
 export function CalendarClient(props: {
   ym: string;
   prevYm: string;
@@ -187,6 +212,14 @@ export function CalendarClient(props: {
   const [localCalAddBusy, setLocalCalAddBusy] = useState(false);
   const [localCalAddErr, setLocalCalAddErr] = useState<string | null>(null);
   const [canWriteGoogleCalendar, setCanWriteGoogleCalendar] = useState(false);
+  const [githubStatus, setGithubStatus] = useState<{
+    configured?: boolean;
+    linked?: boolean;
+    lastSyncAt?: string | null;
+    lastSyncError?: string | null;
+    lastHttpStatus?: number | null;
+  } | null>(null);
+  const [githubByYmd, setGithubByYmd] = useState<Record<string, number> | null>(null);
 
   useEffect(() => {
     const q = parseCalendarViewQuery(searchParams.get("view"));
@@ -400,6 +433,59 @@ export function CalendarClient(props: {
   const catOptions = useMemo(() => calendarOpeningCategoryOptions(opening), [opening]);
 
   const gridDisplay = useMemo(() => normalizeCalendarGridDisplay(opening?.gridDisplay), [opening?.gridDisplay]);
+
+  useEffect(() => {
+    let alive = true;
+    void fetch("/api/github/status", { credentials: "same-origin" })
+      .then((r) => r.json())
+      .then((j) => {
+        if (!alive) return;
+        setGithubStatus(j as typeof githubStatus);
+      })
+      .catch(() => {
+        if (alive) setGithubStatus({ configured: false, linked: false });
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!githubStatus?.linked || !gridDisplay.showGithubGrass) {
+      setGithubByYmd(null);
+      return;
+    }
+    let alive = true;
+    const t = window.setTimeout(() => {
+      void fetch("/api/github/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ reason: "calendar" }),
+      }).catch(() => {});
+      const [yy, mm] = props.ym.split("-").map(Number);
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const from = `${String(yy).padStart(4, "0")}-${pad(mm)}-01`;
+      const lastD = new Date(yy, mm, 0).getDate();
+      const to = `${String(yy).padStart(4, "0")}-${pad(mm)}-${pad(lastD)}`;
+      void fetch(`/api/github/contributions?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, {
+        credentials: "same-origin",
+      })
+        .then((r) => r.json())
+        .then((j) => {
+          if (!alive) return;
+          const m = (j as { byYmd?: Record<string, number> }).byYmd;
+          setGithubByYmd(m && typeof m === "object" ? m : {});
+        })
+        .catch(() => {
+          if (alive) setGithubByYmd({});
+        });
+    }, 500);
+    return () => {
+      alive = false;
+      window.clearTimeout(t);
+    };
+  }, [props.ym, githubStatus?.linked, gridDisplay.showGithubGrass]);
 
   const calendarsForUi = useMemo(() => {
     const raw = opts?.calendars ?? [];
@@ -975,6 +1061,49 @@ export function CalendarClient(props: {
 
       <div className="mt-1 flex min-w-0 flex-col gap-1.5 sm:mt-2 sm:gap-3 lg:mt-1 lg:grid lg:grid-cols-[minmax(0,7fr)_minmax(0,3fr)] lg:items-start lg:gap-3">
         <div className="order-2 min-w-0 max-w-full space-y-1.5 sm:space-y-3 lg:order-1 lg:min-w-0 lg:space-y-1.5">
+          {githubStatus && shouldShowGithubCalendarBanner(githubStatus) ? (
+            <div
+              className={[
+                "rounded-lg border px-2.5 py-2 text-[11px] leading-snug",
+                githubStatus.lastHttpStatus === 429
+                  ? "border-orange-400/90 bg-orange-50 text-orange-950 dark:border-orange-600 dark:bg-orange-950/35 dark:text-orange-100"
+                  : githubStatus.lastHttpStatus === 401 || githubStatus.lastHttpStatus === 403
+                    ? "border-red-400/90 bg-red-50 text-red-950 dark:border-red-700 dark:bg-red-950/40 dark:text-red-100"
+                    : "border-amber-400/90 bg-amber-50 text-amber-950 dark:border-amber-600 dark:bg-amber-950/35 dark:text-amber-100",
+              ].join(" ")}
+            >
+              {githubStatus.lastHttpStatus === 429 ? (
+                <>
+                  GitHub API の利用制限に近い状態です。しばらくしてから{" "}
+                  <Link href="/settings" className="font-semibold underline underline-offset-2">
+                    設定
+                  </Link>
+                  を開くか、時間をおいて再度お試しください。
+                </>
+              ) : githubStatus.lastHttpStatus === 401 || githubStatus.lastHttpStatus === 403 ? (
+                <>
+                  GitHub 連携の権限が無効になっている可能性があります。再認可のため{" "}
+                  <Link href="/settings" className="font-semibold underline underline-offset-2">
+                    設定
+                  </Link>
+                  から再接続してください。
+                </>
+              ) : (
+                <>
+                  GitHub の同期に問題があります。{" "}
+                  <Link href="/settings" className="font-semibold underline underline-offset-2">
+                    設定
+                  </Link>
+                  から接続を確認してください。
+                </>
+              )}
+            </div>
+          ) : null}
+          {githubStatus?.linked && githubStatus.lastSyncAt ? (
+            <p className="text-[10px] text-zinc-500 dark:text-zinc-400">
+              GitHub 最終同期: {formatGithubRelativeSync(githubStatus.lastSyncAt)}
+            </p>
+          ) : null}
           <div className="space-y-0.5 sm:space-y-1.5 lg:space-y-0.5">
         <p className="text-[10px] font-medium text-zinc-600 sm:text-[11px] dark:text-zinc-300">表示の絞り込み</p>
         <div
@@ -1063,6 +1192,8 @@ export function CalendarClient(props: {
               selectedDateYmd={props.selectedDateYmd}
               filter={filterSettings}
               onDayActivate={onCalendarDayActivate}
+              showGithubGrass={Boolean(githubStatus?.linked && gridDisplay.showGithubGrass)}
+              githubByYmd={githubByYmd}
             />
           ) : (
             <MonthList
@@ -1077,6 +1208,8 @@ export function CalendarClient(props: {
               selectedDateYmd={props.selectedDateYmd}
               filter={filterSettings}
               onDayActivate={onCalendarDayActivate}
+              showGithubGrass={Boolean(githubStatus?.linked && gridDisplay.showGithubGrass)}
+              githubByYmd={githubByYmd}
             />
           )}
         </div>
@@ -1205,6 +1338,37 @@ export function CalendarClient(props: {
                 <li>色・分類は「対象カレンダー」→下で保存。</li>
               </ul>
             </div>
+
+            {githubStatus?.linked ? (
+              <div className="rounded-xl border border-zinc-200/90 bg-white p-2.5 shadow-sm dark:border-zinc-700 dark:bg-zinc-950 md:col-span-2">
+                <label className="flex cursor-pointer items-start gap-2.5">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={gridDisplay.showGithubGrass}
+                    disabled={busy}
+                    onChange={(e) => {
+                      const on = e.target.checked;
+                      setOpening((prev) => ({
+                        ...(prev ?? {}),
+                        gridDisplay: {
+                          ...normalizeCalendarGridDisplay(prev?.gridDisplay),
+                          showGithubGrass: on,
+                        },
+                      }));
+                    }}
+                  />
+                  <span>
+                    <span className="text-[13px] font-semibold text-zinc-700 dark:text-zinc-200">
+                      GitHub の活動（草）をカレンダーに表示
+                    </span>
+                    <span className="mt-0.5 block text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
+                      コントリビューション数に基づきます。オフにするとグリッド・リスト双方で非表示になります。
+                    </span>
+                  </span>
+                </label>
+              </div>
+            ) : null}
           </div>
 
           <div>

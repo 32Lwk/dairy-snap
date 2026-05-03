@@ -1,7 +1,9 @@
 /**
- * アカウント引き継ぎ機能のレート制限（in-memory）。
- * 単一インスタンス前提。多インスタンス化時は外部ストア（Redis 等）に置き換える。
+ * アカウント引き継ぎのエクスポート回数制限。
+ * `REDIS_URL` があるときは Redis で共有カウンタ、無い／失敗時はプロセス内 Map。
  */
+
+import { getOptionalRedis } from "@/lib/server/redis-client";
 
 type Window = { startedAt: number; count: number };
 
@@ -14,7 +16,7 @@ export type ExportRateCheck =
   | { ok: true; remaining: number; resetAt: number }
   | { ok: false; remaining: 0; resetAt: number };
 
-export function checkAndConsumeExportRate(userId: string): ExportRateCheck {
+function checkAndConsumeExportRateInMemory(userId: string): ExportRateCheck {
   const now = Date.now();
   const cur = exportWindows.get(userId);
   if (!cur || now - cur.startedAt >= EXPORT_WINDOW_MS) {
@@ -38,4 +40,26 @@ export function checkAndConsumeExportRate(userId: string): ExportRateCheck {
     remaining: EXPORT_MAX_PER_WINDOW - cur.count,
     resetAt: cur.startedAt + EXPORT_WINDOW_MS,
   };
+}
+
+export async function checkAndConsumeExportRate(userId: string): Promise<ExportRateCheck> {
+  const r = await getOptionalRedis();
+  if (r) {
+    const key = `account_export_rate:v1:${userId}`;
+    try {
+      const n = await r.incr(key);
+      if (n === 1) {
+        await r.expire(key, Math.ceil(EXPORT_WINDOW_MS / 1000));
+      }
+      const ttlSec = await r.ttl(key);
+      const resetAt = Date.now() + (ttlSec > 0 ? ttlSec * 1000 : EXPORT_WINDOW_MS);
+      if (n > EXPORT_MAX_PER_WINDOW) {
+        return { ok: false, remaining: 0, resetAt };
+      }
+      return { ok: true, remaining: EXPORT_MAX_PER_WINDOW - n, resetAt };
+    } catch {
+      /* fall through */
+    }
+  }
+  return checkAndConsumeExportRateInMemory(userId);
 }

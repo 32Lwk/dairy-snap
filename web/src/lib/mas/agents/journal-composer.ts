@@ -16,6 +16,8 @@ export type JournalComposerInput = {
   materialTier?: JournalDraftMaterialTier;
   /** 素材が thin/empty でもサーバーが許可した生成 */
   forceInsufficient?: boolean;
+  /** GitHub 保存済み要約（任意・本文の根拠は user のみ厳守） */
+  githubContextBlock?: string;
 };
 export type JournalComposerOutput = {
   draft: string;
@@ -100,6 +102,7 @@ export class JournalComposerAgent implements Agent<JournalComposerInput, Journal
                 role: "user",
                 content: [
                   preamble,
+                  ...(input.githubContextBlock ? [input.githubContextBlock, ""] : []),
                   ...(thinOrEmpty ? [materialGuard, ""] : []),
                   "以下は会話ログです。JSON のみを返してください。",
                   "",

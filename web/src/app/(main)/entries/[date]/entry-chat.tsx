@@ -46,6 +46,17 @@ type SettingsChangeTip = {
   next: { dayBoundaryEndTime: string | null; timeZone: string | null };
 };
 
+/** 返信待ちバブル用の軽いドットアニメーション（アクセシビリティ: 装飾のみ） */
+function AssistantWaitDots() {
+  return (
+    <span className="ml-1 inline-flex items-end gap-0.5 align-middle" aria-hidden>
+      <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-emerald-500 [animation-duration:0.9s]" />
+      <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-emerald-500 [animation-delay:0.12s] [animation-duration:0.9s]" />
+      <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-emerald-500 [animation-delay:0.24s] [animation-duration:0.9s]" />
+    </span>
+  );
+}
+
 type Msg = {
   id: string;
   role: string;
@@ -289,7 +300,7 @@ function UserMessageBubble({
         </div>
       </ResponsiveDialog>
       <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">あなた</span>
-      <div className="max-w-[min(100%,28rem)] rounded-2xl rounded-br-md bg-gradient-to-br from-zinc-800 to-zinc-900 px-3 py-2 text-[13px] leading-snug text-white shadow-sm sm:px-3.5 sm:py-2.5 sm:text-sm sm:leading-normal dark:from-zinc-200 dark:to-zinc-100 dark:text-zinc-900">
+      <div className="max-w-[min(100%,28rem)] rounded-2xl rounded-br-md bg-gradient-to-br from-zinc-800 to-zinc-900 px-2.5 py-1.5 text-[12px] leading-snug text-white shadow-sm sm:px-3 sm:py-1.5 md:text-[11px] md:leading-snug lg:px-3 lg:py-1.5 lg:text-[11px] lg:leading-snug dark:from-zinc-200 dark:to-zinc-100 dark:text-zinc-900">
         {editing ? (
           <div className="space-y-2">
             <textarea
@@ -353,7 +364,7 @@ function UserMessageBubble({
         ) : (
           <>
             <p className="whitespace-pre-wrap leading-relaxed">{stripLightMarkdownForChatDisplay(m.content)}</p>
-            <div className="mt-1.5 flex justify-end gap-3 text-[11px] text-white/70 dark:text-zinc-600">
+            <div className="mt-1 flex justify-end gap-2 text-[11px] text-white/70 dark:text-zinc-600">
               <button
                 type="button"
                 disabled={busy}
@@ -385,6 +396,8 @@ function AssistantBubble({
   onUndoSettings,
   undoBusy,
   onDismissSettingsTip,
+  /** 最初のトークンまでの待機 UI（薄いエメラルド枠・ドット）。本文ストリームでは使わない */
+  waitBubble,
 }: {
   content: string;
   streaming?: boolean;
@@ -396,17 +409,44 @@ function AssistantBubble({
   onUndoSettings?: () => void;
   undoBusy?: boolean;
   onDismissSettingsTip?: () => void;
+  waitBubble?: boolean;
 }) {
   const shown = stripLightMarkdownForChatDisplay(stripAssistantMetaEchoPrefix(content));
   return (
-    <div className="flex flex-col items-start gap-1">
+    <div
+      className={
+        waitBubble
+          ? "flex w-full min-w-0 flex-col items-stretch gap-1"
+          : "flex flex-col items-start gap-1"
+      }
+    >
       <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">AI</span>
-      <div className="max-w-[min(100%,28rem)] rounded-2xl rounded-bl-md border border-zinc-200/80 bg-white px-2.5 py-1.5 text-[12px] leading-snug text-zinc-900 shadow-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 lg:px-3.5 lg:py-2.5 lg:text-sm lg:leading-relaxed">
-        <p className="whitespace-pre-wrap">{shown}</p>
+      <div
+        aria-live={waitBubble ? "polite" : undefined}
+        className={
+          waitBubble
+            ? "w-full min-w-0 max-w-[min(100%,28rem)] rounded-2xl rounded-bl-md border border-emerald-200/80 bg-emerald-50/90 px-2.5 py-1.5 text-[12px] leading-snug text-zinc-900 shadow-sm ring-1 ring-emerald-400/25 dark:border-emerald-800/70 dark:bg-emerald-950/40 dark:text-zinc-100 dark:ring-emerald-600/30 md:text-[11px] md:leading-snug lg:px-3.5 lg:py-2.5 lg:text-[11px] lg:leading-snug"
+            : "max-w-[min(100%,28rem)] rounded-2xl rounded-bl-md border border-zinc-200/80 bg-white px-2.5 py-1.5 text-[12px] leading-snug text-zinc-900 shadow-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 md:text-[11px] md:leading-snug lg:px-3.5 lg:py-2.5 lg:text-[11px] lg:leading-snug"
+        }
+      >
+        <p className="whitespace-pre-wrap">
+          {shown}
+          {streaming && waitBubble ? <AssistantWaitDots /> : null}
+          {streaming && !waitBubble ? (
+            <span className="ml-0.5 inline-block h-3 w-0.5 animate-pulse bg-emerald-500 align-middle" />
+          ) : null}
+        </p>
         {subNote ? (
-          <p className="mt-1.5 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">{subNote}</p>
+          <p
+            className={
+              waitBubble
+                ? "mt-1.5 text-[10px] leading-snug text-emerald-900/85 dark:text-emerald-100/85"
+                : "mt-1.5 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400"
+            }
+          >
+            {subNote}
+          </p>
         ) : null}
-        {streaming && <span className="ml-0.5 inline-block h-3 w-0.5 animate-pulse bg-emerald-500 align-middle" />}
       </div>
       {sentAtIso && !streaming ? (
         <time
@@ -1178,12 +1218,13 @@ export function EntryChat({
             messages.length > 0 &&
             messages[messages.length - 1]?.role === "user" && (
               <AssistantBubble
-                content="応答を準備しています…"
+                content="応答を準備しています"
                 subNote={
                   assistantWaitHint ??
-                  "カレンダー・天気・記憶などを参照している間、返信が始まるまで数十秒かかることがあります。"
+                  "背後では記憶・天気・予定などを参照していることがあります。表示が切り替わります。"
                 }
                 streaming
+                waitBubble
               />
             )}
           {streaming ? <AssistantBubble content={streaming} streaming /> : null}

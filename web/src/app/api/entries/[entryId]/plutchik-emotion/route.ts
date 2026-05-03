@@ -4,7 +4,7 @@ import { createDefaultOrchestrator } from "@/lib/mas/factory";
 import type { PlutchikEmotionInput, PlutchikEmotionOutput } from "@/lib/mas/agents/plutchik-emotion";
 import { requireSession } from "@/lib/api/require-session";
 import { prisma } from "@/server/db";
-import { PROMPT_VERSIONS } from "@/server/prompts";
+import { resolvePromptVersion } from "@/server/prompts";
 import { buildEntryChatTranscript } from "@/lib/chat/build-entry-chat-transcript";
 import { PLUTCHIK_MIN_TRANSCRIPT_CHARS } from "@/lib/emotion/plutchik-min-transcript";
 import { dominantPlutchikKey, plutchikStoredAnalysisSchema, type PlutchikStoredAnalysis } from "@/lib/emotion/plutchik";
@@ -80,7 +80,7 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
     computedAt: new Date().toISOString(),
     model: d.model,
     threadId: thread.id,
-    promptVersion: PROMPT_VERSIONS.plutchik_emotion,
+    promptVersion: resolvePromptVersion("plutchik_emotion"),
     summaryJa: d.summaryJa,
     primary: d.primary,
     usage: {

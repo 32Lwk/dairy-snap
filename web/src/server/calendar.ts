@@ -19,6 +19,7 @@ import {
   patchAppLocalCalendarEvent,
 } from "@/server/app-local-calendar";
 import { tokyoCalendarDayEndExclusive, tokyoCalendarDayStart } from "@/lib/time/tokyo-calendar-interval";
+import { getOptionalRedis } from "@/lib/server/redis-client";
 import { deleteEmbedding, upsertTextEmbedding } from "@/server/embeddings";
 
 export type CalendarEventBrief = {
@@ -1160,6 +1161,24 @@ export async function fetchCalendarEventsForDay(
   }
 
   try {
+    const cacheKey = `toolcache:gcal_fetch_v1:${userId}:${dayYmd}:${opts?.includeEventPayload ? 1 : 0}`;
+    if (process.env.DISABLE_TOOL_CALENDAR_REDIS_CACHE !== "1") {
+      const redis = await getOptionalRedis();
+      if (redis) {
+        try {
+          const hit = await redis.get(cacheKey);
+          if (hit) {
+            const parsed = JSON.parse(hit) as CalendarFetchResult;
+            if (parsed && typeof parsed === "object" && "ok" in parsed) {
+              return parsed;
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+
     const cal = google.calendar({ version: "v3", auth: oauth2 });
     // 当日分もキャッシュ同期対象に含まれるよう、まず同期（差分）
     await syncGoogleCalendarCache(userId, cal, { forceSync: false, minIntervalMs: 5 * 60 * 1000 });
@@ -1202,7 +1221,14 @@ export async function fetchCalendarEventsForDay(
       scopeOneCalendar: false,
       limit: 50,
     });
-    return { ok: true, events: merged };
+    const out: CalendarFetchResult = { ok: true, events: merged };
+    if (process.env.DISABLE_TOOL_CALENDAR_REDIS_CACHE !== "1") {
+      const redis = await getOptionalRedis();
+      if (redis) {
+        void redis.set(cacheKey, JSON.stringify(out), { EX: 120 }).catch(() => {});
+      }
+    }
+    return out;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     const code =

@@ -10,6 +10,7 @@ import {
   resolveDayBoundaryEndTime,
   resolveUserTimeZone,
 } from "@/lib/time/user-day-boundary";
+import { getOptionalRedis } from "@/lib/server/redis-client";
 import { parseUserSettings } from "@/lib/user-settings";
 import type { WeatherContext, WeatherToolRequest } from "./types";
 
@@ -60,13 +61,13 @@ function buildWeatherNarrativeHintJa(
         "予報では雨の傾向。夜明け前なら、この日の予定・講義・次の予定までの過ごし方に触れよい。眠さを主役にしない。外出を強く勧めない。",
       );
     } else if (isToday && solarPhase === "daytime") {
-      hints.push("雨の予報。傘・移動・気分の話につなげてもよい。");
+      hints.push("雨の予報。傘・移動・予定や用事の話につなげてもよい。");
     } else if (isToday && solarPhase === "after_sunset") {
-      hints.push("この日の予報では雨。夕方以降の振り返りや体調に触れてもよい。");
+      hints.push("この日の予報では雨。夕方以降の過ごし方や一日の振り返りに触れてもよい。");
     } else if (isToday) {
-      hints.push("雨の予報。体調や予定の話につなげてもよい。");
+      hints.push("雨の予報。予定や過ごし方の話につなげてもよい。");
     } else {
-      hints.push(`${sub}は雨の予報だった。天気が体調や行動に与えた影響を聞いてもよい。`);
+      hints.push(`${sub}は雨の予報だった。外出や予定が天気で変わったかなど、事実ベースで聞いてもよい。`);
     }
   } else if (isSnowy(amLabel) || isSnowy(pmLabel)) {
     if (isToday && solarPhase === "before_sunrise") {
@@ -74,11 +75,11 @@ function buildWeatherNarrativeHintJa(
         "予報では雪の傾向。夜明け前なら寒さ・防寒に加え、予定・講義・それまでの過ごし方に触れよい。眠さを主役にしない。無理な外出は勧めない。",
       );
     } else if (isToday && solarPhase === "daytime") {
-      hints.push("雪の予報。寒さ・移動・気分の話につなげてもよい。");
+      hints.push("雪の予報。寒さ・移動・予定の話につなげてもよい。");
     } else if (isToday && solarPhase === "after_sunset") {
       hints.push("この日の予報では雪。寒さや振り返りに触れてもよい。");
     } else if (isToday) {
-      hints.push("雪の予報。寒さや体調の話につなげてもよい。");
+      hints.push("雪の予報。寒さや防寒・過ごし方の話につなげてもよい。");
     } else {
       hints.push(`${sub}は雪の予報だった。寒さや外出の振り返りに触れてもよい。`);
     }
@@ -88,11 +89,13 @@ function buildWeatherNarrativeHintJa(
         "予報では終日曇り寄り。夜明け前なら予定・講義・次の予定までの過ごし方に触れよい。眠さを主役にしない。日中の天気は断定しない。",
       );
     } else if (isToday && solarPhase === "after_sunset") {
-      hints.push("この日の予報では曇りがち。夕方以降の過ごし方や気分の振り返りに触れてもよい。");
+      hints.push("この日の予報では曇りがち。夕方以降の過ごし方や一日の振り返りに触れてもよい。");
     } else if (!isToday) {
-      hints.push(`${sub}は曇りがちの予報だった。気分・体調の話につなげてもよい。`);
+      hints.push(`${sub}は曇りがちの予報だった。外出や室内での過ごし方、用事の有無に触れてもよい。`);
     } else {
-      hints.push("曇りがちの予報。気分・体調の話につなげてもよい。");
+      hints.push(
+        "曇りがちの予報。天気を気分や体調の比喩にひきつけない（空模様＝心身のようには書かない）。開口の**一文目**は予報ラベルだけにせず、挨拶・季節感・連休の入りなど**短い人間味**を足してよい。予定・外出・過ごし方に触れてもよい。",
+      );
     }
   } else if (amLabel.includes("晴") || pmLabel.includes("晴")) {
     if (isToday && solarPhase === "before_sunrise") {
@@ -100,21 +103,21 @@ function buildWeatherNarrativeHintJa(
         "午前・午後の予報は晴れ寄りだが、いまは夜明け前の可能性が高い。外出や日差しより、カレンダーの予定・講義（何限から等）・次の予定までの過ごし方・必要なら軽く夢に触れよい。眠さを主役にしない。",
       );
     } else if (isToday && solarPhase === "daytime") {
-      hints.push("晴れの予報。外の様子や気分の話にもつなげてよい。");
+      hints.push("晴れの予報。外の様子や予定の話にもつなげてよい。");
     } else if (isToday && solarPhase === "after_sunset") {
       hints.push("昼間は晴れの予報だった。夕方以降の過ごし方や振り返りに触れてもよい。");
     } else if (isToday) {
-      hints.push("晴れ寄りの予報。気分や予定に触れてもよい。");
+      hints.push("晴れ寄りの予報。予定や過ごし方に触れてもよい。");
     } else {
-      hints.push(`${sub}の予報は晴れ寄り。外出や気分の振り返りに触れてもよい。`);
+      hints.push(`${sub}の予報は晴れ寄り。外出や一日の振り返りに触れてもよい。`);
     }
   }
 
   if (tempDiff != null && tempDiff >= 8) {
     hints.push(
       isToday
-        ? `今日は昼と夜の気温差が大きい予報（約${Math.round(tempDiff)}℃差）。体調管理を気にかけてもよい。`
-        : `${sub}は昼と夜の気温差が大きい予報だった（約${Math.round(tempDiff)}℃差）。体調の振り返りに触れてもよい。`,
+        ? `今日は昼と夜の気温差が大きい予報（約${Math.round(tempDiff)}℃差）。服装の調整や無理のない過ごし方に一言触れてもよい。`
+        : `${sub}は昼と夜の気温差が大きい予報だった（約${Math.round(tempDiff)}℃差）。服装や過ごし方の振り返りに触れてもよい。`,
     );
   }
 
@@ -124,8 +127,8 @@ function buildWeatherNarrativeHintJa(
     } else {
       hints.push(
         isToday
-          ? "午前はかなり寒い予報。防寒・体調の話をしてもよい。"
-          : `${sub}の午前はかなり寒い予報だった。防寒・体調の振り返りに触れてもよい。`,
+          ? "午前はかなり寒い予報。防寒や暖かく過ごせたかなど、事実ベースで触れてもよい。"
+          : `${sub}の午前はかなり寒い予報だった。防寒や過ごし方の振り返りに触れてもよい。`,
       );
     }
   } else if (pmTempC != null && pmTempC >= 30) {
@@ -198,6 +201,24 @@ export async function getWeatherContext(req: WeatherToolRequest): Promise<Weathe
     longitude: entry?.longitude ?? null,
   });
 
+  const weatherCacheKey = `toolcache:weather_v1:${req.userId}:${req.entryId}:${req.entryDateYmd}:${resolved.lat.toFixed(4)}:${resolved.lon.toFixed(4)}`;
+  if (process.env.DISABLE_TOOL_WEATHER_REDIS_CACHE !== "1") {
+    const redis = await getOptionalRedis();
+    if (redis) {
+      try {
+        const hit = await redis.get(weatherCacheKey);
+        if (hit) {
+          const w = JSON.parse(hit) as WeatherContext;
+          if (w && typeof w.dateYmd === "string" && w.dateYmd === req.entryDateYmd) {
+            return w;
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
   if (entry?.weatherJson) {
     const wj = entry.weatherJson as StoredWeatherJson;
     if (wj.kind === "am_pm" && wj.am && wj.pm) {
@@ -239,7 +260,14 @@ export async function getWeatherContext(req: WeatherToolRequest): Promise<Weathe
           }
         : undefined,
     };
-    return attachPromptLayers(base, req, resolved.lat, resolved.lon, userTz, dayBoundaryRaw);
+    const layered = attachPromptLayers(base, req, resolved.lat, resolved.lon, userTz, dayBoundaryRaw);
+    if (process.env.DISABLE_TOOL_WEATHER_REDIS_CACHE !== "1") {
+      const redis = await getOptionalRedis();
+      if (redis) {
+        void redis.set(weatherCacheKey, JSON.stringify(layered), { EX: 600 }).catch(() => {});
+      }
+    }
+    return layered;
   } catch {
     const now = req.now ?? new Date();
     const base: WeatherLayerBase = {

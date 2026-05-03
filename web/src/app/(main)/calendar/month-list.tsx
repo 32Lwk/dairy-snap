@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import { resolveGcalEventColor } from "@/lib/gcal-event-color";
+import { GithubGrassStrip, githubGrassLevel } from "@/components/github-grass-strip";
 type EntryBrief = { entryDateYmd: string; title: string | null };
 type Ev = {
   eventId?: string;
@@ -95,6 +96,8 @@ export function MonthList({
   selectedDateYmd,
   filter,
   onDayActivate,
+  showGithubGrass = false,
+  githubByYmd = null,
 }: {
   ym: string;
   prevYm: string;
@@ -106,6 +109,8 @@ export function MonthList({
   selectedDateYmd?: string;
   filter?: { apply: (ev: Ev) => boolean; infer: (ev: Ev) => string };
   onDayActivate?: (ymd: string, e: MouseEvent<HTMLAnchorElement>) => void;
+  showGithubGrass?: boolean;
+  githubByYmd?: Record<string, number> | null;
 }) {
   const [events, setEvents] = useState<Ev[] | null>(() => initialEvents ?? null);
 
@@ -177,6 +182,16 @@ export function MonthList({
     return arr;
   }, [daysInMonth, mm, yy]);
 
+  const githubMonthMax = useMemo(() => {
+    if (!showGithubGrass || !githubByYmd) return 0;
+    let m = 0;
+    for (const { ymd } of cells) {
+      const c = githubByYmd[ymd] ?? 0;
+      if (c > m) m = c;
+    }
+    return m;
+  }, [showGithubGrass, githubByYmd, cells]);
+
   return (
     <>
       <h2 className="mb-2 mt-3 text-xs font-semibold text-zinc-800 sm:mb-3 sm:mt-6 sm:text-sm lg:mb-2 lg:mt-5 dark:text-zinc-200">
@@ -227,11 +242,19 @@ export function MonthList({
                   <span className="min-w-0 truncate text-xs font-semibold tabular-nums text-zinc-900 dark:text-zinc-50 sm:text-sm">
                     {ymd}（{day}日）
                   </span>
-                  {evs.length > 0 ? (
-                    <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
-                      予定 {evs.length}
-                    </span>
-                  ) : null}
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {showGithubGrass && githubByYmd ? (
+                      <GithubGrassStrip
+                        className="mt-0"
+                        level={githubGrassLevel(githubByYmd[ymd] ?? 0, githubMonthMax)}
+                      />
+                    ) : null}
+                    {evs.length > 0 ? (
+                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
+                        予定 {evs.length}
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
                 {has && entryTitle ? (
                   <p className="truncate text-xs text-blue-800 dark:text-blue-200">日記: {entryTitle}</p>

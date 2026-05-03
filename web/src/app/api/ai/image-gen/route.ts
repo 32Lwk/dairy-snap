@@ -6,7 +6,7 @@ import { requireSession } from "@/lib/api/require-session";
 import { sha256Hex } from "@/lib/crypto/sha256";
 import { prisma } from "@/server/db";
 import { getObjectStorage } from "@/server/storage/local";
-import { PROMPT_VERSIONS } from "@/server/prompts";
+import { resolvePolicyVersion, resolvePromptVersion } from "@/server/prompts";
 import { LIMITS, getTodayCounter, incrementImageGen } from "@/server/usage";
 
 export const runtime = "nodejs";
@@ -88,7 +88,8 @@ export async function POST(req: NextRequest) {
       userId: session.user.id,
       entryId: entry.id,
       kind: "IMAGE_PROMPT",
-      promptVersion: PROMPT_VERSIONS.reflective_chat,
+      promptVersion: resolvePromptVersion("reflective_chat"),
+      policyVersion: resolvePolicyVersion("auxiliary_default"),
       model: "dall-e-3",
       latencyMs,
       metadata: { promptLen: parsed.data.prompt.length },

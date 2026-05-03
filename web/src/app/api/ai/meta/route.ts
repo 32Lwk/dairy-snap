@@ -5,7 +5,7 @@ import { getMetaChatFallbackModel, getMetaChatModel } from "@/lib/ai/openai-chat
 import { withChatModelFallbackAndModel } from "@/lib/ai/openai-model-fallback";
 import { requireSession } from "@/lib/api/require-session";
 import { prisma } from "@/server/db";
-import { PROMPT_VERSIONS } from "@/server/prompts";
+import { resolvePolicyVersion, resolvePromptVersion } from "@/server/prompts";
 import { LIMITS, getTodayCounter, incrementDailySummary } from "@/server/usage";
 
 export const runtime = "nodejs";
@@ -56,15 +56,15 @@ export async function POST(req: NextRequest) {
 
   if (parsed.data.kind === "title") {
     kind = "TITLE_SUGGESTION";
-    promptVersion = PROMPT_VERSIONS.reflective_chat;
+    promptVersion = resolvePromptVersion("reflective_chat");
     prompt = `次の日記本文から、短い日本語タイトルを1つだけ提案してください（引用符なし、20文字以内）。\n\n${sourceBody}`;
   } else if (parsed.data.kind === "tags") {
     kind = "TAG_SUGGESTION";
-    promptVersion = PROMPT_VERSIONS.reflective_chat;
+    promptVersion = resolvePromptVersion("reflective_chat");
     prompt = `次の日記から、日本語のタグをカンマ区切りで5つ以内で提案してください。\n\n${sourceBody}`;
   } else {
     kind = "DAILY_SUMMARY";
-    promptVersion = PROMPT_VERSIONS.reflective_chat;
+    promptVersion = resolvePromptVersion("reflective_chat");
     prompt = `次の日記を、日本語で箇条書き中心に要約してください（200〜400字）。\n\n${sourceBody}`;
   }
 
@@ -86,6 +86,7 @@ export async function POST(req: NextRequest) {
       entryId: entry.id,
       kind,
       promptVersion,
+      policyVersion: resolvePolicyVersion("auxiliary_default"),
       model: metaModel,
       latencyMs,
       metadata: { action: parsed.data.kind },
@@ -97,7 +98,12 @@ export async function POST(req: NextRequest) {
       userId: session.user.id,
       entryId: entry.id,
       action: `ai_meta_${parsed.data.kind}`,
-      metadata: { model: metaModel, latencyMs },
+      metadata: {
+        model: metaModel,
+        latencyMs,
+        promptVersion,
+        policyVersion: resolvePolicyVersion("auxiliary_default"),
+      },
     },
   });
 

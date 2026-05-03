@@ -88,6 +88,8 @@ type SettingsPayload = {
     hobbyExternalFetches?: number;
   };
   promptVersions: Record<string, string>;
+  /** 会話 Eval 用全文保存へのオプトイン（既定 false） */
+  evaluationFullLogOptIn?: boolean;
   serverSyncToken?: string;
 };
 
@@ -442,7 +444,47 @@ export function SettingsForm({ userId }: { userId: string }) {
         return;
       }
       emitLocalSettingsSavedFromJson(json);
-      setData((d) => (d ? { ...d, encryptionMode: json.user.encryptionMode } : d));
+      setData((d) =>
+        d
+          ? {
+              ...d,
+              encryptionMode: json.user.encryptionMode,
+              ...(typeof json.user?.evaluationFullLogOptIn === "boolean"
+                ? { evaluationFullLogOptIn: json.user.evaluationFullLogOptIn }
+                : {}),
+            }
+          : d,
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveEvaluationFullLogOptIn(next: boolean) {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ evaluationFullLogOptIn: next }),
+        credentials: "same-origin",
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(typeof json.error === "string" ? json.error : "保存に失敗しました");
+        return;
+      }
+      emitLocalSettingsSavedFromJson(json);
+      setData((d) =>
+        d
+          ? {
+              ...d,
+              evaluationFullLogOptIn: Boolean(json.user?.evaluationFullLogOptIn),
+            }
+          : d,
+      );
+      await reloadSettingsFromServer();
     } finally {
       setSaving(false);
     }
@@ -544,6 +586,25 @@ export function SettingsForm({ userId }: { userId: string }) {
             実験（E2EE）
           </button>
         </div>
+      </section>
+
+      <section className="w-full min-w-0 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
+        <h2 className="font-medium text-zinc-900 dark:text-zinc-50">品質改善への協力（任意）</h2>
+        <p className="mt-1 max-w-3xl text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+          チェックを入れると、会話のユーザー発話と AI
+          返答の全文を、サービス品質の分析にのみ利用する目的で保存できます。実験的 E2EE
+          の日記では保存されません。いつでもオフにできます。
+        </p>
+        <label className="mt-3 flex cursor-pointer items-start gap-2 text-sm text-zinc-800 dark:text-zinc-200">
+          <input
+            type="checkbox"
+            className="mt-0.5 h-4 w-4 rounded border-zinc-300 text-emerald-600 focus:ring-emerald-500 dark:border-zinc-600 dark:bg-zinc-900"
+            checked={Boolean(data.evaluationFullLogOptIn)}
+            disabled={saving}
+            onChange={(e) => void saveEvaluationFullLogOptIn(e.target.checked)}
+          />
+          <span>会話テキストを品質改善のため保存することに同意する</span>
+        </label>
       </section>
 
       <section className="w-full min-w-0 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">

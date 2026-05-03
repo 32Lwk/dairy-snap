@@ -6,7 +6,8 @@ import { prisma } from "@/server/db";
 import { LIMITS, getTodayCounter, incrementChat, incrementOrchestratorCalls } from "@/server/usage";
 import { runOrchestrator, triggerSupervisorAsync } from "@/server/orchestrator";
 import { runMasMemoryExtraction } from "@/server/mas-memory";
-import { PROMPT_VERSIONS } from "@/server/prompts";
+import { resolvePromptVersion } from "@/server/prompts";
+import { digestToolFactCards } from "@/lib/tool-fact-card";
 import { upsertTextEmbedding } from "@/server/embeddings";
 import { computeAssistantStreamDelta, stripAssistantMetaEchoPrefix } from "@/lib/chat-assistant-sanitize";
 import { buildSecurityReviewPayload, scheduleSecurityReview } from "@/server/security-review-queue";
@@ -28,6 +29,8 @@ import type { SettingsProposalPatch } from "@/lib/settings-proposal-tool";
 import { formatPendingSettingsChangeSummaryJa } from "@/lib/settings-proposal-tool";
 import { previousCalendarYmdInZone } from "@/lib/time/user-day-boundary";
 import { AppLogScope, scheduleAppLog } from "@/lib/server/app-log";
+import { scheduleConversationEvalSampleInsert } from "@/server/eval/conversation-eval-sample";
+import { scheduleGithubSync } from "@/server/github/sync";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -70,7 +73,7 @@ export async function POST(req: NextRequest) {
     }),
     prisma.user.findUnique({
       where: { id: session.user.id },
-      select: { settings: true },
+      select: { settings: true, evaluationFullLogOptIn: true },
     }),
   ]);
   if (!entryRaw) {
@@ -82,6 +85,8 @@ export async function POST(req: NextRequest) {
   let entry = entryRaw;
   const originalEntryId = entryRaw.id;
   const profile = parseUserSettings(userRow?.settings ?? {}).profile;
+
+  scheduleGithubSync(session.user.id, "chat");
 
   const counter = await getTodayCounter(session.user.id);
   if (counter.chatMessages >= LIMITS.CHAT_PER_DAY) {
@@ -256,8 +261,18 @@ export async function POST(req: NextRequest) {
   /** runOrchestrator 完了後にセット（SSE 内エラーログ突合用） */
   let streamCorrelationId: string | undefined;
 
+  const PREPARING_HINT_ROTATION_MS = 2800;
+  const preparingHintJaRotation = [
+    "カレンダーや記憶を参照している場合、30秒ほどかかることがあります。",
+    "長期・短期の記憶と、この日の本文を読み込んでいます…",
+    "天気・予定のあたりをそろえています…",
+    "応答のトーンとツールの順番を整えています…",
+    "もうすぐ文章が流れ始めます。あと少しだけお待ちください。",
+  ] as const;
+
   const readable = new ReadableStream({
     async start(controller) {
+      let preparingHintTimer: ReturnType<typeof setInterval> | undefined;
       try {
         // PERF: runOrchestrator はツールラウンドで十数秒かかることがある。完了待ちの間、
         // HTTP レスポンスをブロックしないようストリーム開始後に実行し、早期フィードバックを送る。
@@ -265,10 +280,52 @@ export async function POST(req: NextRequest) {
           encoder.encode(
             `data: ${JSON.stringify({
               phase: "preparing",
-              hintJa: "カレンダーや記憶を参照している場合、30秒ほどかかることがあります。",
+              hintJa: preparingHintJaRotation[0],
             })}\n\n`,
           ),
         );
+
+        let hintIdx = 0;
+        preparingHintTimer = setInterval(() => {
+          hintIdx = (hintIdx + 1) % preparingHintJaRotation.length;
+          try {
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({
+                  phase: "preparing",
+                  hintJa: preparingHintJaRotation[hintIdx],
+                })}\n\n`,
+              ),
+            );
+          } catch {
+            /* 切断済みなど */
+          }
+        }, PREPARING_HINT_ROTATION_MS);
+
+        let orchestratorResult: Awaited<ReturnType<typeof runOrchestrator>>;
+        try {
+          orchestratorResult = await runOrchestrator({
+            userId: session.user.id,
+            entryId: entry.id,
+            entryDateYmd: entry.entryDateYmd,
+            userMessage: parsed.data.message,
+            historyMessages,
+            isOpening: false,
+            encryptionMode: entry.encryptionMode,
+            currentBody: entry.body,
+            reflectiveUserTurnIncludingCurrent,
+            reflectiveJournalMaterialTier: journalDraftMaterial.tier,
+            preferMiniOrchestrator,
+            clockNow: orchestratorNow,
+            threadId: thread.id,
+            extraSystemAppend,
+          });
+        } finally {
+          if (preparingHintTimer) {
+            clearInterval(preparingHintTimer);
+            preparingHintTimer = undefined;
+          }
+        }
 
         const {
           stream,
@@ -277,22 +334,9 @@ export async function POST(req: NextRequest) {
           mbtiHint,
           orchestratorModel,
           correlationId,
-        } = await runOrchestrator({
-          userId: session.user.id,
-          entryId: entry.id,
-          entryDateYmd: entry.entryDateYmd,
-          userMessage: parsed.data.message,
-          historyMessages,
-          isOpening: false,
-          encryptionMode: entry.encryptionMode,
-          currentBody: entry.body,
-          reflectiveUserTurnIncludingCurrent,
-          reflectiveJournalMaterialTier: journalDraftMaterial.tier,
-          preferMiniOrchestrator,
-          clockNow: orchestratorNow,
-          threadId: thread.id,
-          extraSystemAppend,
-        });
+          policyVersion,
+          toolFactCards,
+        } = orchestratorResult;
 
         streamCorrelationId = correlationId;
 
@@ -321,6 +365,56 @@ export async function POST(req: NextRequest) {
             agentName: "orchestrator",
           },
         });
+
+        const toolCardsDigest = digestToolFactCards(toolFactCards);
+        void prisma.turnContextSnapshot
+          .create({
+            data: {
+              userId: session.user.id,
+              threadId: thread!.id,
+              entryId: entry.id,
+              userMessageId: userMsg.id,
+              assistantMessageId: assistant.id,
+              promptVersion: resolvePromptVersion("reflective_chat"),
+              policyVersion,
+              toolCardsJson: toolFactCards as unknown as Prisma.InputJsonValue,
+              digest: toolCardsDigest,
+            },
+          })
+          .catch(() => {});
+
+        if (
+          userRow?.evaluationFullLogOptIn === true &&
+          entry.encryptionMode === "STANDARD"
+        ) {
+          const githubDailySnap = await prisma.gitHubDailySnapshot.findUnique({
+            where: {
+              userId_dateYmd: { userId: session.user.id, dateYmd: entry.entryDateYmd },
+            },
+            select: { summary: true },
+          });
+          scheduleConversationEvalSampleInsert({
+            userId: session.user.id,
+            threadId: thread!.id,
+            userMessageId: userMsg.id,
+            assistantMessageId: assistant.id,
+            promptVersion: resolvePromptVersion("reflective_chat"),
+            policyVersion,
+            userContent: parsed.data.message,
+            assistantContent: storedAssistant,
+            ...(githubDailySnap?.summary != null &&
+            typeof githubDailySnap.summary === "object" &&
+            !Array.isArray(githubDailySnap.summary)
+              ? {
+                  metadata: {
+                    githubDailySummary: githubDailySnap.summary as Prisma.InputJsonValue,
+                    githubEntryDateYmd: entry.entryDateYmd,
+                  },
+                }
+              : {}),
+          });
+        }
+
         if (entry.encryptionMode === "STANDARD") {
           void upsertTextEmbedding(session.user.id, "CHAT_MESSAGE", assistant.id, storedAssistant).catch(() => {});
         }
@@ -338,7 +432,8 @@ export async function POST(req: NextRequest) {
               model: orchestratorModel,
               latencyMs,
               agentsUsed,
-              promptVersion: PROMPT_VERSIONS.reflective_chat,
+              promptVersion: resolvePromptVersion("reflective_chat"),
+              policyVersion,
             },
           },
         });
@@ -348,7 +443,8 @@ export async function POST(req: NextRequest) {
             userId: session.user.id,
             entryId: entry.id,
             kind: "CHAT_MESSAGE",
-            promptVersion: PROMPT_VERSIONS.reflective_chat,
+            promptVersion: resolvePromptVersion("reflective_chat"),
+            policyVersion,
             model: orchestratorModel,
             latencyMs,
             tokenEstimate: assistant.tokenEstimate,
@@ -441,6 +537,9 @@ export async function POST(req: NextRequest) {
             userMessageChars: parsed.data.message.length,
             assistantChars: storedAssistant.length,
             preferMiniOrchestrator,
+            promptVersion: resolvePromptVersion("reflective_chat"),
+            policyVersion,
+            toolCardsDigest,
           },
           { correlationId },
         );

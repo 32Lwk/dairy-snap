@@ -16,7 +16,12 @@ import {
 } from "@/lib/user-settings";
 import { AppLogScope, scheduleAppLog } from "@/lib/server/app-log";
 import { prisma } from "@/server/db";
-import { PROMPT_VERSIONS } from "@/server/prompts";
+import {
+  POLICY_VERSIONS,
+  PROMPT_VERSIONS,
+  allEffectivePolicyVersions,
+  allEffectivePromptVersions,
+} from "@/server/prompts";
 import { LIMITS, getTodayCounter } from "@/server/usage";
 
 /** Next.js／CDN が GET を静的キャッシュしないようにする */
@@ -192,6 +197,11 @@ const patchSchema = z.object({
   completeOnboardingSkipProfile: z.boolean().optional(),
   /** プロフィール保存と同時に初回オンボーディング完了にする（/onboarding 用） */
   finalizeOnboarding: z.boolean().optional(),
+  /**
+   * 品質改善のため、会話のユーザー発話・AI 返答全文を社内 Eval 用に保存する（オプトイン・既定 false）。
+   * E2EE エントリではルート側で保存されない。
+   */
+  evaluationFullLogOptIn: z.boolean().optional(),
 });
 
 export async function GET(req: NextRequest) {
@@ -245,6 +255,10 @@ export async function GET(req: NextRequest) {
         hobbyExternalFetches: counter.hobbyExternalFetches,
       },
       promptVersions: PROMPT_VERSIONS,
+      policyVersions: POLICY_VERSIONS,
+      effectivePromptVersions: allEffectivePromptVersions(),
+      effectivePolicyVersions: allEffectivePolicyVersions(),
+      evaluationFullLogOptIn: user.evaluationFullLogOptIn,
     },
     JSON_NO_CACHE,
   );
@@ -254,6 +268,7 @@ const ONBOARDING_ONLY_PATCH_KEYS = new Set([
   "profile",
   "finalizeOnboarding",
   "completeOnboardingSkipProfile",
+  "evaluationFullLogOptIn",
 ]);
 
 export async function PATCH(req: NextRequest) {
@@ -355,6 +370,9 @@ export async function PATCH(req: NextRequest) {
           ? { encryptionMode: parsed.data.encryptionMode }
           : {}),
         ...(settingsPatch !== undefined ? { settings: settingsPatch } : {}),
+        ...(parsed.data.evaluationFullLogOptIn !== undefined
+          ? { evaluationFullLogOptIn: parsed.data.evaluationFullLogOptIn }
+          : {}),
         /** `profile.timeZone` と DB の `User.timeZone` を同期（空文字は既定 Asia/Tokyo） */
         ...(parsed.data.profile?.timeZone !== undefined
           ? {
@@ -384,6 +402,7 @@ export async function PATCH(req: NextRequest) {
         defaultWeatherLocation: s.defaultWeatherLocation ?? null,
         dayBoundaryEndTime: s.dayBoundaryEndTime ?? null,
         profile: s.profile ?? {},
+        evaluationFullLogOptIn: user.evaluationFullLogOptIn,
       },
     },
     JSON_NO_CACHE,

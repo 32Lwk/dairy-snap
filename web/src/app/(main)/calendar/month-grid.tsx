@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import { resolveGcalEventColor } from "@/lib/gcal-event-color";
 import type { CalendarWeekStartDay } from "@/lib/user-settings";
+import { GithubGrassStrip, githubGrassLevel } from "@/components/github-grass-strip";
 
 type EntryBrief = { entryDateYmd: string; title: string | null };
 type Ev = {
@@ -109,6 +110,8 @@ export function MonthGrid({
   selectedDateYmd,
   filter,
   onDayActivate,
+  showGithubGrass = false,
+  githubByYmd = null,
 }: {
   ym: string;
   prevYm: string;
@@ -125,6 +128,8 @@ export function MonthGrid({
   filter?: { apply: (ev: Ev) => boolean; infer: (ev: Ev) => string };
   /** Primary click opens day modal; modified / middle-click keeps normal navigation. */
   onDayActivate?: (ymd: string, e: MouseEvent<HTMLAnchorElement>) => void;
+  showGithubGrass?: boolean;
+  githubByYmd?: Record<string, number> | null;
 }) {
   const [events, setEvents] = useState<Ev[] | null>(() => initialEvents ?? null);
 
@@ -203,6 +208,16 @@ export function MonthGrid({
     }
     return arr;
   }, [daysInMonth, mm, yy]);
+
+  const githubMonthMax = useMemo(() => {
+    if (!showGithubGrass || !githubByYmd) return 0;
+    let m = 0;
+    for (const { ymd } of cells) {
+      const c = githubByYmd[ymd] ?? 0;
+      if (c > m) m = c;
+    }
+    return m;
+  }, [showGithubGrass, githubByYmd, cells]);
 
   return (
     <>
@@ -311,6 +326,11 @@ export function MonthGrid({
                 ) : (
                   <div className="mt-0.5 truncate text-[11px] leading-snug text-zinc-400 dark:text-zinc-600"> </div>
                 )}
+                {showGithubGrass && githubByYmd ? (
+                  <GithubGrassStrip
+                    level={githubGrassLevel(githubByYmd[ymd] ?? 0, githubMonthMax)}
+                  />
+                ) : null}
               </div>
             </Link>
           );

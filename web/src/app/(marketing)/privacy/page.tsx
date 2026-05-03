@@ -14,7 +14,7 @@ export default function PrivacyPage() {
         本ポリシーは機能追加・法令改正に応じて変更される場合があります。変更後も本サービスを利用された場合、変更後のポリシーに同意したものとみなします。
       </p>
       <h1 className="mt-8 text-3xl font-semibold tracking-tight">プライバシーポリシー</h1>
-      <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">最終更新: 2026年4月28日</p>
+      <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">最終更新: 2026年5月3日</p>
 
       <div className="mt-10 space-y-10 text-sm leading-relaxed sm:text-base">
         <section className="space-y-3">
@@ -72,6 +72,10 @@ export default function PrivacyPage() {
             <li>
               <strong className="font-medium text-zinc-800 dark:text-zinc-200">Google フォト</strong>
               ：ピッカー等で利用者が選択したメディアに関するメタデータ（識別子、参照用 URL、ファイル名、解像度、撮影日時等）
+            </li>
+            <li>
+              <strong className="font-medium text-zinc-800 dark:text-zinc-200">GitHub（任意連携）</strong>
+              ：利用者が OAuth で許可した範囲で、GitHub API から取得したユーザー情報・イベント・コントリビューションカレンダー相当の情報。アクセストークンはサーバー側で暗号化して保存し、日次活動の要約や UI 表示用に最小限の形でデータベースに保持します。データ引き継ぎバンドルには含めません。
             </li>
             <li>
               <strong className="font-medium text-zinc-800 dark:text-zinc-200">アプリ内カレンダー</strong>

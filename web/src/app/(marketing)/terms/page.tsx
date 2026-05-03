@@ -14,7 +14,7 @@ export default function TermsPage() {
         本規約は変更される場合があります。変更後に本サービスを利用したときは、変更後の規約に同意したものとみなします。
       </p>
       <h1 className="mt-8 text-3xl font-semibold tracking-tight">利用規約</h1>
-      <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">最終更新: 2026年4月28日</p>
+      <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">最終更新: 2026年5月3日</p>
 
       <div className="mt-10 space-y-10 text-sm leading-relaxed sm:text-base">
         <section className="space-y-3">
@@ -41,8 +41,8 @@ export default function TermsPage() {
         <section className="space-y-3">
           <h2 className="text-lg font-semibold tracking-tight">第3条（本サービスの内容）</h2>
           <p className="text-zinc-600 dark:text-zinc-400">
-            本サービスは、個人向けの日記の作成・保存・閲覧、画像の添付、外部サービス（Google カレンダー・Google フォト等）との連携、AI
-            による補助機能などを提供します。機能の詳細・利用条件は、アプリ内表示および運営者が別途示す内容に従います。
+            本サービスは、個人向けの日記の作成・保存・閲覧、画像の添付、外部サービス（Google カレンダー・Google フォト等）との連携、任意の
+            GitHub 連携、AI による補助機能などを提供します。機能の詳細・利用条件は、アプリ内表示および運営者が別途示す内容に従います。
           </p>
         </section>
 

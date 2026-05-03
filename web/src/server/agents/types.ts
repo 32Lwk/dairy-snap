@@ -115,6 +115,7 @@ export type ToolName =
   | "query_calendar_social"
   | "query_hobby"
   | "query_romance"
+  | "query_github"
   | "propose_settings_change";
 
 export const AGENT_TOOL_NAMES: ToolName[] = [
@@ -125,6 +126,7 @@ export const AGENT_TOOL_NAMES: ToolName[] = [
   "query_calendar_social",
   "query_hobby",
   "query_romance",
+  "query_github",
   "propose_settings_change",
 ];
 
@@ -210,7 +212,7 @@ export const ORCHESTRATOR_TOOLS = [
     function: {
       name: "query_hobby",
       description:
-        "ユーザーの趣味・関心タグ・興味分野をもとに会話の糸口を提案する。サーバー側で許可ドメインの抜粋・（設定時）検索グラウンディングを取り込む。MBTI が外向・感情系（E/F）のときは呼びやすい。**開口では必須ではない**（遅延・コスト）。カレンダーが薄く時間割アンカーも無いときは **query_school より query_hobby を優先**しやすい。**Topic deepening**（日記草案前の深掘り・詰まり回復）では、予定の薄さに関係なく呼びやすい。",
+        "ユーザーの趣味・関心タグ・興味分野をもとに会話の糸口を提案する。サーバー側で許可ドメインの抜粋・（設定時）検索グラウンディング・（将来）ニュースAPI を取り込む。MBTI が外向・感情系（E/F）のときは呼びやすい。**開口**で関心タグ等があるときは **query_weather と同一ツールラウンドで並列に呼ぶことを強く推奨**（システムに「開口・関心タグ」ブロックがあるときは従う）。遅延はあるが、タグ列挙のテンプレ回避に公式・検索根拠が効く。カレンダーが薄く時間割アンカーも無いときは **query_school より query_hobby を優先**しやすい。**Topic deepening**（日記草案前の深掘り・詰まり回復）では、予定の薄さに関係なく呼びやすい。",
       parameters: {
         type: "object",
         properties: {
@@ -235,6 +237,24 @@ export const ORCHESTRATOR_TOOLS = [
           focus: {
             type: "string",
             description: "恋愛・関係性に関する具体的なキーワード（任意）",
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "query_github",
+      description:
+        "GitHub 連携ユーザーの**対象エントリ日**の保存済み活動要約（PR/Issue/push 等の集計・コントリビューション件数）を会話に活かす。開発の振り返り・話題の種・深掘りの質問に使う。データに無い事実は断定しない。",
+      parameters: {
+        type: "object",
+        properties: {
+          focus: {
+            type: "string",
+            description: "ユーザー発言から拾ったキーワード（任意・リポ名や「PR」など）",
           },
         },
         required: [],

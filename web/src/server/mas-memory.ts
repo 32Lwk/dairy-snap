@@ -10,6 +10,7 @@ import {
 } from "@/lib/ai/openai-chat-models";
 import { withChatModelFallback } from "@/lib/ai/openai-model-fallback";
 import { parseUserSettings } from "@/lib/user-settings";
+import { deleteEmbedding, syncMemoryLongTermEmbeddingsForUser } from "@/server/embeddings";
 import { prisma } from "@/server/db";
 import { incrementMemorySubAgentCalls } from "@/server/usage";
 
@@ -350,6 +351,16 @@ const memoryDeltaSchema = z.object({
 
 type MemoryDelta = z.infer<typeof memoryDeltaSchema>;
 
+function scheduleLongTermEmbeddingSync(userId: string, delta: MemoryDelta): void {
+  if (process.env.DISABLE_MEMORY_LONG_TERM_EMBEDDINGS === "1") return;
+  void (async () => {
+    for (const id of delta.longTermDeleteIds) {
+      await deleteEmbedding(userId, "MEMORY_LONG_TERM", id).catch(() => {});
+    }
+    await syncMemoryLongTermEmbeddingsForUser(userId, 32).catch(() => {});
+  })();
+}
+
 function parseMemoryDeltaJson(raw: string, userId: string): MemoryDelta | null {
   let s = raw.trim();
   if (s.startsWith("```")) {
@@ -417,6 +428,38 @@ export async function loadShortTermContextForEntry(userId: string, entryId: stri
     .slice(0, 18);
   if (lines.length === 0) return "";
   return lines.map((l) => `- ${l.trim()}`).join("\n");
+}
+
+/** 短期メモを JSON メタ＋従来の箇条書きで提示（セクション混同防止のため id を露出） */
+export async function loadShortTermContextStructuredForEntry(userId: string, entryId: string): Promise<string> {
+  const rows = await prisma.memoryShortTerm.findMany({
+    where: { userId, entryId },
+    orderBy: { updatedAt: "desc" },
+    take: 8,
+    select: { id: true, bullets: true, salience: true, dedupKey: true },
+  });
+  if (rows.length === 0) return "";
+  const lines = rows
+    .flatMap((r) => (Array.isArray(r.bullets) ? (r.bullets as string[]) : []))
+    .filter((s) => typeof s === "string" && s.trim().length > 0)
+    .slice(0, 18);
+  const shortMeta = rows.map((r) => ({
+    id: r.id,
+    salience: r.salience,
+    dedupKey: r.dedupKey,
+    bulletPreview: (Array.isArray(r.bullets) ? (r.bullets as string[]) : [])
+      .filter((x) => typeof x === "string")
+      .slice(0, 3),
+  }));
+  const bulletsBlock = lines.map((l) => `- ${l.trim()}`).join("\n");
+  return [
+    "（このエントリ日の MemoryShortTerm のみ。長期プロフィールと混同しない）",
+    "```json",
+    JSON.stringify({ shortTermRows: shortMeta }),
+    "```",
+    "",
+    bulletsBlock,
+  ].join("\n");
 }
 
 async function loadLatestThreadTranscript(
@@ -770,6 +813,7 @@ export async function runMasMemoryExtraction(args: {
   await prisma.$transaction(async (tx) => {
     await applyMemoryDeltaTx(tx, args.userId, args.entryId, sub.delta, "mas_memory_turn");
   });
+  scheduleLongTermEmbeddingSync(args.userId, sub.delta);
 }
 
 /** 日記本文へ AI 草案がマージされたあと — 全体を通した記憶の再整理 */
@@ -866,6 +910,7 @@ export async function runMasMemoryDiaryConsolidation(args: {
   await prisma.$transaction(async (tx) => {
     await applyMemoryDeltaTx(tx, args.userId, args.entryId, sub.delta, "mas_memory_diary");
   });
+  scheduleLongTermEmbeddingSync(args.userId, sub.delta);
 }
 
 /**
@@ -969,6 +1014,7 @@ export async function runMasMemoryThreadReconcile(args: {
   await prisma.$transaction(async (tx) => {
     await applyMemoryDeltaTx(tx, args.userId, args.entryId, sub.delta, "mas_memory_thread_reconcile");
   });
+  scheduleLongTermEmbeddingSync(args.userId, sub.delta);
 }
 
 export type MemoryChatBackfillResult =
@@ -1087,6 +1133,8 @@ export async function runMasMemoryChatHistoryBackfill(args: {
   } catch {
     return { ok: false, reason: "db" };
   }
+
+  scheduleLongTermEmbeddingSync(args.userId, sub.delta);
 
   await prisma.chatThread.update({
     where: { id: args.threadId },

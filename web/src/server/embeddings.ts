@@ -5,7 +5,12 @@ import { prisma } from "@/server/db";
 const MODEL = "text-embedding-3-small";
 const DIM = 1536;
 
-export type EmbeddingTargetType = "DAILY_ENTRY" | "GCAL_EVENT" | "CHAT_MESSAGE" | "ENTRY_APPEND";
+export type EmbeddingTargetType =
+  | "DAILY_ENTRY"
+  | "GCAL_EVENT"
+  | "CHAT_MESSAGE"
+  | "ENTRY_APPEND"
+  | "MEMORY_LONG_TERM";
 
 export async function embedText(text: string): Promise<number[]> {
   const openai = getOpenAI();
@@ -124,4 +129,77 @@ export async function searchEmbeddings(
     targetType: r.targetType,
     score: typeof r.score === "string" ? parseFloat(r.score) : r.score,
   }));
+}
+
+export type MemoryLongTermVectorHit = {
+  id: string;
+  bullets: string[];
+  score: number;
+};
+
+/**
+ * 長期メモリ行に紐づく埋め込みだけを対象にベクトル近傍検索（オーケストレーター注入用）。
+ */
+export async function searchMemoryLongTermBySimilarity(
+  userId: string,
+  query: string,
+  limit = 8,
+): Promise<MemoryLongTermVectorHit[]> {
+  if (process.env.DISABLE_MEMORY_LONG_TERM_EMBEDDINGS === "1") return [];
+  const trimmed = query.trim().slice(0, 8000);
+  if (!trimmed) return [];
+  const vec = await embedText(trimmed);
+  const literal = vecToSqlLiteral(vec);
+
+  const rows = await prisma.$queryRawUnsafe<
+    { id: string; bullets: unknown; score: string | number }[]
+  >(
+    `SELECT m.id, m.bullets,
+            (1 - (e.vector <=> $1::vector))::float8 AS score
+     FROM embeddings e
+     INNER JOIN memory_long_term m
+       ON m.id = e."targetId" AND m."userId" = e."userId"
+     WHERE e."userId" = $2 AND e."targetType" = 'MEMORY_LONG_TERM'
+     ORDER BY e.vector <=> $1::vector
+     LIMIT $3`,
+    literal,
+    userId,
+    limit,
+  );
+
+  return rows.map((r) => {
+    const raw = r.bullets;
+    const bullets = Array.isArray(raw)
+      ? (raw as unknown[]).filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+      : [];
+    return {
+      id: r.id,
+      bullets,
+      score: typeof r.score === "string" ? parseFloat(r.score) : r.score,
+    };
+  });
+}
+
+/**
+ * 重要度上位の長期メモリ行の埋め込みを再生成（新規行・更新後の追従用）。
+ */
+export async function syncMemoryLongTermEmbeddingsForUser(userId: string, maxRows = 32): Promise<void> {
+  if (process.env.DISABLE_MEMORY_LONG_TERM_EMBEDDINGS === "1") return;
+  const rows = await prisma.memoryLongTerm.findMany({
+    where: { userId },
+    orderBy: [{ impactScore: "desc" }, { createdAt: "desc" }],
+    take: maxRows,
+    select: { id: true, bullets: true },
+  });
+  for (const r of rows) {
+    const lines = (Array.isArray(r.bullets) ? (r.bullets as string[]) : [])
+      .map((x) => (typeof x === "string" ? x.trim() : ""))
+      .filter(Boolean);
+    const text = lines.join("\n").slice(0, 8000);
+    if (!text) {
+      await deleteEmbedding(userId, "MEMORY_LONG_TERM", r.id).catch(() => {});
+      continue;
+    }
+    await upsertTextEmbedding(userId, "MEMORY_LONG_TERM", r.id, text).catch(() => {});
+  }
 }

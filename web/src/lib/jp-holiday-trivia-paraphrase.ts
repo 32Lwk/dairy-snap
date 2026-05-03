@@ -19,7 +19,8 @@ export async function paraphraseHolidayTriviaForOpening(params: {
 
   const sys =
     "You soften definitive tone for a chat opener. Output ONE short Japanese sentence (max ~90 chars). " +
-    "No greeting. No markdown. Do not add new facts beyond the given line. If unsure, return the input compressed.";
+    "No greeting. No markdown. Do not add new facts beyond the given line. If unsure, return the input compressed. " +
+    "For 憲法記念日, do not explain enactment/条文; prefer neutral Golden Week / day-off framing only.";
 
   const user = `祝日名: ${params.holidayNameJa}\n内蔵文: ${params.builtinFact}`;
 

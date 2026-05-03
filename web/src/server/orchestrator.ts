@@ -82,11 +82,25 @@ import { runCalendarWorkAgent } from "@/server/agents/calendar-work-agent";
 import { runCalendarSocialAgent } from "@/server/agents/calendar-social-agent";
 import { runHobbyAgent } from "@/server/agents/hobby-agent";
 import { runRomanceAgent } from "@/server/agents/romance-agent";
+import { runGithubAgent } from "@/server/agents/github-agent";
 import { runSupervisorAgent } from "@/server/agents/supervisor-agent";
 import type { AgentRequest, PersonaContext, WeatherContext } from "@/server/agents/types";
 import { ORCHESTRATOR_TOOLS } from "@/server/agents/types";
-import { loadShortTermContextForEntry } from "@/server/mas-memory";
+import { loadShortTermContextStructuredForEntry } from "@/server/mas-memory";
+import { buildLongTermProfileBlockText } from "@/server/long-term-profile-block";
+import { loadGithubOrchestratorBlock } from "@/server/github/prompt-context";
+import { replaceOrchestratorTodayFactsSection } from "@/lib/orchestrator-today-facts-replace";
 import { scoreOpeningTopic } from "@/server/chat-context";
+import {
+  calendarAgentReplyToToolFactCard,
+  calendarDayToToolFactCard,
+  clipToolFactCards,
+  formatTodayReferentialFactsSection,
+  schoolAgentReplyToToolFactCard,
+  weatherToToolFactCard,
+  type ToolFactCard,
+} from "@/lib/tool-fact-card";
+import { getOrchestratorAgentPromptBasename, resolvePolicyVersion } from "@/server/prompts";
 import { runProposeSettingsChangeTool } from "@/server/agents/settings-agent";
 import { classifyTopicDeepeningParallel } from "@/server/topic-deepening-classifier";
 
@@ -95,6 +109,7 @@ const OPENING_OMIT_TOOLS = new Set([
   "query_calendar_daily",
   "query_calendar_work",
   "query_calendar_social",
+  "query_github",
   "propose_settings_change",
 ]);
 
@@ -378,15 +393,49 @@ type AgentCallArgs = {
   runFn: (r: AgentRequest) => Promise<{ answer: string; hasRelevantInfo: boolean; updatedMemory?: Record<string, string> }>;
 };
 
-async function callAgent({ req, domain, userId, runFn }: AgentCallArgs): Promise<string> {
+async function callAgent({ req, domain, userId, runFn }: AgentCallArgs): Promise<{
+  text: string;
+  factCards: ToolFactCard[];
+}> {
   try {
     const result = await runFn(req);
     if (result.updatedMemory && Object.keys(result.updatedMemory).length > 0) {
       await saveAgentMemory(userId, domain, result.updatedMemory).catch(() => {});
     }
-    return result.answer || "（該当情報なし）";
+    const text = result.answer || "（該当情報なし）";
+    const factCards: ToolFactCard[] = [];
+    if (domain === "school") {
+      factCards.push(schoolAgentReplyToToolFactCard(req.entryDateYmd, result.answer, result.hasRelevantInfo));
+    } else if (domain === "calendar_daily") {
+      factCards.push(
+        calendarAgentReplyToToolFactCard("daily", req.entryDateYmd, result.answer, result.hasRelevantInfo),
+      );
+    } else if (domain === "calendar_work") {
+      factCards.push(
+        calendarAgentReplyToToolFactCard("work", req.entryDateYmd, result.answer, result.hasRelevantInfo),
+      );
+    } else if (domain === "calendar_social") {
+      factCards.push(
+        calendarAgentReplyToToolFactCard("social", req.entryDateYmd, result.answer, result.hasRelevantInfo),
+      );
+    }
+    return { text, factCards };
   } catch (e) {
-    return `（エージェントエラー: ${String(e).slice(0, 80)}）`;
+    const errHint = String(e).slice(0, 120);
+    const factCards: ToolFactCard[] = [];
+    if (domain === "school") {
+      factCards.push(schoolAgentReplyToToolFactCard(req.entryDateYmd, "", false, errHint));
+    } else if (domain === "calendar_daily") {
+      factCards.push(calendarAgentReplyToToolFactCard("daily", req.entryDateYmd, "", false, errHint));
+    } else if (domain === "calendar_work") {
+      factCards.push(calendarAgentReplyToToolFactCard("work", req.entryDateYmd, "", false, errHint));
+    } else if (domain === "calendar_social") {
+      factCards.push(calendarAgentReplyToToolFactCard("social", req.entryDateYmd, "", false, errHint));
+    }
+    return {
+      text: `（エージェントエラー: ${String(e).slice(0, 80)}）`,
+      factCards,
+    };
   }
 }
 
@@ -430,6 +479,9 @@ export type OrchestratorResult = {
   threadId?: string;
   /** stdout 構造化ログの突合用（`APP_LOG_LEVEL=debug` など） */
   correlationId: string;
+  policyVersion: string;
+  /** 今日の参照事実として注入した正規化カード（スナップショット・ログ用） */
+  toolFactCards: ToolFactCard[];
 };
 
 type ChatMsg = {
@@ -502,10 +554,10 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     !userMessage.trim() ||
     typeof reflectiveUserTurnIncludingCurrent !== "number";
 
-  const [longTermContext, shortTermContext, weather, calendarRes, topicDeepeningFromModel] =
+  const [longTermLegacy, shortTermContext, weather, calendarRes, topicDeepeningFromModel, githubBlockLoaded] =
     await Promise.all([
       loadLongTermContext(userId),
-      loadShortTermContextForEntry(userId, entryId),
+      loadShortTermContextStructuredForEntry(userId, entryId),
       getWeatherContext({ userId, entryId, entryDateYmd, now: orchestratorNow }).catch(
         (): WeatherContext => ({
           dateYmd: entryDateYmd,
@@ -538,7 +590,15 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
         materialTier: reflectiveJournalMaterialTier ?? "empty",
         correlationId,
       }),
+      loadGithubOrchestratorBlock(userId, entryDateYmd).catch((): string | null => null),
     ]);
+
+  const longTermContext = await buildLongTermProfileBlockText(
+    userId,
+    isOpening ? "" : userMessage,
+    entryDateYmd,
+    longTermLegacy,
+  );
 
   const topicDeepening = ruleTopicDeepening || topicDeepeningFromModel;
   if (topicDeepening && preferMiniInitial && !isOpening) {
@@ -546,6 +606,8 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     primaryModel = getOrchestratorChatModel();
     fallbackModel = getOrchestratorChatFallbackModel();
   }
+  const githubPromptBlock = useMini ? null : githubBlockLoaded;
+  const githubToolEligible = Boolean(!useMini && githubBlockLoaded);
   const calendarAvailable = isCalendarToolEligible(calendarRes);
   const calendarEventsForOrchestrator = calendarRes.ok
     ? filterCalendarEventsForAiNationalHolidaySanity(entryDateYmd, calendarRes.events)
@@ -719,8 +781,9 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
       omitCalendarWorkForNationalHolidayNoPlans: Boolean(
         jpHolidayNameJa && calendarPlanEventCount === 0,
       ),
+      /** 開口ターンは関心タグがあるだけで query_hobby を推奨（趣味エージェント経由のグラウンディング・公式抜粋・将来のニュースAPI）。 */
       suggestHobbyForRichProfileLightDay: Boolean(
-        hasInterestSignals && (sparseSchedule || Boolean(jpHolidayNameJa)),
+        hasInterestSignals && (sparseSchedule || Boolean(jpHolidayNameJa) || isOpening),
       ),
     },
   );
@@ -770,8 +833,9 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
         : triv;
       const openingTriviaGuide = isOpening
         ? [
-            "この開口の日本語に、コロン**後**の短文に書かれた**具体**（施行・由来・過ごし方のヒントなど）を**少なくともひとかたまり**入れる。祝日名だけを繰り返すのは足りない。",
-            "説教調・長い解説・条文調は避ける。",
+            "「祝日メモ」があるときは**可能なら一文**、メモに書かれた**無難な豆知識**（連休の位置づけ・行事・季節の食べ物など）を会話に溶かす。祝日名だけでもよいが、**寂しい開口を避けるため**百科長文にはしない。**一文で済む雑学**を優先する。",
+            "憲法記念日・即位礼・大喪の礼など、制度や思想に触れうる祝日は**由来・施行・条文の説明をしない**。その場合はメモのうち**連休・カレンダー上の位置づけ**だけか、祝日名のみ。百科調・「ゆるい空気」決めつけは禁止。",
+            "説教調・長い解説は避ける。",
             hasInterestSignals
               ? "静的プロフィールの趣味・関心タグと**無理のない接続**があれば優先（タグにない話題は捏造しない）。"
               : "",
@@ -779,7 +843,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
           ]
             .filter(Boolean)
             .join("\n")
-        : "断定せず雑談程度に。本文やユーザーの訂正を優先する。";
+        : "断定せず雑談程度に。由来の長い説明は避ける。本文やユーザーの訂正を優先する。";
       holidayTriviaSystemBlock = [
         "## 祝日メモ（参考）",
         `「${jpHolidayNameJa}」: ${soft}`,
@@ -803,12 +867,38 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
       ? `${rawBody.slice(0, DIARY_BODY_MAX_CHARS_ORCHESTRATOR)}…`
       : rawBody;
 
-  const weatherSectionTitle =
-    diffCalendarDaysInZone(entryDateYmd, todayYmd, userTimeZone) === 0
-      ? "## 今日の天気"
-      : `## エントリ日（${formatYmdWithTokyoWeekday(entryDateYmd)}）の天気`;
+  const calendarBriefBody = calendarRes.ok
+    ? formatOpeningDayCalendarBrief(
+        calendarEventsSubstantive,
+        calendarOrderedEvIdx,
+        userTimeZone,
+        profile?.calendarOpening,
+      )
+    : "";
+  const calendarDayBriefForOrchestrator = calendarRes.ok
+    ? `${ORCHESTRATOR_DAY_CALENDAR_HEADING}\n${calendarBriefBody}`
+    : "";
 
-  const baseSystem = loadAgentPrompt("orchestrator");
+  let toolFactCards: ToolFactCard[] = [
+    weatherToToolFactCard(weather),
+    calendarDayToToolFactCard({
+      entryDateYmd,
+      calendarOk: calendarRes.ok,
+      substantiveEventCount: calendarEventsSubstantive.length,
+      summaryJa: calendarBriefBody || (calendarRes.ok ? "（予定なし）" : "（カレンダー未取得）"),
+    }),
+  ];
+  const todayReferentialFactsBlock = formatTodayReferentialFactsSection({
+    cards: toolFactCards,
+    humanNarrativeWeatherJa: formatWeatherForPrompt(weather),
+    humanCalendarDayJa: calendarDayBriefForOrchestrator || undefined,
+  });
+
+  const policyVersion = isOpening
+    ? resolvePolicyVersion("opening_default")
+    : resolvePolicyVersion("reflective_chat_default");
+
+  const baseSystem = loadAgentPrompt(getOrchestratorAgentPromptBasename());
   const holidayGuardBlock = jpHolidayNameJa
     ? [
         "## 祝日・休みの可能性（重要）",
@@ -857,8 +947,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
       : "",
     !isOpening ? formatOrchestratorEventSceneFollowupBlock(eventFollowupIntensity) : "",
     "",
-    weatherSectionTitle,
-    weatherText,
+    todayReferentialFactsBlock,
     "",
     `## 対象日\n${formatYmdWithTokyoWeekday(entryDateYmd)}`,
     "",
@@ -885,20 +974,18 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
         )
       : "",
     isOpening && openingHint.openingNote ? `## 開口のヒント\n${openingHint.openingNote}` : "",
+    isOpening && hasInterestSignals
+      ? [
+          "## 開口・関心タグ（query_hobby）",
+          "プロフィールに関心タグ・趣味がある。**query_hobby** を **query_weather** と**同じツールラウンドで並列に呼ぶこと**（空でもよいがスキップしない）。返答では趣味エージェント結果の**検索グラウンディング・許可ドメイン公式抜粋・（設定されている場合）ニュースAPI**など、**根拠のある具体**を本文に**少なくともひとつ**自分の言葉で織り込む。タグ名や「映画・アニメ・YouTube」の列挙だけのテンプレにしない。ツール結果が薄いときは捏造しない。",
+        ].join("\n")
+      : "",
     isOpening && openingRecommendedForPrompt.length > 0
       ? `## 推奨エージェント（開口時・参考）\n${openingRecommendedForPrompt.join(", ")}`
       : "",
     isOpening && openingCalendarPriorityJa ? openingCalendarPriorityJa : "",
     isOpening && timetableOpeningFocusJa
       ? `## 時間割ベースのこの後の講義（Googleカレンダーに無いことが多い）\n${timetableOpeningFocusJa}`
-      : "",
-    calendarRes.ok
-      ? `${ORCHESTRATOR_DAY_CALENDAR_HEADING}\n${formatOpeningDayCalendarBrief(
-          calendarEventsSubstantive,
-          calendarOrderedEvIdx,
-          userTimeZone,
-          profile?.calendarOpening,
-        )}`
       : "",
     holidayGuardBlock,
     "",
@@ -910,12 +997,16 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     !calendarAvailable
       ? "※ Google カレンダー未連携、またはトークン無効のためカレンダー系ツールは呼ばない。"
       : "",
+    githubPromptBlock
+      ? `## GitHub（このエントリ日・参考）\n${githubPromptBlock}\n\n※ コントリビューション数は GitHub 公式カレンダーの日付キー。活動の断定やプライバシー侵害にならないよう注意。`
+      : "",
+    githubToolEligible ? "※ GitHub 連携あり。**query_github** で同日の保存済み要約を会話に織り込める（捏造禁止）。" : "",
     profile?.occupationRole !== "student" ? "※ 学生ではないため query_school は呼ばない。" : "",
     avoidTopics.includes("romance")
       ? "※ ユーザーが恋愛の話題を避けたいため query_romance は絶対に呼ばない。"
       : "",
-    longTermContext ? `## 長期記憶（参考）\n${longTermContext}` : "",
-    shortTermContext ? `## 短期（この日・参考）\n${shortTermContext}` : "",
+    longTermContext ? `## 長期プロフィール（ゆっくり変わる前提）\n${longTermContext}` : "",
+    shortTermContext ? `## このエントリ日の短期メモ\n${shortTermContext}` : "",
     extraSystemAppend ? extraSystemAppend : "",
   ]
     .filter(Boolean)
@@ -925,7 +1016,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     systemBlocks += [
       "",
       "## Brief-turn mode（軽量・低コスト）",
-      "このターンのユーザー発言は短い確認／依頼のみと判定されている。**利用できるツールは `propose_settings_change` のみ**（日付区切り・TZ・カレンダー開口・AI 嗜好・時間割エディタ提案の保留）。天気・カレンダー・学校など **query_* は呼ばない**。",
+      "このターンのユーザー発言は短い確認／依頼のみと判定されている。**利用できるツールは `propose_settings_change` のみ**（日付区切り・TZ・カレンダー開口・AI 嗜好・時間割エディタ提案の保留）。天気・カレンダー・学校・GitHub など **query_* は呼ばない**。",
       "長文の日記草案はこの返答では書かず、**1〜3文**の自然な日本語で十分。必要ならユーザーに、右欄の「会話から草案を生成」で整形できることを**一文で**添えてよい。**意味のまとまりごとに改行してよい**（文数・分量は上のルールのまま、短くしない）。",
     ].join("\n");
   }
@@ -941,6 +1032,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
       !calendarAvailable
     )
       return false;
+    if (name === "query_github" && !githubToolEligible) return false;
     return true;
   });
 
@@ -1000,6 +1092,8 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
 
       if (!assistantMsg.tool_calls || assistantMsg.tool_calls.length === 0) break;
 
+      const dynamicToolFactCards: ToolFactCard[] = [];
+
       const toolCallPromises = assistantMsg.tool_calls.map(async (tc) => {
         if (!("function" in tc)) {
           return { tool_call_id: tc.id, content: "（未対応のツール形式）" };
@@ -1034,56 +1128,77 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
           toolResult = formatWeatherToolReply(weatherText, weather);
         } else if (toolName === "query_school") {
           const mem = await loadAgentMemory(userId, "school");
-          toolResult = await callAgent({
+          const res = await callAgent({
             req: { ...baseReq, agentMemory: mem },
             domain: "school",
             userId,
             runFn: runSchoolAgent,
           });
+          toolResult = res.text;
+          dynamicToolFactCards.push(...res.factCards);
         } else if (toolName === "query_calendar_daily") {
           const mem = await loadAgentMemory(userId, "calendar_daily");
-          toolResult = await callAgent({
+          const res = await callAgent({
             req: { ...baseReq, agentMemory: mem },
             domain: "calendar_daily",
             userId,
             runFn: runCalendarDailyAgent,
           });
+          toolResult = res.text;
+          dynamicToolFactCards.push(...res.factCards);
         } else if (toolName === "query_calendar_work") {
           const mem = await loadAgentMemory(userId, "calendar_work");
-          toolResult = await callAgent({
+          const res = await callAgent({
             req: { ...baseReq, agentMemory: mem },
             domain: "calendar_work",
             userId,
             runFn: runCalendarWorkAgent,
           });
+          toolResult = res.text;
+          dynamicToolFactCards.push(...res.factCards);
         } else if (toolName === "query_calendar_social") {
           const mem = await loadAgentMemory(userId, "calendar_social");
-          toolResult = await callAgent({
+          const res = await callAgent({
             req: { ...baseReq, agentMemory: mem },
             domain: "calendar_social",
             userId,
             runFn: runCalendarSocialAgent,
           });
+          toolResult = res.text;
+          dynamicToolFactCards.push(...res.factCards);
         } else if (toolName === "query_hobby") {
           const mem = await loadAgentMemory(userId, "hobby");
-          toolResult = await callAgent({
-            req: { ...baseReq, agentMemory: mem },
-            domain: "hobby",
-            userId,
-            runFn: runHobbyAgent,
-          });
+          toolResult = (
+            await callAgent({
+              req: { ...baseReq, agentMemory: mem },
+              domain: "hobby",
+              userId,
+              runFn: runHobbyAgent,
+            })
+          ).text;
         } else if (toolName === "query_romance") {
           if (!avoidTopics.includes("romance")) {
             const mem = await loadAgentMemory(userId, "romance");
-            toolResult = await callAgent({
-              req: { ...baseReq, agentMemory: mem },
-              domain: "romance",
-              userId,
-              runFn: runRomanceAgent,
-            });
+            toolResult = (
+              await callAgent({
+                req: { ...baseReq, agentMemory: mem },
+                domain: "romance",
+                userId,
+                runFn: runRomanceAgent,
+              })
+            ).text;
           } else {
             toolResult = "（恋愛トピックは除外設定済み）";
           }
+        } else if (toolName === "query_github") {
+          toolResult = (
+            await callAgent({
+              req: { ...baseReq, agentMemory: {} },
+              domain: "github",
+              userId,
+              runFn: runGithubAgent,
+            })
+          ).text;
         } else if (toolName === "propose_settings_change") {
           toolResult = await runProposeSettingsChangeTool({ rawArgs, threadId: threadId ?? null });
         } else {
@@ -1096,6 +1211,17 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
       const toolResults = await Promise.all(toolCallPromises);
       for (const tr of toolResults) {
         messages.push({ role: "tool", content: tr.content, tool_call_id: tr.tool_call_id });
+      }
+
+      if (dynamicToolFactCards.length > 0) {
+        toolFactCards = clipToolFactCards([...toolFactCards, ...dynamicToolFactCards]);
+        const refreshedToday = formatTodayReferentialFactsSection({
+          cards: toolFactCards,
+          humanNarrativeWeatherJa: formatWeatherForPrompt(weather),
+          humanCalendarDayJa: calendarDayBriefForOrchestrator || undefined,
+        });
+        systemBlocks = replaceOrchestratorTodayFactsSection(systemBlocks, refreshedToday);
+        messages[0] = { role: "system", content: systemBlocks };
       }
     }
   }
@@ -1123,6 +1249,8 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     mbtiHint,
     orchestratorModel,
     correlationId,
+    policyVersion,
+    toolFactCards,
   };
 }
 

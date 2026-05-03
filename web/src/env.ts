@@ -15,6 +15,11 @@ const _env = createEnv({
     AUTH_GOOGLE_SECRET: z.string().min(1),
     AUTH_APPLE_ID: z.string().min(1).optional(),
     AUTH_APPLE_SECRET: z.string().min(1).optional(),
+    /** GitHub OAuth App（連携未使用時は未設定可） */
+    AUTH_GITHUB_ID: z.string().min(1).optional(),
+    AUTH_GITHUB_SECRET: z.string().min(1).optional(),
+    /** 日次 GitHub 同期 Cron（Cloud Scheduler 等）。`Authorization: Bearer <secret>` */
+    GITHUB_SYNC_CRON_SECRET: z.string().min(1).optional(),
     /**
      * open: any Google user who signs in is allowed (ALLOWED_EMAILS ignored).
      * allowlist: comma-separated ALLOWED_EMAILS, or * / ALL for everyone (legacy).
@@ -46,6 +51,9 @@ const _env = createEnv({
     AUTH_GOOGLE_SECRET: process.env.AUTH_GOOGLE_SECRET,
     AUTH_APPLE_ID: process.env.AUTH_APPLE_ID,
     AUTH_APPLE_SECRET: process.env.AUTH_APPLE_SECRET,
+    AUTH_GITHUB_ID: process.env.AUTH_GITHUB_ID,
+    AUTH_GITHUB_SECRET: process.env.AUTH_GITHUB_SECRET,
+    GITHUB_SYNC_CRON_SECRET: process.env.GITHUB_SYNC_CRON_SECRET,
     AUTH_ACCESS_MODE: process.env.AUTH_ACCESS_MODE,
     ALLOWED_EMAILS: process.env.ALLOWED_EMAILS,
     DATABASE_URL: process.env.DATABASE_URL,

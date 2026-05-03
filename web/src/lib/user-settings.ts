@@ -204,6 +204,8 @@ export type CalendarGridDisplaySettings = {
   maxEventsPerCell?: number;
   /** カレンダー ID → #rrggbb（ユーザー上書き） */
   calendarHexById?: Record<string, string>;
+  /** GitHub 連携時のみ有効。false で草 UI を隠す（未設定は true 扱い） */
+  showGithubGrass?: boolean;
 };
 
 /** 1 カレンダーに紐づく既定分類（1件または複数）。 */
@@ -622,7 +624,12 @@ export function pickWinningCalendarCategory(
 
 export function normalizeCalendarGridDisplay(
   g: CalendarGridDisplaySettings | null | undefined,
-): { weekStartsOn: CalendarWeekStartDay; maxEventsPerCell: number; calendarHexById: Record<string, string> } {
+): {
+  weekStartsOn: CalendarWeekStartDay;
+  maxEventsPerCell: number;
+  calendarHexById: Record<string, string>;
+  showGithubGrass: boolean;
+} {
   const rawWs = g?.weekStartsOn;
   const weekStartsOn: CalendarWeekStartDay =
     typeof rawWs === "number" && Number.isInteger(rawWs) && rawWs >= 0 && rawWs <= 6
@@ -644,7 +651,8 @@ export function normalizeCalendarGridDisplay(
       n++;
     }
   }
-  return { weekStartsOn, maxEventsPerCell, calendarHexById };
+  const showGithubGrass = g?.showGithubGrass === false ? false : true;
+  return { weekStartsOn, maxEventsPerCell, calendarHexById, showGithubGrass };
 }
 
 export function calendarOpeningCategoryOptions(
@@ -969,6 +977,9 @@ function parseCalendarOpening(raw: unknown): CalendarOpeningSettings | undefined
         c++;
       }
       if (Object.keys(hexRec).length) sub.calendarHexById = hexRec;
+    }
+    if (typeof g.showGithubGrass === "boolean") {
+      sub.showGithubGrass = g.showGithubGrass;
     }
     if (Object.keys(sub).length) gridDisplay = sub;
   }

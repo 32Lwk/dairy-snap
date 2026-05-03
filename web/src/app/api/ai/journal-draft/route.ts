@@ -7,11 +7,12 @@ import { prisma } from "@/server/db";
 import { runMasMemoryDiaryConsolidation } from "@/server/mas-memory";
 import { mergeAiDiarySection } from "@/lib/journal/ai-diary-section";
 import { filterGroundedSuggestedTagsCsv } from "@/lib/journal/ground-suggested-tags";
-import { PROMPT_VERSIONS } from "@/server/prompts";
+import { resolvePolicyVersion, resolvePromptVersion } from "@/server/prompts";
 import { buildEntryChatTranscript } from "@/lib/chat/build-entry-chat-transcript";
 import { classifyJournalDraftMaterial } from "@/lib/reflective-chat-diary-nudge-rules";
 import { parseUserSettings } from "@/lib/user-settings";
 import { AppLogScope, scheduleAppLog } from "@/lib/server/app-log";
+import { loadGithubJournalComposerBlock } from "@/server/github/prompt-context";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -159,6 +160,11 @@ export async function PUT(req: NextRequest) {
 
   const { transcript } = buildEntryChatTranscript(thread.messages);
 
+  const githubContextBlock = await loadGithubJournalComposerBlock(
+    session.user.id,
+    thread.entry.entryDateYmd,
+  );
+
   const started = Date.now();
   const orchestrator = createDefaultOrchestrator();
   const composerInput: JournalComposerInput = {
@@ -166,6 +172,7 @@ export async function PUT(req: NextRequest) {
     entryDateYmd: thread.entry.entryDateYmd,
     materialTier: journalDraftMaterial.tier,
     forceInsufficient,
+    githubContextBlock: githubContextBlock ?? undefined,
   };
   const result = await orchestrator.runAgent<JournalComposerInput, JournalComposerOutput>(
     "journal-composer",
@@ -203,6 +210,8 @@ export async function PUT(req: NextRequest) {
     latencyMs,
     model: result.data.model,
     materialTier: journalDraftMaterial.tier,
+    promptVersion: resolvePromptVersion("journal_composer"),
+    policyVersion: resolvePolicyVersion("auxiliary_default"),
   });
 
   await prisma.aIArtifact.create({
@@ -210,7 +219,8 @@ export async function PUT(req: NextRequest) {
       userId: session.user.id,
       entryId: parsed.data.entryId,
       kind: "JOURNAL_DRAFT",
-      promptVersion: PROMPT_VERSIONS.journal_composer,
+      promptVersion: resolvePromptVersion("journal_composer"),
+      policyVersion: resolvePolicyVersion("auxiliary_default"),
       model: result.data.model,
       latencyMs,
       metadata: {
@@ -225,7 +235,7 @@ export async function PUT(req: NextRequest) {
     draft: text,
     suggestedTitle,
     suggestedTags,
-    promptVersion: PROMPT_VERSIONS.journal_composer,
+    promptVersion: resolvePromptVersion("journal_composer"),
   });
 }
 
@@ -285,7 +295,10 @@ export async function POST(req: NextRequest) {
       userId: session.user.id,
       entryId: entry.id,
       action: "ai_diary_merged",
-      metadata: { promptVersion: PROMPT_VERSIONS.journal_composer },
+      metadata: {
+        promptVersion: resolvePromptVersion("journal_composer"),
+        policyVersion: resolvePolicyVersion("auxiliary_default"),
+      },
     },
   });
 

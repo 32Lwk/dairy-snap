@@ -28,6 +28,7 @@ export const AppLogScope = {
   account: "account",
   memory: "memory",
   hobby: "hobby",
+  github: "github",
 } as const;
 
 const SEVERITY_ORDER: Record<AppLogLevel, number> = {

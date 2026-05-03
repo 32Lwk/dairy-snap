@@ -529,7 +529,7 @@ export function buildReflectiveOpeningSystemInstruction(
       !opening.hasDiaryBody
     ) {
       anchorRules.push(
-        "National holiday with **no timed personal plans** in the calendar summary (all-day holiday labels are excluded there). Treat the day as **rest-first** for tone. **Do not** default to a binary like 「休みモード vs バイト／外出に動く日」 unless a user-visible calendar line explicitly tags part-time/shift (（バイト/シフト）) or the diary/body mentions work or outings. Prefer gentle open hooks (ゆっくり、家での過ごし方、気分、軽い予定があれば) without inventing specifics. The broad 「Questions when uncertain」 rule below does **not** override this: you are **not** required to force 就活・バイト・外出の切り分け質問 when there are no timed calendar lines to disambiguate.",
+        "National holiday with **no timed personal plans** in the calendar summary (all-day holiday labels are excluded there). Treat the day as **rest-first** for tone. **Do not** default to a binary like 「休みモード vs バイト／外出に動く日」 unless a user-visible calendar line explicitly tags part-time/shift (（バイト/シフト）) or the diary/body mentions work or outings. Prefer gentle open hooks (ゆっくり、家での過ごし方、軽い予定があれば) without inventing specifics; **do not** tie weather to mood/body with sky metaphors. The broad 「Questions when uncertain」 rule below does **not** override this: you are **not** required to force 就活・バイト・外出の切り分け質問 when there are no timed calendar lines to disambiguate.",
       );
     }
     const timetableLectureAnchor =
@@ -582,7 +582,7 @@ export function buildReflectiveOpeningSystemInstruction(
         );
       }
       anchorRules.push(
-        "If the heading 「## 祝日メモ（参考）」 appears **later in this same system message**, you **must** fold **one** short conversational phrase from it into the opener (not a lecture). If that heading is absent, do not invent extra holiday facts beyond the holiday name.",
+        "If the heading 「## 祝日メモ（参考）」 appears **later in this same system message**, fold **at most one** short conversational phrase: prefer **one harmless trivia bite** from the memo when available (GW timing, seasonal food, customs — **one sentence**). The **holiday name** from the holiday guard block alone is acceptable when trivia would feel forced. For sensitive holidays (e.g. 憲法記念日): **no** enactment/条文/「ゆるい空気」 vibes — only memo lines about **連休 position** or stop at the holiday name. If that heading is absent, do not invent extra holiday facts beyond the holiday name.",
       );
     } else {
       anchorRules.push(

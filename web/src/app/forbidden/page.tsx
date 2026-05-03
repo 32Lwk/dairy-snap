@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { SettingsAccountActions } from "@/components/settings-account-actions";
 
 export default function ForbiddenPage() {
@@ -11,7 +12,9 @@ export default function ForbiddenPage() {
           このアカウントは許可リストに含まれていないため、利用できません。
         </p>
         <div className="mt-6 rounded-xl border border-zinc-100 bg-zinc-50/80 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
-          <SettingsAccountActions />
+          <Suspense fallback={<div className="h-24 animate-pulse rounded-lg bg-zinc-200/60 dark:bg-zinc-800/60" />}>
+            <SettingsAccountActions />
+          </Suspense>
         </div>
       </div>
     </div>

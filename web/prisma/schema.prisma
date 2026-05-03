@@ -51,6 +51,8 @@ model User {
 
   encryptionMode EncryptionMode @default(STANDARD)
   settings       Json           @default("{}")
+  /** 会話品質評価用にユーザー発話・AI 全文を保存するオプトイン（既定 false） */
+  evaluationFullLogOptIn Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -75,6 +77,11 @@ model User {
   appLocalCalendarEvents AppLocalCalendarEvent[]
   interestOfficialUrls   UserInterestOfficialUrl[]
   interestUrlFetchCaches InterestUrlFetchCache[]
+  turnContextSnapshots   TurnContextSnapshot[]
+  conversationEvalSamples ConversationEvalSample[]
+  githubConnection         GitHubConnection?
+  githubContributionDays   GitHubContributionDay[]
+  githubDailySnapshots     GitHubDailySnapshot[]
 
   @@map("users")
 }
@@ -447,6 +454,7 @@ model AIArtifact {
   entryId       String?
   kind          ArtifactKind
   promptVersion String?
+  policyVersion String?
 
   model         String?
   latencyMs     Int?
@@ -498,6 +506,67 @@ model OAuthToken {
   @@map("oauth_tokens")
 }
 
+/** GitHub.com OAuth 連携メタ（1ユーザー1アカウント） */
+model GitHubConnection {
+  userId String @id
+
+  githubUserId String
+  login        String
+  /** 付与されたスコープ（スペース区切り） */
+  scope        String @default("")
+
+  lastSyncAt     DateTime?
+  lastSyncError  String? @db.Text
+  lastHttpStatus Int?
+
+  /** GET /users/{login}/events の ETag（差分） */
+  eventsEtag String?
+
+  /** 初回バックフィルで同期済みの最古西暦年（0=未実施） */
+  contributionsOldestYearSynced Int @default(0)
+
+  syncSuccessCount Int @default(0)
+  syncFailCount    Int @default(0)
+  rateLimitHits    Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("github_connections")
+}
+
+/** GitHub コントリビューションカレンダー由来の日次カウント（草 UI） */
+model GitHubContributionDay {
+  id                String @id @default(cuid())
+  userId            String
+  /** API が返す暦日 YYYY-MM-DD */
+  dateYmd           String
+  contributionCount Int    @default(0)
+  updatedAt         DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, dateYmd])
+  @@index([userId, dateYmd])
+  @@map("github_contribution_days")
+}
+
+/** ユーザー TZ 基準の日の活動要約（オーケストレーター・日記草案用） */
+model GitHubDailySnapshot {
+  userId  String
+  dateYmd String
+  summary Json   @default("{}")
+
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, dateYmd])
+  @@map("github_daily_snapshots")
+}
+
 model MemoryLongTerm {
   id            String  @id @default(cuid())
   userId        String
@@ -534,6 +603,52 @@ model MemoryShortTerm {
   @@index([userId, entryId])
   @@index([entryId])
   @@map("memory_short_term")
+}
+
+/** オーケストレーター 1 ターン分の正規化ツール事実（再現性・評価ログ用） */
+model TurnContextSnapshot {
+  id        String @id @default(cuid())
+  userId    String
+  threadId  String
+  entryId   String?
+  userMessageId     String?
+  assistantMessageId String?
+  promptVersion String
+  policyVersion String
+  toolCardsJson Json
+  digest        String @db.VarChar(64)
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([threadId, createdAt])
+  @@map("turn_context_snapshots")
+}
+
+/** 同意済みユーザーの会話評価サンプル（全文保持・任意ラベル） */
+model ConversationEvalSample {
+  id        String @id @default(cuid())
+  userId    String
+  threadId  String
+  userMessageId     String
+  assistantMessageId String
+  promptVersion String
+  policyVersion String
+  userContent       String @db.Text
+  assistantContent  String @db.Text
+  metadata Json    @default("{}")
+  label    String?
+  expiresAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([threadId, createdAt])
+  @@map("conversation_eval_samples")
 }
 
 model Embedding {

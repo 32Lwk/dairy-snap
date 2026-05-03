@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "入力が不正です" }, { status: 400 });
   }
 
-  const rate = checkAndConsumeExportRate(resolved.id);
+  const rate = await checkAndConsumeExportRate(resolved.id);
   if (!rate.ok) {
     scheduleAppLog(AppLogScope.account, "warn", "transfer_export_rate_limited", {
       userId: resolved.id,
