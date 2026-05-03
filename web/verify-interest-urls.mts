@@ -6,8 +6,8 @@
  * Usage (from web/): npm run verify-interest-urls
  */
 
-const defaultUrls = await import("./src/lib/interest-official-urls-default.ts");
-const portalUrls = await import("./src/lib/interest-sub-portal-urls.ts");
+const defaultUrls = await import("./src/lib/interest-official-urls-default");
+const portalUrls = await import("./src/lib/interest-sub-portal-urls");
 
 const DEFAULT_OFFICIAL_URLS_BY_PICK_ID: Record<string, string[]> =
   (defaultUrls as { DEFAULT_OFFICIAL_URLS_BY_PICK_ID?: Record<string, string[]> }).DEFAULT_OFFICIAL_URLS_BY_PICK_ID ??
