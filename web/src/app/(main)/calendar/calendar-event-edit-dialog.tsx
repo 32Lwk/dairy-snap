@@ -86,6 +86,15 @@ export function CalendarEventEditDialog(props: {
 }) {
   const { mode, open, event, createContext, canWriteGoogle, onClose, onSaved } = props;
 
+  const inputClass =
+    "calendar-dialog-compact-text mt-1 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-zinc-900 outline-none ring-zinc-400 focus-visible:ring-2 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:focus-visible:ring-zinc-500";
+  const dateClass =
+    "calendar-dialog-compact-text min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-2 py-1.5 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100";
+  const timeClass =
+    "calendar-dialog-compact-text w-[6.5rem] shrink-0 rounded-lg border border-zinc-200 bg-white px-2 py-1.5 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100";
+  const textareaClass =
+    "calendar-dialog-compact-text mt-1 w-full resize-y rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-zinc-900 outline-none ring-zinc-400 focus-visible:ring-2 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:focus-visible:ring-zinc-500";
+
   const [calendarId, setCalendarId] = useState("");
   const [summary, setSummary] = useState("");
   const [description, setDescription] = useState("");
@@ -99,6 +108,7 @@ export function CalendarEventEditDialog(props: {
   const [endTime, setEndTime] = useState("10:00");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -136,6 +146,67 @@ export function CalendarEventEditDialog(props: {
       setAllDayEndInc(d);
     }
   }, [open, mode, event, createContext]);
+
+  // Edit mode: re-fetch the authoritative event details (list rows can be partial).
+  useEffect(() => {
+    if (!open) return;
+    if (mode !== "edit") return;
+    if (!event?.calendarId || !event?.eventId) return;
+    let cancelled = false;
+    void (async () => {
+      setLoadingDetail(true);
+      try {
+        const qs = new URLSearchParams({
+          calendarId: event.calendarId,
+          eventId: event.eventId,
+        });
+        const res = await fetch(`/api/calendar/event?${qs.toString()}`, { credentials: "same-origin" });
+        const j = (await res.json().catch(() => ({}))) as {
+          ok?: boolean;
+          error?: string;
+          event?: {
+            calendarId: string;
+            eventId: string;
+            title: string;
+            start: string;
+            end: string;
+            location: string;
+            description?: string;
+          };
+        };
+        if (cancelled) return;
+        if (!res.ok || !j?.event) {
+          // Keep the dialog usable with current values; show error non-blockingly.
+          const msg = typeof j.error === "string" ? j.error : "予定詳細の取得に失敗しました";
+          setErr((prev) => prev ?? msg);
+          return;
+        }
+        const ev = j.event;
+        setCalendarId(ev.calendarId);
+        setSummary(ev.title ?? "");
+        setDescription(ev.description ?? "");
+        setLocation(ev.location ?? "");
+        const ad = isAllDayYmd(ev.start);
+        setAllDay(ad);
+        if (ad) {
+          const s = ev.start.trim();
+          const eRaw = (ev.end ?? "").trim();
+          setAllDayStart(s);
+          setAllDayEndInc(eRaw && /^\d{4}-\d{2}-\d{2}$/.test(eRaw) ? addDaysYmdTokyo(eRaw, -1) : s);
+        } else {
+          setStartDate(formatYmdTokyo(ev.start));
+          setStartTime(formatHmTokyo(ev.start));
+          setEndDate(formatYmdTokyo(ev.end || ev.start));
+          setEndTime(formatHmTokyo(ev.end || ev.start));
+        }
+      } finally {
+        if (!cancelled) setLoadingDetail(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, mode, event?.calendarId, event?.eventId]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -250,6 +321,9 @@ export function CalendarEventEditDialog(props: {
           ) : null}
 
           {err ? <p className="mb-2 text-sm text-red-600 dark:text-red-400">{err}</p> : null}
+          {mode === "edit" && loadingDetail ? (
+            <p className="mb-2 text-[11px] text-zinc-500 dark:text-zinc-400">Google カレンダーの内容を読み込んでいます…</p>
+          ) : null}
 
           {mode === "create" && createContext && !noCalendars ? (
             <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-300">
@@ -282,7 +356,7 @@ export function CalendarEventEditDialog(props: {
               required
               maxLength={4000}
               disabled={(needsGoogleWrite && !canWriteGoogle) || busy || noCalendars}
-              className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm text-zinc-900 outline-none ring-zinc-400 focus-visible:ring-2 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:focus-visible:ring-zinc-500"
+              className={inputClass}
             />
           </label>
 
@@ -293,7 +367,7 @@ export function CalendarEventEditDialog(props: {
               onChange={(e) => setLocation(e.target.value)}
               maxLength={2000}
               disabled={(needsGoogleWrite && !canWriteGoogle) || busy || noCalendars}
-              className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm text-zinc-900 outline-none ring-zinc-400 focus-visible:ring-2 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:focus-visible:ring-zinc-500"
+              className={inputClass}
             />
           </label>
 
@@ -304,7 +378,7 @@ export function CalendarEventEditDialog(props: {
               onChange={(e) => setDescription(e.target.value)}
               rows={4}
               disabled={(needsGoogleWrite && !canWriteGoogle) || busy || noCalendars}
-              className="mt-1 w-full resize-y rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm text-zinc-900 outline-none ring-zinc-400 focus-visible:ring-2 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:focus-visible:ring-zinc-500"
+              className={textareaClass}
             />
           </label>
 
@@ -332,7 +406,7 @@ export function CalendarEventEditDialog(props: {
                   onChange={(e) => setAllDayStart(e.target.value)}
                   required
                   disabled={(needsGoogleWrite && !canWriteGoogle) || busy || noCalendars}
-                  className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                  className={`mt-1 w-full ${dateClass}`}
                 />
               </label>
               <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-300">
@@ -343,13 +417,12 @@ export function CalendarEventEditDialog(props: {
                   onChange={(e) => setAllDayEndInc(e.target.value)}
                   required
                   disabled={(needsGoogleWrite && !canWriteGoogle) || busy || noCalendars}
-                  className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                  className={`mt-1 w-full ${dateClass}`}
                 />
               </label>
             </div>
           ) : (
             <div className="mt-3 space-y-3">
-              <p className="text-[11px] text-zinc-500 dark:text-zinc-400">開始・終了は日本時間（Asia/Tokyo）で入力します。</p>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <p className="text-xs font-medium text-zinc-600 dark:text-zinc-300">開始</p>
@@ -360,7 +433,7 @@ export function CalendarEventEditDialog(props: {
                       onChange={(e) => setStartDate(e.target.value)}
                       required
                       disabled={(needsGoogleWrite && !canWriteGoogle) || busy || noCalendars}
-                      className="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                      className={dateClass}
                     />
                     <input
                       type="time"
@@ -368,7 +441,7 @@ export function CalendarEventEditDialog(props: {
                       onChange={(e) => setStartTime(e.target.value)}
                       required
                       disabled={(needsGoogleWrite && !canWriteGoogle) || busy || noCalendars}
-                      className="w-[6.5rem] shrink-0 rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                      className={timeClass}
                     />
                   </div>
                 </div>
@@ -381,7 +454,7 @@ export function CalendarEventEditDialog(props: {
                       onChange={(e) => setEndDate(e.target.value)}
                       required
                       disabled={(needsGoogleWrite && !canWriteGoogle) || busy || noCalendars}
-                      className="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                      className={dateClass}
                     />
                     <input
                       type="time"
@@ -389,10 +462,13 @@ export function CalendarEventEditDialog(props: {
                       onChange={(e) => setEndTime(e.target.value)}
                       required
                       disabled={(needsGoogleWrite && !canWriteGoogle) || busy || noCalendars}
-                      className="w-[6.5rem] shrink-0 rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                      className={timeClass}
                     />
                   </div>
                 </div>
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-400 sm:col-span-2">
+                  開始・終了は日本時間（Asia/Tokyo）で入力します。
+                </p>
               </div>
             </div>
           )}

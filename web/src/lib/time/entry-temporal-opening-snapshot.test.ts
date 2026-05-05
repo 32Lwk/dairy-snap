@@ -40,4 +40,17 @@ describe("buildReflectiveOpeningSystemInstruction", () => {
     expect(s).toContain("student mode in profile");
     expect(s).toContain("祝日メモ（参考）");
   });
+
+  it("飲食予約フラグありでは 就活既定を避け並列質問のダイニングアンカーを含む", () => {
+    const s = buildReflectiveOpeningSystemInstruction("2026-05-03", new Date("2026-05-03T12:00:00+09:00"), {
+      hasDiaryBody: false,
+      calendarLinked: true,
+      calendarEventCount: 1,
+      hasTimetableLecturesToday: false,
+      hasDiningVenueReservationLikePlan: true,
+    });
+    expect(s).toContain("Dining / venue reservation");
+    expect(s).toContain("就活");
+    expect(s).toContain("プライベート");
+  });
 });

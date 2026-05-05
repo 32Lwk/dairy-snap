@@ -5,8 +5,8 @@ import {
   getAgentQualityChatModel,
 } from "@/lib/ai/openai-chat-models";
 import { withChatModelFallback } from "@/lib/ai/openai-model-fallback";
+import { inferCalendarEventIntent } from "@/lib/calendar-event-intent";
 import { fetchCalendarEventsStartingOnDay } from "@/server/calendar";
-import { prisma } from "@/server/db";
 import type { AgentRequest, AgentResponse } from "./types";
 import { loadAgentPrompt } from "./utils";
 
@@ -51,7 +51,15 @@ export async function runCalendarDailyAgent(req: AgentRequest): Promise<AgentRes
     if (cal.ok && cal.events.length > 0) {
       const filtered = cal.events
         .slice(0, 15)
-        .filter((ev) => !isWorkEvent(ev.title) && !isSchoolEvent(ev.title));
+        .filter((ev) => {
+          if (isWorkEvent(ev.title) || isSchoolEvent(ev.title)) return false;
+          const intent = inferCalendarEventIntent({
+            ev,
+            calendarOpening: req.calendarOpening ?? null,
+            profile: null,
+          });
+          return intent.bestCategory !== "job_hunt" && intent.bestCategory !== "parttime" && intent.bestCategory !== "school";
+        });
 
       if (filtered.length > 0) {
         eventsBlock = filtered

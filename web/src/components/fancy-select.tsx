@@ -95,7 +95,7 @@ export function FancySelect({
   }, [open]);
 
   const baseButtonClass = [
-    "flex w-full items-center justify-between gap-2 rounded-lg border border-zinc-200 bg-white/95 px-2.5 py-1.5 text-[13px] font-medium text-zinc-900 shadow-sm outline-none transition",
+    "flex w-full items-center justify-between gap-2 rounded-lg border border-zinc-200 bg-white/95 px-2.5 py-1.5 text-[11px] font-medium leading-snug text-zinc-900 shadow-sm outline-none transition sm:text-xs md:text-sm",
     "hover:bg-white focus-visible:border-emerald-400 focus-visible:ring-2 focus-visible:ring-emerald-500/30",
     "dark:border-zinc-700 dark:bg-zinc-950/80 dark:text-zinc-100 dark:hover:bg-zinc-950 dark:focus-visible:border-emerald-500 dark:focus-visible:ring-emerald-400/25",
     disabled ? "cursor-not-allowed opacity-50" : "",
@@ -110,7 +110,7 @@ export function FancySelect({
   ].join(" ");
 
   const optionBase =
-    "flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-[13px] font-medium text-zinc-800 outline-none transition dark:text-zinc-100";
+    "flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-[11px] font-medium leading-snug text-zinc-800 outline-none transition dark:text-zinc-100 sm:text-xs md:text-sm";
   const optionHover = "hover:bg-zinc-100 dark:hover:bg-zinc-900/70";
   const optionActive = "bg-emerald-50 text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-100";
 
@@ -204,7 +204,11 @@ export function FancySelect({
                     }}
                   >
                     <span className="min-w-0 truncate">{opt.label}</span>
-                    {isSelected ? <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">選択中</span> : null}
+                    {isSelected ? (
+                      <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-300 sm:text-[11px]">
+                        選択中
+                      </span>
+                    ) : null}
                   </button>
                 </li>
               );

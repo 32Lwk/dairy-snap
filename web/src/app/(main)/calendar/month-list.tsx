@@ -243,7 +243,7 @@ export function MonthList({
                     {ymd}（{day}日）
                   </span>
                   <div className="flex shrink-0 items-center gap-1.5">
-                    {showGithubGrass && githubByYmd ? (
+                    {showGithubGrass && githubByYmd && ymd <= today ? (
                       <GithubGrassStrip
                         className="mt-0"
                         level={githubGrassLevel(githubByYmd[ymd] ?? 0, githubMonthMax)}

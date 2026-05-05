@@ -5,6 +5,7 @@
   "scripts": {
     "predev": "prisma generate",
     "dev": "next dev --webpack",
+    "dev:turbo": "next dev --turbo",
     "build": "cross-env SKIP_ENV_VALIDATION=1 next build --webpack",
     "start": "next start",
     "env:encrypt": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/env-encrypt.ps1",

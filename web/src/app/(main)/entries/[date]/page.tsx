@@ -10,6 +10,7 @@ import {
 } from "@/lib/settings-proposal-tool";
 import { DayBoundaryMismatchNotice } from "@/components/day-boundary-mismatch-notice";
 import { getUserEffectiveDayContext } from "@/lib/server/user-effective-day";
+import { TopBannerHeightProvider } from "@/components/top-banner-height-provider";
 import { EntryByDateView } from "./entry-by-date-view";
 
 const entryByDateInclude = {
@@ -86,12 +87,15 @@ export default async function EntryByDatePage({
   }
 
   return (
-    <>
-      {date === dayCtx.effectiveYmd && dayCtx.calendarYmd !== date ? (
-        <div className="mx-auto w-full max-w-5xl px-4 pt-2 sm:px-6 lg:max-w-6xl lg:px-10">
-          <DayBoundaryMismatchNotice variant="entry" effectiveYmd={date} calendarYmd={dayCtx.calendarYmd} />
-        </div>
-      ) : null}
+    <TopBannerHeightProvider
+      banner={
+        date === dayCtx.effectiveYmd && dayCtx.calendarYmd !== date ? (
+          <div className="mx-auto w-full max-w-5xl px-4 pt-2 sm:px-6 lg:max-w-6xl lg:px-10">
+            <DayBoundaryMismatchNotice variant="entry" effectiveYmd={date} calendarYmd={dayCtx.calendarYmd} />
+          </div>
+        ) : null
+      }
+    >
       <EntryByDateView
         date={date}
         entryId={entry.id}
@@ -132,6 +136,6 @@ export default async function EntryByDatePage({
         initialPlutchikAnalysis={entry.plutchikAnalysis}
         transcriptCharCount={transcriptMeta.charCount}
       />
-    </>
+    </TopBannerHeightProvider>
   );
 }

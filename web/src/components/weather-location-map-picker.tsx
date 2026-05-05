@@ -1,7 +1,7 @@
 "use client";
 
 import L from "leaflet";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { MapContainer, Marker, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 
@@ -50,7 +50,6 @@ function MapOverlayControls({
 }) {
   const [geoBusy, setGeoBusy] = useState(false);
   const [geoError, setGeoError] = useState<string | null>(null);
-  const mapReady = map !== null;
 
   const iconCls = "h-4 w-4";
   const btnBase =
@@ -219,8 +218,38 @@ export function WeatherLocationMapPicker({
     });
   }, []);
 
+  const mapRef = useRef<L.Map | null>(null);
   const [map, setMap] = useState<L.Map | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const [mapKey, setMapKey] = useState(0);
+
+  const cleanupLeafletContainerDom = () => {
+    const root = containerRef.current;
+    if (!root) return;
+    const nodes = root.querySelectorAll(".leaflet-container");
+    for (const n of nodes) {
+      try {
+        // Leaflet は container に _leaflet_id を付けて再利用を検出する
+        delete (n as unknown as { _leaflet_id?: unknown })._leaflet_id;
+        // その他のLeaflet関連属性も削除
+        (n as HTMLElement).removeAttribute("data-leaflet");
+        // 子要素を全て削除して完全にリセット
+        while (n.firstChild) {
+          n.removeChild(n.firstChild);
+        }
+      } catch {
+        // ignore
+      }
+    }
+  };
+
+  // StrictMode対応: マウント前に既存のコンテナをクリーンアップ
+  useLayoutEffect(() => {
+    cleanupLeafletContainerDom();
+    return () => {
+      cleanupLeafletContainerDom();
+    };
+  }, []);
 
   useEffect(() => {
     const leafletMap = map;
@@ -293,13 +322,37 @@ export function WeatherLocationMapPicker({
     };
   }, [map]);
 
+  // Dev の Fast Refresh / StrictMode 再マウントで MapContainer が壊れることがあるため、
+  // Leaflet map を明示的に破棄して再利用を防ぐ。
+  useEffect(() => {
+    return () => {
+      const m = mapRef.current;
+      mapRef.current = null;
+      if (m) {
+        try {
+          m.off();
+          m.remove();
+          // Leaflet は container に _leaflet_id を付けて再利用を検出する
+          delete (m.getContainer() as unknown as { _leaflet_id?: unknown })._leaflet_id;
+        } catch {
+          // best-effort cleanup
+        }
+      }
+      cleanupLeafletContainerDom();
+    };
+  }, []);
+
   if (!shouldLoadMap) {
     return (
       <div className="relative z-0 flex w-full min-h-56 aspect-[16/9] flex-col items-center justify-center gap-3 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 p-4 text-center text-sm text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 md:min-h-64">
         <p>低速回線（データ節約）を検出したため、地図の自動読み込みを停止しています。</p>
         <button
           type="button"
-          onClick={() => setShouldLoadMap(true)}
+          onClick={() => {
+            cleanupLeafletContainerDom();
+            setMapKey((k) => k + 1);
+            setShouldLoadMap(true);
+          }}
           className="rounded-md bg-zinc-900 px-3 py-2 text-xs font-medium text-white hover:bg-zinc-700 dark:bg-zinc-200 dark:text-zinc-900 dark:hover:bg-zinc-300"
         >
           地図を読み込む
@@ -314,6 +367,7 @@ export function WeatherLocationMapPicker({
       className="relative z-0 w-full min-h-56 aspect-[16/9] overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-700 md:min-h-64"
     >
       <MapContainer
+        key={mapKey}
         center={[centerLat, centerLng]}
         zoom={fallbackZoom}
         className="h-full w-full [&_.leaflet-container]:h-full [&_.leaflet-container]:w-full [&_.leaflet-container]:bg-zinc-100 dark:[&_.leaflet-container]:bg-zinc-900"
@@ -323,7 +377,22 @@ export function WeatherLocationMapPicker({
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
-        <MapReadyBridge onReady={setMap} />
+        <MapReadyBridge
+          onReady={(next) => {
+            const prev = mapRef.current;
+            mapRef.current = next;
+            if (prev && prev !== next) {
+              try {
+                prev.off();
+                prev.remove();
+                delete (prev.getContainer() as unknown as { _leaflet_id?: unknown })._leaflet_id;
+              } catch {
+                // ignore
+              }
+            }
+            setMap(next);
+          }}
+        />
         <SyncView lat={centerLat} lng={centerLng} fallbackZoom={fallbackZoom} />
         <MapClickHandler onPick={onPick} />
         {hasPin ? (

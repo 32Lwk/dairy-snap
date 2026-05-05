@@ -39,6 +39,12 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  scroll-padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--ios-keyboard-height, 0px) + 16px);
+}
+
 /* 全体共通: テーマに連動したスクロールバー（Firefox） */
 * {
   scrollbar-width: thin;
@@ -81,12 +87,88 @@ body {
 }
 
 /*
- iOS Safari (iPhone / iPad): focuses on inputs with computed font-size under 16px and zooms the viewport.
- Keep text fields at least 1rem. Placed unlayered (after @import tailwindcss) so this wins over utilities like text-sm.
- Select はネイティブ UI のためここでは対象外（text-* が効くようにする）。ズームが気になる端末では16px 未満を避ける。
+ iOS Safari (iPhone / iPad): computed font-size < 16px on focused inputs may zoom the viewport.
+ - 以前は「Tailwind utilities より強く」1rem を強制していたが、これが UI 側の text-* 変更を潰していた。
+ - ベースは Tailwind のレイヤに入れて「utilities が上書きできる」ようにし、ズーム回避は iOS で focus 時だけ行う。
+ Select はネイティブ UI のためここでは対象外（text-* が効くようにする）。
  */
-textarea,
-input:is(
+@layer base {
+  textarea,
+  input:is(
+    [type="text"],
+    [type="search"],
+    [type="email"],
+    [type="password"],
+    [type="tel"],
+    [type="url"],
+    [type="number"],
+    [type="date"],
+    [type="time"],
+    [type="datetime-local"],
+    [type="month"],
+    [type="week"]
+  ),
+  input:not([type]) {
+    font-size: 1rem;
+  }
+}
+
+/*
+ iOS Safari: avoid focus zoom (computed <16px) while keeping compact typography.
+ - Apply only on iOS-ish WebKit (not macOS Safari)
+ - Only bump on focus so normal layout stays compact.
+ */
+@supports (-webkit-touch-callout: none) {
+  @media (hover: none) and (pointer: coarse) {
+    textarea:focus,
+    input:is(
+      [type="text"],
+      [type="search"],
+      [type="email"],
+      [type="password"],
+      [type="tel"],
+      [type="url"],
+      [type="number"],
+      [type="date"],
+      [type="time"],
+      [type="datetime-local"],
+      [type="month"],
+      [type="week"]
+    ):focus,
+    input:not([type]):focus {
+      font-size: max(16px, 1em);
+    }
+
+    textarea.settings-memory-compact-text:focus,
+    input.settings-memory-compact-text:focus,
+    input.timetable-editor-input:focus,
+    textarea.entry-chat-compose-textarea:focus,
+    #calendar-display-settings-dialog input[type="text"].calendar-dialog-compact-text:focus,
+    #calendar-event-edit-dialog input.calendar-dialog-compact-text:focus,
+    #calendar-event-edit-dialog textarea.calendar-dialog-compact-text:focus,
+    #calendar-event-edit-dialog select.calendar-dialog-compact-text:focus,
+    #calendar-display-settings-dialog
+      input[type="text"].calendar-dialog-compact-chip-text:focus {
+      font-size: 16px;
+    }
+  }
+}
+
+/*
+ SettingsMemoryPanel: グローバル 1rem 指定より後に置き、小型フォントを確実に適用する。
+ （iOS Safari では 16px 未満の入力でズームすることがあります）
+ */
+.settings-memory-compact-text {
+  font-size: 11px;
+  line-height: 1rem;
+}
+
+textarea.settings-memory-compact-text {
+  font-size: 11px;
+  line-height: 1rem;
+}
+
+input.settings-memory-compact-text:is(
   [type="text"],
   [type="search"],
   [type="email"],
@@ -100,8 +182,9 @@ input:is(
   [type="month"],
   [type="week"]
 ),
-input:not([type]) {
-  font-size: 1rem;
+input.settings-memory-compact-text:not([type]) {
+  font-size: 11px;
+  line-height: 1rem;
 }
 
 /*
@@ -145,6 +228,14 @@ textarea.entry-chat-compose-textarea {
 /* #calendar-display-settings-dialog: compact text overrides global `1rem` on inputs (may zoom on iOS when focused). */
 #calendar-display-settings-dialog input[type="text"].calendar-dialog-compact-text {
   font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
+/* #calendar-event-edit-dialog: keep form typography compact and consistent (date/time inputs can ignore Tailwind in some UAs). */
+#calendar-event-edit-dialog input.calendar-dialog-compact-text,
+#calendar-event-edit-dialog textarea.calendar-dialog-compact-text,
+#calendar-event-edit-dialog select.calendar-dialog-compact-text {
+  font-size: 0.8125rem; /* 13px */
   line-height: 1.25rem;
 }
 

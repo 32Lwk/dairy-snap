@@ -117,14 +117,14 @@ export function SchoolSearchFields({
   const focusCls =
     "transition-colors focus-visible:outline-none focus-visible:border-emerald-600 focus-visible:ring-2 focus-visible:ring-emerald-500/30 dark:focus-visible:border-emerald-500 dark:focus-visible:ring-emerald-400/30";
   const selectCls = compact
-    ? `box-border h-7 w-full min-w-0 max-w-full rounded border border-zinc-200 bg-white px-1 py-0 text-[11px] leading-tight dark:border-zinc-700 dark:bg-zinc-950 ${focusCls}`
-    : `mt-0.5 box-border w-full min-w-0 max-w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950 ${focusCls}`;
+    ? `box-border h-6 w-full min-w-0 max-w-full rounded border border-zinc-200 bg-white px-1.5 py-0 text-[10px] leading-tight dark:border-zinc-700 dark:bg-zinc-950 ${focusCls}`
+    : `mt-0.5 box-border w-full min-w-0 max-w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs dark:border-zinc-700 dark:bg-zinc-950 sm:text-sm ${focusCls}`;
   const inputCls = compact
-    ? `box-border h-7 w-full min-w-0 max-w-full rounded border border-zinc-200 bg-white px-1.5 py-0 text-[11px] dark:border-zinc-700 dark:bg-zinc-950 ${focusCls}`
-    : `mt-0.5 box-border w-full min-w-0 max-w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950 ${focusCls}`;
+    ? `box-border h-6 w-full min-w-0 max-w-full rounded border border-zinc-200 bg-white px-1.5 py-0.5 text-[10px] leading-tight dark:border-zinc-700 dark:bg-zinc-950 ${focusCls}`
+    : `mt-0.5 box-border w-full min-w-0 max-w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs dark:border-zinc-700 dark:bg-zinc-950 sm:text-sm ${focusCls}`;
   const labelSpan = compact
     ? "text-[10px] leading-none text-zinc-500 dark:text-zinc-400"
-    : "text-xs text-zinc-600 dark:text-zinc-400";
+    : "text-[11px] text-zinc-600 dark:text-zinc-400 sm:text-xs";
 
   const showHits = searchIntent.shouldSearch && schoolHits.length > 0 && !selected;
   const showNoHit =
@@ -244,7 +244,7 @@ export function SchoolSearchFields({
                   }}
                   className={
                     compact
-                      ? "w-full min-w-0 break-words px-2 py-1.5 text-left text-[11px] leading-snug transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900"
+                      ? "w-full min-w-0 break-words px-2 py-1.5 text-left text-[10px] leading-snug transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900"
                       : "w-full min-w-0 break-words px-3 py-2 text-left text-sm leading-snug transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900"
                   }
                 >
@@ -294,8 +294,8 @@ export function SchoolSearchFields({
           placeholder="学校名をそのまま入力"
           className={
             compact
-              ? `w-full rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] leading-snug dark:border-zinc-700 dark:bg-zinc-950 ${focusCls}`
-              : `mt-0.5 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950 ${focusCls}`
+              ? `w-full rounded-md border border-zinc-200 bg-white px-2 py-1 text-[10px] leading-snug dark:border-zinc-700 dark:bg-zinc-950 ${focusCls}`
+              : `mt-0.5 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs dark:border-zinc-700 dark:bg-zinc-950 sm:text-sm ${focusCls}`
           }
         />
       </div>

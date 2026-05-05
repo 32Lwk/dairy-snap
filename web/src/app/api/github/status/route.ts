@@ -37,10 +37,15 @@ export async function GET() {
     });
   }
 
+  // NOTE: `/api/github/status` は初期描画（カレンダーの草）にも使うため、外部 HTTP は行わず即時応答する。
+  // GitHub のアバターは login があれば GitHub 側のリダイレクト画像 URL を使える。
+  const avatarUrl = row.login ? `https://github.com/${encodeURIComponent(row.login)}.png?size=96` : null;
+
   return NextResponse.json({
     configured: true,
     linked: true,
     login: row.login,
+    avatarUrl,
     scope: row.scope,
     lastSyncAt: row.lastSyncAt?.toISOString() ?? null,
     lastSyncError: row.lastSyncError,

@@ -9,7 +9,7 @@ export const APP_MAIN_PT_BELOW_FIXED_HEADER =
  * 今日ページ max-lg：固定ヘッダー（`APP_MAIN_PT` 相当）＋`MainLayoutBody` の底ナビ予約（3.875rem＋safe-bottom）を除いたチャットペイン高。
  */
 export const TODAY_MAX_LG_CHAT_PANE_HEIGHT =
-  "max-lg:h-[calc(100dvh-4rem-3.875rem-1.5rem-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))] md:max-lg:h-[calc(100dvh-4.25rem-3.875rem-1.5rem-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))]";
+  "max-lg:h-[calc(100dvh-4rem-3.875rem-1.5rem-var(--app-top-banner-h,0px)-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))] md:max-lg:h-[calc(100dvh-4.25rem-3.875rem-1.5rem-var(--app-top-banner-h,0px)-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))]";
 
 /**
  * エントリ日・チャット列ラッパー（`EntryByDateMainGrid` 内）。
@@ -19,9 +19,9 @@ export const TODAY_MAX_LG_CHAT_PANE_HEIGHT =
 export const ENTRY_BY_DATE_CHAT_PANE_SHELL =
   [
     "max-md:flex-none max-md:shrink-0",
-    "max-md:h-[calc(100dvh-3.75rem-3.875rem-1.25rem-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))]",
-    "max-md:min-h-[calc(100dvh-3.75rem-3.875rem-1.25rem-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))]",
-    "md:max-lg:min-h-0 md:max-lg:flex-1 md:max-lg:max-h-[calc(100dvh-3.875rem-3.875rem-1.25rem-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))]",
+    "max-md:h-[calc(100dvh-3.75rem-3.875rem-1.25rem-var(--app-top-banner-h,0px)-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))]",
+    "max-md:min-h-[calc(100dvh-3.75rem-3.875rem-1.25rem-var(--app-top-banner-h,0px)-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))]",
+    "md:max-lg:min-h-0 md:max-lg:flex-1 md:max-lg:max-h-[calc(100dvh-3.875rem-3.875rem-1.25rem-var(--app-top-banner-h,0px)-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))]",
     "lg:flex-1 lg:min-h-0 lg:h-auto lg:max-h-none",
   ].join(" ");
 

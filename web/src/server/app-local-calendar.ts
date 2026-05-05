@@ -271,6 +271,34 @@ export async function patchAppLocalCalendarEvent(
   return { ok: true, event };
 }
 
+export async function fetchAppLocalEventBrief(
+  userId: string,
+  calendarIdToken: string,
+  eventId: string,
+): Promise<{ ok: true; event: CalendarEventBrief } | { ok: false; error: string }> {
+  const rawCal = stripAppLocalCalendarIdToken(calendarIdToken);
+  if (!rawCal) return { ok: false, error: "カレンダーが不正です" };
+  const row = await prisma.appLocalCalendarEvent.findFirst({
+    where: { id: eventId, userId, calendarId: rawCal },
+    include: { calendar: { select: { name: true } } },
+  });
+  if (!row) return { ok: false, error: "予定が見つかりません" };
+  return {
+    ok: true,
+    event: {
+      eventId: row.id,
+      calendarId: toAppLocalCalendarIdToken(row.calendarId),
+      calendarName: formatAppLocalCalendarDisplayName(row.calendar.name),
+      colorId: "10",
+      title: row.title,
+      start: row.startIso,
+      end: row.endIso,
+      location: row.location,
+      description: row.description,
+    },
+  };
+}
+
 export async function deleteAppLocalCalendar(
   userId: string,
   rawCalendarId: string,

@@ -19,6 +19,10 @@ export const metadata: Metadata = {
     default: "daily-snap",
   },
   description: "気楽に書ける、個人向け日記。",
+  icons: {
+    icon: [{ url: "/brand/daily-snap-icon-512.png", sizes: "512x512", type: "image/png" }],
+    apple: [{ url: "/brand/daily-snap-icon-512.png", sizes: "512x512" }],
+  },
   openGraph: {
     images: [{ url: "/brand/daily-snap-icon-512.png", width: 512, height: 512 }],
   },

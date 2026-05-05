@@ -56,7 +56,14 @@ import {
 } from "@/lib/jp-anniversary-local";
 import { triviaLineForJapaneseHoliday } from "@/lib/jp-holiday-trivia";
 import { paraphraseHolidayTriviaForOpening } from "@/lib/jp-holiday-trivia-paraphrase";
+import { looksLikeDiningVenueReservation } from "@/lib/calendar-dining-reservation";
 import { inferCalendarEventCategory } from "@/lib/calendar-opening-infer-event";
+import {
+  formatNonOpeningCalendarIntentSummaryBlock,
+  linkUserUtteranceToSameDayEvent,
+  questionBudgetForPersona,
+} from "@/lib/calendar-event-intent";
+import { inferCalendarEventIntent } from "@/lib/calendar-event-intent";
 import {
   countSubstantiveCalendarPlanEvents,
   filterCalendarEventsForAiNationalHolidaySanity,
@@ -213,6 +220,9 @@ function openingCalendarCategoryLineJa(
   ev: CalendarEventBrief,
   calendarOpening: CalendarOpeningSettings | undefined,
 ): { categoryLabel: string; needsUserConfirm: boolean } | null {
+  if (looksLikeDiningVenueReservation(ev)) {
+    return { categoryLabel: "飲食・会場予約", needsUserConfirm: true };
+  }
   const cat = inferCalendarEventCategory(ev, calendarOpening ?? null);
   if (cat === "parttime") return { categoryLabel: "バイト/シフト", needsUserConfirm: false };
   if (cat === "birthday") return { categoryLabel: "誕生日", needsUserConfirm: false };
@@ -230,6 +240,14 @@ function openingCalendarCategoryLineJa(
   return null;
 }
 
+function openingCalendarDetailsSnippet(ev: CalendarEventBrief): string {
+  const raw = (ev.description ?? "").trim() || (ev.eventSearchBlob ?? "").trim();
+  if (!raw) return "";
+  const oneLine = raw.replace(/\s+/g, " ").replace(/\|/g, "｜").trim();
+  if (oneLine.length > 180) return `${oneLine.slice(0, 177)}…`;
+  return oneLine;
+}
+
 function formatOneOpeningCalendarLine(
   ev: CalendarEventBrief,
   timeZone: string,
@@ -242,8 +260,16 @@ function formatOneOpeningCalendarLine(
   const cat = openingCalendarCategoryLineJa(ev, calendarOpening);
   const catCell = cat ? `category=${cat.categoryLabel}${cat.needsUserConfirm ? "; confirm=needed" : ""}` : "";
   const locCell = loc ? `location=${loc}` : "";
+  const det = openingCalendarDetailsSnippet(ev);
+  const detCell = det ? `details=${det}` : "";
+  const intent = inferCalendarEventIntent({
+    ev,
+    calendarOpening: calendarOpening ?? null,
+    profile: null,
+  });
+  const intentCell = `intent=${intent.axes.work_or_jobhunt.score > 0 ? "maybe_work" : "maybe_private"}; conf=${intent.confidence}; ask=${intent.askStyle}`;
   // Unified normalized line format (no parentheses-based tags)
-  return `- time=${when} | title=${title}${locCell ? ` | ${locCell}` : ""}${catCell ? ` | ${catCell}` : ""}`;
+  return `- time=${when} | title=${title}${locCell ? ` | ${locCell}` : ""}${detCell ? ` | ${detCell}` : ""}${catCell ? ` | ${catCell}` : ""} | ${intentCell}`;
 }
 
 /** `orderedEvIdx`: 開口時は Impact×近さでソートした event インデックス（先頭ほど優先） */
@@ -558,8 +584,9 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     !userMessage.trim() ||
     typeof reflectiveUserTurnIncludingCurrent !== "number";
 
-  const [longTermLegacy, shortTermContext, weather, calendarRes, topicDeepeningFromModel, githubBlockLoaded] =
+  const [orchestratorMem, longTermLegacy, shortTermContext, weather, calendarRes, topicDeepeningFromModel, githubBlockLoaded] =
     await Promise.all([
+      loadAgentMemory(userId, "orchestrator").catch((): Record<string, string> => ({})),
       loadLongTermContext(userId),
       loadShortTermContextStructuredForEntry(userId, entryId),
       getWeatherContext({ userId, entryId, entryDateYmd, now: orchestratorNow }).catch(
@@ -585,14 +612,10 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
         }),
       ),
       // Opening: inject same-day calendar list for grounding.
-      // Non-opening: do NOT inject calendar events directly; allow calendar via specialized calendar agents (query_calendar_* tools).
+      // Non-opening: we still fetch calendar for inference, but do not inject the full list; only a compact inference summary is added later.
       isOpening
-        ? fetchCalendarEventsStartingOnDay(userId, entryDateYmd)
-        : Promise.resolve<CalendarFetchResult>({
-            ok: false,
-            reason: "unknown",
-            detail: "calendar_not_injected_non_opening",
-          }),
+        ? fetchCalendarEventsStartingOnDay(userId, entryDateYmd, { includeEventSearchBlob: true })
+        : fetchCalendarEventsStartingOnDay(userId, entryDateYmd),
       classifyTopicDeepeningParallel({
         skip: classifierSkip,
         userMessage,
@@ -612,6 +635,11 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     longTermLegacy,
   );
 
+  const orchestratorMemLines = Object.entries(orchestratorMem)
+    .slice(0, 12)
+    .map(([k, v]) => `- ${k}: ${v}`)
+    .join("\n");
+
   const topicDeepening = ruleTopicDeepening || topicDeepeningFromModel;
   if (topicDeepening && preferMiniInitial && !isOpening) {
     useMini = false;
@@ -622,6 +650,35 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
   const githubToolEligible = Boolean(!useMini && githubBlockLoaded);
   // Calendar tools remain eligible even when we intentionally skip direct calendar injection (non-opening turns).
   const calendarAvailable = isOpening ? isCalendarToolEligible(calendarRes) : true;
+  const nonOpeningCalendarIntentSummaryBlock =
+    !isOpening && calendarRes.ok
+      ? formatNonOpeningCalendarIntentSummaryBlock({
+          entryDateYmd,
+          timeZone: userTimeZone,
+          events: calendarRes.events,
+          calendarOpening: profile?.calendarOpening ?? null,
+          profile: {
+            interestPicks: profile?.interestPicks,
+            aiAvoidTopics: profile?.aiAvoidTopics,
+            aiCurrentFocus: profile?.aiCurrentFocus,
+            aiChatTone: profile?.aiChatTone,
+            aiDepthLevel: profile?.aiDepthLevel,
+          },
+        })
+      : "";
+  const nonOpeningCalendarLinkHint =
+    !isOpening && calendarRes.ok && userMessage.trim()
+      ? linkUserUtteranceToSameDayEvent({
+          userMessage,
+          timeZone: userTimeZone,
+          events: calendarRes.events,
+        })
+      : null;
+  const questionBudget = questionBudgetForPersona({
+    aiChatTone: profile?.aiChatTone,
+    aiDepthLevel: profile?.aiDepthLevel,
+    userMessageLen: userMessage?.length ?? 0,
+  });
   const calendarEventsForOrchestrator =
     isOpening && calendarRes.ok ? filterCalendarEventsForAiNationalHolidaySanity(entryDateYmd, calendarRes.events) : [];
   const holidaySignal =
@@ -985,6 +1042,9 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
               (longTermContext ?? "").trim() || (shortTermContext ?? "").trim(),
             ),
             wallCalendarYmd,
+            hasDiningVenueReservationLikePlan: calendarEventsSubstantive.some((ev) =>
+              looksLikeDiningVenueReservation(ev),
+            ),
           },
           temporalOpts,
         )
@@ -1007,9 +1067,27 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
     "",
     isOpening && jpAnniversarySystemBlock ? jpAnniversarySystemBlock : "",
     isOpening && holidayTriviaSystemBlock ? holidayTriviaSystemBlock : "",
+    !isOpening && nonOpeningCalendarIntentSummaryBlock ? nonOpeningCalendarIntentSummaryBlock : "",
+    !isOpening && nonOpeningCalendarLinkHint
+      ? [
+          "## ユーザー発話→当日予定リンク（推定・未確定）",
+          `method=${nonOpeningCalendarLinkHint.method} | conf=${nonOpeningCalendarLinkHint.confidence}` +
+            (nonOpeningCalendarLinkHint.matchedTitle ? ` | title=${nonOpeningCalendarLinkHint.matchedTitle}` : "") +
+            (nonOpeningCalendarLinkHint.matchedTime ? ` | time=${nonOpeningCalendarLinkHint.matchedTime}` : ""),
+          "ルール: conf が high/medium でも断定せず、話題がその予定を指すかは自然に確かめてよい。needs_confirm なら『その予定のこと？』と短く確認してから掘る。",
+        ].join("\n")
+      : "",
     !isOpening && sparseThreadHintBlock ? sparseThreadHintBlock : "",
     !isOpening && topicDeepening ? formatOrchestratorTopicDeepeningBlock() : "",
     "",
+    !isOpening
+      ? [
+          "## 確認質問の予算（このターン）",
+          `- baseMaxQuestions=${questionBudget.baseMaxQuestions}`,
+          `- allowPlusOneWhenShort=${questionBudget.allowPlusOneWhenShort ? "true" : "false"}`,
+          "ルール: 確認が必要でも、質問は基本2個までにまとめる。ユーザー発話が短い/余裕があるときだけ +1 まで許容。残りは話題転換時や次ターンで聞く。",
+        ].join("\n")
+      : "",
     !calendarAvailable
       ? "※ Google カレンダー未連携、またはトークン無効のためカレンダー系ツールは呼ばない。"
       : "",
@@ -1023,6 +1101,7 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
       : "",
     longTermContext ? `## 長期プロフィール（ゆっくり変わる前提）\n${longTermContext}` : "",
     shortTermContext ? `## このエントリ日の短期メモ\n${shortTermContext}` : "",
+    orchestratorMemLines ? `## 会話運用メモ（AgentMemory: orchestrator）\n${orchestratorMemLines}` : "",
     extraSystemAppend ? extraSystemAppend : "",
   ]
     .filter(Boolean)
@@ -1034,6 +1113,16 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
       "## Brief-turn mode（軽量・低コスト）",
       "このターンのユーザー発言は短い確認／依頼のみと判定されている。**利用できるツールは `propose_settings_change` のみ**（日付区切り・TZ・カレンダー開口・AI 嗜好・時間割エディタ提案の保留）。天気・カレンダー・学校・GitHub など **query_* は呼ばない**。",
       "長文の日記草案はこの返答では書かず、**1〜3文**の自然な日本語で十分。必要ならユーザーに、右欄の「会話から草案を生成」で整形できることを**一文で**添えてよい。**意味のまとまりごとに改行してよい**（文数・分量は上のルールのまま、短くしない）。",
+    ].join("\n");
+  }
+  if (!isOpening && nonOpeningCalendarIntentSummaryBlock) {
+    systemBlocks += [
+      "",
+      "## Calendar tool hint (non-opening)",
+      "If the intent summary suggests **work/jobhunt** ambiguity or many work-like slots, prefer `query_calendar_work`.",
+      "If it suggests **private/social** ambiguity or social-like slots, prefer `query_calendar_social`.",
+      "If the user asks generally about the day and you need more schedule grounding, prefer `query_calendar_daily`.",
+      "Do not call calendar tools when the user did not ask and you already have enough to answer; use them when it materially reduces uncertainty.",
     ].join("\n");
   }
 

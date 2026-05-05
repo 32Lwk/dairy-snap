@@ -24,6 +24,7 @@ const CHAT_BACKFILL_TRANSCRIPT_MAX = 42000;
 const CHAT_BACKFILL_MESSAGE_TAKE = 350;
 
 const AGENT_MEMORY_DOMAINS = [
+  "orchestrator",
   "school",
   "calendar_daily",
   "calendar_work",

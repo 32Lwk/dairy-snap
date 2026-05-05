@@ -326,7 +326,7 @@ export function MonthGrid({
                 ) : (
                   <div className="mt-0.5 truncate text-[11px] leading-snug text-zinc-400 dark:text-zinc-600"> </div>
                 )}
-                {showGithubGrass && githubByYmd ? (
+                {showGithubGrass && githubByYmd && ymd <= today ? (
                   <GithubGrassStrip
                     level={githubGrassLevel(githubByYmd[ymd] ?? 0, githubMonthMax)}
                   />

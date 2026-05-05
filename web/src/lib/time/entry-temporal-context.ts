@@ -436,6 +436,8 @@ export type ReflectiveOpeningContext = {
   hasMemorySnippets?: boolean;
   /** 壁時計の暦日（対象日とズレがあるときの注記用） */
   wallCalendarYmd?: string | null;
+  /** 飲食・会場予約らしい予定が1件でもある（就活フレームのデフォルト化を避ける） */
+  hasDiningVenueReservationLikePlan?: boolean;
 };
 
 /** 通常ターン用: 薄い日の継続ガイド（日本語ガイド約400字以内＋英語の硬いルール） */
@@ -571,6 +573,12 @@ export function buildReflectiveOpeningSystemInstruction(
       );
     }
 
+    if (opening.hasDiningVenueReservationLikePlan) {
+      anchorRules.push(
+        "**Dining / venue reservation (tone — hard):** At least one calendar line is a **restaurant/bar/cafe-style reservation** (e.g. English 「Reservation at …」, or `category=飲食・会場予約`, or dining keywords in title/location/`details=`). **Do not** open as if 就活・会社面接・仕事用事が既定。Treat **private/social** readings as **equally likely upfront**: in **one** short compound question (or two very short questions), name **both** axes — e.g. 仕事・就活まわりだったか、それとも友人・家族・プライベートの食事／飲みか — without implying 就活 first. If `details=` or the title already signals dining only, you may skip the work axis but **still** invite who-with / occasion lightly.",
+      );
+    }
+
     if (opening.holidayNameJa) {
       if (opening.occupationRole === "student") {
         anchorRules.push(
@@ -611,7 +619,8 @@ export function buildReflectiveOpeningSystemInstruction(
     `Event names: titles and times listed under "${ORCHESTRATOR_DAY_CALENDAR_HEADING}" are allowed and encouraged when you reference that day's schedule (use the title wording from the list; light paraphrase is OK). Same for tool results, diary body, and short-term bullets for this entry.`,
     "When a calendar line includes 「（バイト/シフト）」, treat that event as the user's part-time / shift work for wording (e.g. バイト、シフト) — do not downplay it as a vague 「予定」 only.",
     "When a calendar line includes 「分類:」 and 「就活」 or 「面接」 or 「ユーザー確認」, or multiple kinds are merged in one label (e.g. 就活/面接・その他), or the legacy tag 「（就活・業務）」 appears, treat it as **possibly** job search, interview, company session, personal errand, or other work — **not** guaranteed 就活. The tag is a **classifier hint**, not proof. Prefer specific wording (就活・面接・説明会・会社との予定) over vague 予定 alone, and **always** fold in **at least one** light confirmation (e.g. 就活まわりだった？ 別の用事？) when the title alone does not spell it out — **even if** you also ask about lectures or mood.",
-    "When a timed event title has **no** category parenthetical and reads like a **company/product name** or opaque proper noun, do **not** treat it as confirmed 就活 — but **do** ask what kind of slot it was (就活系か、別件か, or 仕事か私用か as fits). A **light** hypothesis in wording is OK when context fits, as long as you still invite correction — **do not** drop the question to avoid being wrong.",
+    "When a timed event title has **no** category parenthetical and reads like a **company/product name** or opaque proper noun, do **not** treat it as confirmed 就活 — but **do** ask what kind of slot it was (就活系か、別件か, or 仕事か私用か as fits). **Exception:** when the same calendar line is already tagged **`飲食・会場予約`** or reads like a **dining reservation** (e.g. 「Reservation at …」), **do not** default to 就活 wording — use the **parallel private vs work** question style from the dining anchor rule.",
+    "When a calendar line includes machine hints like `ask=parallel_confirm` or `conf=low` or `intent=...` (these may appear as `| intent=...; conf=...; ask=...`): treat them as **uncertainty signals**. Do not ignore them for smoothness. Prefer one short axis-explicit compound question (e.g. 仕事/就活寄り？それとも友人/私用？) rather than a vague mood-only question.",
     "Do not invent events, titles, times, or places that do not appear in those sources. If nothing concrete is listed for plans, ask in general terms without making up names.",
     "",
     "### Public news & safety (opening)",

@@ -239,7 +239,7 @@ export type CalendarOpeningSettings = {
  * `calendarCategoryById` のスコア加算（複数指定時は各カテゴリに同一重み）。値が大きいと本文・カレンダー名ヒントより常に勝ち「趣味」等に張り付きやすい。
  * 明示の calendarId ルール（CALENDAR_ID_RULE_STRONG_WEIGHT）より弱くする。
  */
-export const CALENDAR_DEFAULT_CATEGORY_WEIGHT = 52;
+export const CALENDAR_DEFAULT_CATEGORY_WEIGHT = 9;
 
 /** kind:calendarId でこの ID の予定をカテゴリに強く寄せるときの重み（既定カテゴリより強い）。 */
 export const CALENDAR_ID_RULE_STRONG_WEIGHT = 96;
@@ -520,6 +520,43 @@ const CALENDAR_OPENING_BUILTIN_TEXT_HINTS: { cat: BuiltinCalendarOpeningCategory
     w: 6,
   },
   {
+    // Dining / venue reservations: treat as social by default (avoid mis-framing as work).
+    cat: "family",
+    words: [
+      "reservation",
+      "\u4e88\u7d04",
+      "\u30ec\u30b9\u30c8\u30e9\u30f3",
+      "\u98df\u4e8b",
+      "\u5916\u98df",
+      "\u30ab\u30d5\u30a7",
+      "cafe",
+      "\u30d0\u30fc",
+      "bar",
+      "\u98f2\u307f",
+      "\u98f2\u307f\u4f1a",
+      "dinner",
+      "lunch",
+    ],
+    w: 5,
+  },
+  {
+    // Video meeting links often live in conferenceData / hangoutLink rather than title.
+    // Keep moderate weight and rely on other text to avoid overclassifying casual calls.
+    cat: "job_hunt",
+    words: [
+      "meet.google.com",
+      "zoom.us",
+      "teams.microsoft.com",
+      "webex.com",
+      "whereby.com",
+      "jitsi",
+      "skype",
+      "discord.gg",
+      "discord.com",
+    ],
+    w: 3,
+  },
+  {
     cat: "birthday",
     words: [
       "\u8a95\u751f\u65e5",
@@ -584,13 +621,41 @@ export function addCalendarOpeningBuiltinTextHints(
   const add = (cat: CalendarOpeningCategory, w: number) => {
     acc.set(cat, (acc.get(cat) ?? 0) + w);
   };
+  // Track strong-context markers for conflict resolution.
+  let hasDiningSignal = false;
+  let hasJobHuntSignal = false;
+  let hasParttimeSignal = false;
+  let hasSchoolSignal = false;
   for (const b of CALENDAR_OPENING_BUILTIN_TEXT_HINTS) {
     for (const w of b.words) {
-      if (hay.includes(w.toLowerCase())) add(b.cat, b.w);
+      const hit = hay.includes(w.toLowerCase());
+      if (!hit) continue;
+      add(b.cat, b.w);
+      if (b.cat === "family" && (w === "reservation" || w === "bar" || w === "dinner" || w === "lunch" || w === "cafe"))
+        hasDiningSignal = true;
+      if (b.cat === "job_hunt" && b.w >= 5) hasJobHuntSignal = true;
+      if (b.cat === "parttime" && b.w >= 5) hasParttimeSignal = true;
+      if (b.cat === "school" && b.w >= 5) hasSchoolSignal = true;
     }
   }
   const hasAcademic = ACADEMIC_CONTEXT_MARKERS.some((k) => hay.includes(k.toLowerCase()));
   if (hasAcademic) add("school", 5);
+
+  // Conflict resolution to reduce user stress:
+  // If the text strongly looks like dining/venue reservation AND we don't see strong job/school/shift markers,
+  // actively suppress work-ish buckets so default calendar priors don't misframe it.
+  if (hasDiningSignal && !hasJobHuntSignal && !hasParttimeSignal && !hasSchoolSignal && !hasAcademic) {
+    add("job_hunt", -8);
+    add("parttime", -6);
+    add("school", -4);
+  }
+
+  // Stronger guard: English "Reservation at …" / "Reservation for …" reads as dining, not recruiting.
+  if (/\breservation\s+at\b/.test(hay) || /\breservation\s+for\b/.test(hay)) {
+    add("job_hunt", -10);
+    add("family", 4);
+  }
+
   for (const [cat, w] of acc) {
     if (w !== 0) bump(cat, w);
   }

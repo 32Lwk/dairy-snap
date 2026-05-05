@@ -571,16 +571,26 @@ export async function POST(req: NextRequest) {
             where: { id: entry.id },
             select: { body: true },
           });
-          await runMasMemoryExtraction({
-            userId: session.user.id,
-            entryId: entry.id,
-            entryDateYmd: entry.entryDateYmd,
-            encryptionMode: entry.encryptionMode,
-            diaryBody: entryForMemory?.body ?? entry.body,
-            userMessage: parsed.data.message,
-            assistantMessage: storedAssistant,
-            recentTurns,
-          });
+          try {
+            await runMasMemoryExtraction({
+              userId: session.user.id,
+              entryId: entry.id,
+              entryDateYmd: entry.entryDateYmd,
+              encryptionMode: entry.encryptionMode,
+              diaryBody: entryForMemory?.body ?? entry.body,
+              userMessage: parsed.data.message,
+              assistantMessage: storedAssistant,
+              recentTurns,
+            });
+          } catch (e) {
+            scheduleAppLog(AppLogScope.chat, "error", "orchestrator_chat_memory_extraction_failed", {
+              userId: session.user.id,
+              entryId: entry.id,
+              threadId: thread!.id,
+              entryDateYmd: entry.entryDateYmd,
+              err: e instanceof Error ? e.message : String(e).slice(0, 500),
+            });
+          }
         })().catch(() => {});
 
         controller.close();

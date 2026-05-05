@@ -357,14 +357,16 @@ export function EntryActions({
             {"\u5730\u56f3\u3092\u30bf\u30c3\u30d7\u3059\u308b\u304b\u3001\u30d4\u30f3\u3092\u30c9\u30e9\u30c3\u30b0\u3057\u3066\u5730\u70b9\u3092\u9078\u3073\u307e\u3059\uff08OpenStreetMap\uff09\u3002"}
           </p>
           <div className="mt-3">
-            <WeatherLocationMapPicker
-              latitude={draftLat}
-              longitude={draftLon}
-              onPick={(lat, lng) => {
-                setDraftLat(lat);
-                setDraftLon(lng);
-              }}
-            />
+            {locationMapOpen ? (
+              <WeatherLocationMapPicker
+                latitude={draftLat}
+                longitude={draftLon}
+                onPick={(lat, lng) => {
+                  setDraftLat(lat);
+                  setDraftLon(lng);
+                }}
+              />
+            ) : null}
           </div>
           <div className="mt-4 flex flex-wrap gap-2">
             <button

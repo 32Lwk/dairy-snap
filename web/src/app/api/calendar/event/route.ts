@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/api/require-session";
 import { AppLogScope, scheduleAppLog } from "@/lib/server/app-log";
 import {
+  fetchCalendarEventForUser,
   type CalendarEventInsertInput,
   type CalendarEventPatchInput,
   insertGoogleCalendarEventForUser,
@@ -72,6 +73,44 @@ export async function PATCH(req: Request) {
       { error: result.detail ?? "更新に失敗しました", reason: result.reason },
       { status },
     );
+  }
+
+  return NextResponse.json({ ok: true, event: result.event });
+}
+
+/** 予定詳細（編集フォームのプリフィル用）。まずキャッシュ、無ければ Google から取得してキャッシュ更新。 */
+export async function GET(req: Request) {
+  const session = await requireSession();
+  if ("response" in session) return session.response;
+
+  const url = new URL(req.url);
+  const calendarId = (url.searchParams.get("calendarId") ?? "").trim();
+  const eventId = (url.searchParams.get("eventId") ?? "").trim();
+  const refresh = url.searchParams.get("refresh") === "1";
+
+  const result = await fetchCalendarEventForUser({
+    userId: session.user.id,
+    calendarId,
+    eventId,
+    forceRefresh: refresh,
+  });
+  if (!result.ok) {
+    scheduleAppLog(AppLogScope.calendar, "warn", "calendar_event_get_failed", {
+      userId: session.user.id,
+      reason: result.reason,
+      calendarId: calendarId.slice(0, 80),
+    });
+    const status =
+      result.reason === "not_found"
+        ? 404
+        : result.reason === "no_google_account"
+          ? 401
+          : result.reason === "no_refresh_token" || result.reason === "invalid_grant"
+            ? 401
+            : result.reason === "oauth_not_configured"
+              ? 503
+              : 502;
+    return NextResponse.json({ error: result.detail ?? "取得に失敗しました", reason: result.reason }, { status });
   }
 
   return NextResponse.json({ ok: true, event: result.event });

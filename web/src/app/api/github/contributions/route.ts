@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
 
   const linked = await prisma.gitHubConnection.findUnique({
     where: { userId: session.userId },
-    select: { userId: true },
+    select: { userId: true, lastSyncAt: true },
   });
   if (!linked) {
     return NextResponse.json({ error: "未連携です" }, { status: 404 });
@@ -31,7 +31,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "from / to は YYYY-MM-DD で指定してください" }, { status: 400 });
   }
 
-  scheduleGithubSync(session.userId, "calendar");
+  // カレンダー表示のたびに同期をキューすると無駄が多いので、直近に同期していればスキップする
+  const now = Date.now();
+  const last = linked.lastSyncAt?.getTime() ?? 0;
+  const shouldQueueSync = now - last > 10 * 60 * 1000; // 10分
+  if (shouldQueueSync) scheduleGithubSync(session.userId, "calendar");
 
   const rows = await prisma.gitHubContributionDay.findMany({
     where: {

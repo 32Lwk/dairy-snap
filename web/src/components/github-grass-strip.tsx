@@ -27,7 +27,8 @@ export function GithubGrassStrip({
           : level === 3
             ? "GitHub よく活動"
             : "GitHub とても活動";
-  const glyph = level === 0 ? "·" : level === 1 ? "🌱" : level === 2 ? "🌿" : level === 3 ? "🌳" : "🌲";
+  // 活動なしは「土」っぽい見た目にして寂しさを減らす
+  const glyph = level === 0 ? "🟫" : level === 1 ? "🌱" : level === 2 ? "🌿" : level === 3 ? "🌳" : "🌲";
   return (
     <div
       className={`mt-0.5 flex min-h-[1rem] items-end justify-end transition-transform duration-200 ease-out hover:scale-[1.04] ${className}`}

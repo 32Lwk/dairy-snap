@@ -53,9 +53,58 @@ type OverviewPayload = {
   pendingChatMemoryBackfillCount?: number;
 };
 
+function ChevronDown({
+  className,
+}: {
+  className?: string;
+}) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      aria-hidden="true"
+      className={className ?? ""}
+      fill="currentColor"
+    >
+      <path
+        fillRule="evenodd"
+        d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 10.94l3.71-3.71a.75.75 0 1 1 1.06 1.06l-4.24 4.24a.75.75 0 0 1-1.06 0L5.21 8.29a.75.75 0 0 1 .02-1.08Z"
+        clipRule="evenodd"
+      />
+    </svg>
+  );
+}
+
 function bulletsToText(b: unknown): string {
   if (Array.isArray(b)) return (b as string[]).join("\n");
   return "";
+}
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function useAutosizeTextarea(
+  ref: React.RefObject<HTMLTextAreaElement | null>,
+  value: string,
+  { maxRows }: { maxRows: number },
+) {
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+
+    const cs = window.getComputedStyle(el);
+    const lineHeight = Number.parseFloat(cs.lineHeight || "0") || 16;
+    const padTop = Number.parseFloat(cs.paddingTop || "0") || 0;
+    const padBottom = Number.parseFloat(cs.paddingBottom || "0") || 0;
+    const borderTop = Number.parseFloat(cs.borderTopWidth || "0") || 0;
+    const borderBottom = Number.parseFloat(cs.borderBottomWidth || "0") || 0;
+    const maxHeight = Math.ceil(lineHeight * maxRows + padTop + padBottom + borderTop + borderBottom);
+
+    el.style.height = "0px";
+    const next = clamp(el.scrollHeight, 0, maxHeight);
+    el.style.height = `${next}px`;
+    el.style.overflowY = el.scrollHeight > maxHeight ? "auto" : "hidden";
+  }, [ref, value, maxRows]);
 }
 
 function textToBullets(s: string): string[] {
@@ -95,6 +144,14 @@ export function SettingsMemoryPanel() {
   const [reconcileFailNote, setReconcileFailNote] = useState<string | null>(null);
   const [reconcileForce, setReconcileForce] = useState(false);
 
+  const closePanel = useCallback(() => {
+    setOpen(false);
+    setErr(null);
+    setSearch("");
+    setReconcileMsg(null);
+    setReconcileFailNote(null);
+  }, []);
+
   const loadOverview = useCallback(async () => {
     setLoading(true);
     setErr(null);
@@ -126,6 +183,17 @@ export function SettingsMemoryPanel() {
     };
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      closePanel();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open, closePanel]);
+
   const q = search.trim();
 
   const filteredShort = useMemo(() => {
@@ -141,6 +209,23 @@ export function SettingsMemoryPanel() {
       })
       .filter((g) => g.items.length > 0);
   }, [overview, q]);
+
+  const filteredShortByMonth = useMemo(() => {
+    const map = new Map<string, ShortGroup[]>();
+    for (const g of filteredShort) {
+      const month = /^\d{4}-\d{2}-\d{2}$/.test(g.entryDateYmd) ? g.entryDateYmd.slice(0, 7) : "不明";
+      const arr = map.get(month);
+      if (arr) arr.push(g);
+      else map.set(month, [g]);
+    }
+    const months = Array.from(map.entries())
+      .sort((a, b) => (a[0] === "不明" ? 1 : b[0] === "不明" ? -1 : b[0].localeCompare(a[0])))
+      .map(([month, groups]) => ({
+        month,
+        groups: groups.slice().sort((a, b) => b.entryDateYmd.localeCompare(a.entryDateYmd)),
+      }));
+    return months;
+  }, [filteredShort]);
 
   const filteredLong = useMemo(() => {
     if (!overview) return [];
@@ -328,7 +413,7 @@ export function SettingsMemoryPanel() {
         <h2 className="font-medium text-zinc-900 dark:text-zinc-50">
           {"\u8a18\u61b6\u306e\u78ba\u8a8d\uff08MAS\uff09"}
         </h2>
-        <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+        <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
           {
             "\u65e5\u8a18\u3054\u3068\u306e\u77ed\u671f\u30fb\u9577\u671f\u8a18\u61b6\u3092\u4e00\u89a7\u3067\u78ba\u8a8d\u30fb\u7de8\u96c6\u3067\u304d\u307e\u3059\u3002E2EE \u306e\u65e5\u306f\u672c\u6587\u304c\u30b5\u30fc\u30d0\u4e0a\u3067\u5e73\u6587\u3067\u306a\u3044\u305f\u3081\u3001\u8a18\u61b6\u306e\u4e3b\u306a\u5143\u306f\u30c1\u30e3\u30c3\u30c8\u306b\u306a\u308a\u307e\u3059\u3002"
           }
@@ -336,7 +421,7 @@ export function SettingsMemoryPanel() {
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="mt-3 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+          className="mt-3 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
         >
           {"\u8a18\u61b6\u3092\u4e00\u89a7\u3067\u958b\u304f"}
         </button>
@@ -348,8 +433,15 @@ export function SettingsMemoryPanel() {
           role="dialog"
           aria-modal="true"
           aria-labelledby="settings-memory-title"
+          onMouseDown={(e) => {
+            if (e.target !== e.currentTarget) return;
+            closePanel();
+          }}
         >
-          <div className="flex max-h-[min(92dvh,900px)] w-full max-w-lg flex-col rounded-t-2xl bg-white shadow-xl dark:bg-zinc-950 sm:rounded-2xl">
+          <div
+            className="flex max-h-[min(92dvh,900px)] w-full max-w-lg flex-col rounded-t-2xl bg-white shadow-xl dark:bg-zinc-950 sm:rounded-2xl"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
             <header className="flex shrink-0 items-center justify-between gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
               <h2 id="settings-memory-title" className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
                 {"\u8a18\u61b6\u306e\u4e00\u89a7"}
@@ -357,11 +449,7 @@ export function SettingsMemoryPanel() {
               <button
                 type="button"
                 onClick={() => {
-                  setOpen(false);
-                  setErr(null);
-                  setSearch("");
-                  setReconcileMsg(null);
-                  setReconcileFailNote(null);
+                  closePanel();
                 }}
                 className="rounded-lg px-2 py-1 text-sm text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
               >
@@ -369,8 +457,8 @@ export function SettingsMemoryPanel() {
               </button>
             </header>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-              <div className="sticky top-0 z-10 -mx-1 mb-3 space-y-2 bg-white pb-2 pt-0.5 dark:bg-zinc-950">
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-3 pt-0">
+              <div className="sticky top-0 z-10 -mx-4 mb-3 space-y-2 border-b border-zinc-100 bg-white px-4 pb-2 pt-2 dark:border-zinc-800 dark:bg-zinc-950">
                 <label className="block text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
                   {"\u691c\u7d22\uff08\u65e5\u4ed8\u30fb\u5185\u5bb9\uff09"}
                   <input
@@ -379,7 +467,7 @@ export function SettingsMemoryPanel() {
                     onChange={(e) => setSearch(e.target.value)}
                     autoComplete="off"
                     placeholder="例: 2026-04-17"
-                    className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                    className="settings-memory-compact-text mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
                   />
                 </label>
                 {overview && !loading ? (
@@ -394,43 +482,62 @@ export function SettingsMemoryPanel() {
                   </p>
                 ) : null}
                 {overview && !loading && (overview.entries.length > 0 || (overview.pendingChatMemoryBackfillCount ?? 0) > 0) ? (
-                  <div className="space-y-1.5">
-                    <p className="text-[10px] leading-snug text-zinc-600 dark:text-zinc-400">
-                      日記の本文や AI 草案は<span className="font-medium">不要</span>です。各日の
-                      <span className="font-medium">振り返りチャット</span>が user/assistant 合わせて2通以上あり、かつ
-                      自動の記憶抽出がまだ追いついていない日だけが一括補完の対象です
-                      {typeof overview.pendingChatMemoryBackfillCount === "number"
-                        ? `（現在およそ ${overview.pendingChatMemoryBackfillCount} 日が未同期です）`
-                        : ""}
-                      。
-                    </p>
-                    <label className="flex cursor-pointer items-start gap-2 text-[10px] leading-snug text-zinc-600 dark:text-zinc-400">
-                      <input
-                        type="checkbox"
-                        checked={reconcileForce}
-                        onChange={(e) => setReconcileForce(e.target.checked)}
-                        className="mt-0.5 rounded border-zinc-300"
-                      />
-                      <span>
-                        強制再補完（同一メッセージ件数でも再実行。既に補完済みの会話を上書き確認したいとき）
+                  <details className="group/backfill rounded-lg border border-zinc-200/80 bg-white/70 px-2 py-2 dark:border-zinc-700/70 dark:bg-zinc-950/40">
+                    <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-[11px] font-medium text-zinc-700 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-50 [&::-webkit-details-marker]:hidden">
+                      <span className="min-w-0 truncate">チャット記憶の一括補完（強制取得）</span>
+                      <span className="flex shrink-0 items-center gap-2">
+                        {typeof overview.pendingChatMemoryBackfillCount === "number" ? (
+                          <span className="shrink-0 rounded-full bg-zinc-200/80 px-2 py-0.5 text-[10px] font-normal text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200">
+                            {overview.pendingChatMemoryBackfillCount} 日
+                          </span>
+                        ) : null}
+                        <ChevronDown className="h-4 w-4 shrink-0 text-zinc-500 transition-transform group-open/backfill:rotate-180 dark:text-zinc-400" />
                       </span>
-                    </label>
-                    <button
-                      type="button"
-                      disabled={reconcileBusy}
-                      onClick={() => void reconcileChatBatch()}
-                      className="w-full rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-left text-xs font-medium text-emerald-950 hover:bg-emerald-100/90 disabled:opacity-50 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-100 dark:hover:bg-emerald-900/50"
-                    >
-                      {reconcileBusy
-                        ? "チャットから記憶を取り込み中…"
-                        : "未同期のチャットだけ記憶に一括補完（新しい順）"}
-                    </button>
-                    <p className="text-[10px] leading-snug text-zinc-500 dark:text-zinc-400">
-                      直近のメッセージを優先して読みます。前回補完時と同じメッセージ件数で済んでいるスレッドはスキップされます（新規発言後に再実行、または強制再補完）。
-                      環境変数 MEMORY_BACKFILL_MAX_ENTRIES_PER_REQUEST
-                      を数値にすると1リクエストあたりの補完回数に上限を付けられます（未設定なら未同期分をまとめて処理）。
-                    </p>
-                  </div>
+                    </summary>
+
+                    <div className="mt-2 space-y-1.5">
+                      <p className="text-[10px] leading-snug text-zinc-600 dark:text-zinc-400">
+                        日記の本文や AI 草案は<span className="font-medium">不要</span>です。各日の
+                        <span className="font-medium">振り返りチャット</span>が user/assistant 合わせて2通以上あり、かつ
+                        自動の記憶抽出がまだ追いついていない日だけが一括補完の対象です
+                        {typeof overview.pendingChatMemoryBackfillCount === "number"
+                          ? `（現在およそ ${overview.pendingChatMemoryBackfillCount} 日が未同期です）`
+                          : ""}
+                        。
+                      </p>
+                      <label className="flex cursor-pointer items-start gap-2 text-[10px] leading-snug text-zinc-600 dark:text-zinc-400">
+                        <input
+                          type="checkbox"
+                          checked={reconcileForce}
+                          onChange={(e) => setReconcileForce(e.target.checked)}
+                          className="mt-0.5 rounded border-zinc-300"
+                        />
+                        <span>
+                          強制再補完（同一メッセージ件数でも再実行。既に補完済みの会話を上書き確認したいとき）
+                        </span>
+                      </label>
+                      <button
+                        type="button"
+                        disabled={reconcileBusy}
+                        onClick={() => void reconcileChatBatch()}
+                        className="w-full rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-left text-xs font-medium text-emerald-950 hover:bg-emerald-100/90 disabled:opacity-50 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-100 dark:hover:bg-emerald-900/50"
+                      >
+                        {reconcileBusy
+                          ? "チャットから記憶を取り込み中…"
+                          : "未同期のチャットだけ記憶に一括補完（新しい順）"}
+                      </button>
+                      <details className="rounded-md border border-zinc-200/80 bg-white/70 px-2 py-1.5 dark:border-zinc-700/70 dark:bg-zinc-950/40">
+                        <summary className="cursor-pointer list-none text-[10px] font-medium text-zinc-600 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 [&::-webkit-details-marker]:hidden">
+                          補完の注意（クリックで詳細）
+                        </summary>
+                        <p className="mt-1 text-[10px] leading-snug text-zinc-500 dark:text-zinc-400">
+                          直近のメッセージを優先して読みます。前回補完時と同じメッセージ件数で済んでいるスレッドはスキップされます（新規発言後に再実行、または強制再補完）。
+                          環境変数 MEMORY_BACKFILL_MAX_ENTRIES_PER_REQUEST
+                          を数値にすると1リクエストあたりの補完回数に上限を付けられます（未設定なら未同期分をまとめて処理）。
+                        </p>
+                      </details>
+                    </div>
+                  </details>
                 ) : null}
                 {reconcileMsg ? (
                   <p className="text-[11px] text-emerald-700 dark:text-emerald-300">{reconcileMsg}</p>
@@ -470,58 +577,80 @@ export function SettingsMemoryPanel() {
                             : "\u77ed\u671f\u8a18\u61b6\u306f\u307e\u3060\u3042\u308a\u307e\u305b\u3093\u3002"}
                         </p>
                       ) : (
-                        filteredShort.map((g) => (
-                          <details key={g.entryId} className="group/date border-t border-zinc-100 first:border-t-0 dark:border-zinc-800">
+                        filteredShortByMonth.map((m) => (
+                          <details key={m.month} className="group/month border-t border-zinc-100 first:border-t-0 dark:border-zinc-800">
                             <summary className={sumInner}>
-                              <span className="flex flex-wrap items-center gap-2">
-                                <span className="font-mono text-[13px] text-zinc-900 dark:text-zinc-100">{g.entryDateYmd}</span>
-                                {g.encryptionMode === "EXPERIMENTAL_E2EE" ? (
-                                  <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-900 dark:bg-amber-950/60 dark:text-amber-200">
-                                    E2EE
-                                  </span>
-                                ) : null}
-                                <span className="text-[11px] font-normal text-zinc-500">
-                                  {g.items.length === 0
-                                    ? "\uff080\u4ef6\uff09"
-                                    : `\uff08${g.items.length}\u4ef6\uff09`}
+                              <span className="flex min-w-0 items-center gap-2">
+                                <span className="truncate font-mono text-[13px] text-zinc-900 dark:text-zinc-100">
+                                  {m.month === "不明" ? "日付不明" : m.month}
+                                </span>
+                                <span className="shrink-0 text-[11px] font-normal text-zinc-500">
+                                  {`（${m.groups.length}日付 / ${m.groups.reduce((n, g) => n + g.items.length, 0)}件）`}
                                 </span>
                               </span>
+                              <ChevronDown className="h-4 w-4 shrink-0 text-zinc-500 transition-transform group-open/month:rotate-180 dark:text-zinc-400" />
                             </summary>
-                            <div className="border-t border-zinc-50 bg-zinc-50/40 px-2 py-2 dark:border-zinc-800/80 dark:bg-zinc-900/20">
-                              <div className="mb-2 px-1">
-                                <button
-                                  type="button"
-                                  disabled={reconcileBusy}
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    void reconcileChatForEntry(g.entryId);
-                                  }}
-                                  className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-[10px] font-medium text-zinc-800 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                            <div className="border-t border-zinc-50 bg-zinc-50/40 dark:border-zinc-800/80 dark:bg-zinc-900/20">
+                              {m.groups.map((g) => (
+                                <details
+                                  key={g.entryId}
+                                  className="group/date border-t border-zinc-100 first:border-t-0 dark:border-zinc-800"
                                 >
-                                  この日のチャットを記憶に反映
-                                </button>
-                              </div>
-                              {g.items.length === 0 ? (
-                                <p className="px-2 py-2 text-[11px] text-zinc-500">{"\u3053\u306e\u65e5\u306b\u306f\u77ed\u671f\u8a18\u61b6\u3042\u308a\u307e\u305b\u3093\u3002"}</p>
-                              ) : (
-                                <ul className="space-y-2">
-                                  {g.items.map((s) => (
-                                    <li
-                                      key={s.id}
-                                      className="rounded-lg border border-zinc-200 bg-white p-2 shadow-sm dark:border-zinc-700 dark:bg-zinc-950"
-                                    >
-                                      <ShortEditor
-                                        entryDateYmd={g.entryDateYmd}
-                                        initialText={bulletsToText(s.bullets)}
-                                        salience={s.salience}
-                                        onSave={(txt, sal) => void patchShort(s.id, txt, sal)}
-                                        onDelete={() => void delShort(s.id)}
-                                      />
-                                    </li>
-                                  ))}
-                                </ul>
-                              )}
+                                  <summary className={sumInner}>
+                                    <span className="flex flex-wrap items-center gap-2">
+                                      <span className="font-mono text-[13px] text-zinc-900 dark:text-zinc-100">
+                                        {g.entryDateYmd}
+                                      </span>
+                                      {g.encryptionMode === "EXPERIMENTAL_E2EE" ? (
+                                        <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-900 dark:bg-amber-950/60 dark:text-amber-200">
+                                          E2EE
+                                        </span>
+                                      ) : null}
+                                      <span className="text-[11px] font-normal text-zinc-500">
+                                        {g.items.length === 0 ? "（0件）" : `（${g.items.length}件）`}
+                                      </span>
+                                    </span>
+                                  </summary>
+                                  <div className="border-t border-zinc-50 px-2 py-2 dark:border-zinc-800/80">
+                                    <div className="mb-2 px-1">
+                                      <button
+                                        type="button"
+                                        disabled={reconcileBusy}
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          void reconcileChatForEntry(g.entryId);
+                                        }}
+                                        className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-[10px] font-medium text-zinc-800 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                                      >
+                                        この日のチャットを記憶に反映
+                                      </button>
+                                    </div>
+                                    {g.items.length === 0 ? (
+                                      <p className="px-2 py-2 text-[11px] text-zinc-500">
+                                        {"\u3053\u306e\u65e5\u306b\u306f\u77ed\u671f\u8a18\u61b6\u3042\u308a\u307e\u305b\u3093\u3002"}
+                                      </p>
+                                    ) : (
+                                      <ul className="space-y-2">
+                                        {g.items.map((s) => (
+                                          <li
+                                            key={s.id}
+                                            className="rounded-lg border border-zinc-200 bg-white p-2 shadow-sm dark:border-zinc-700 dark:bg-zinc-950"
+                                          >
+                                            <ShortEditor
+                                              entryDateYmd={g.entryDateYmd}
+                                              initialText={bulletsToText(s.bullets)}
+                                              salience={s.salience}
+                                              onSave={(txt, sal) => void patchShort(s.id, txt, sal)}
+                                              onDelete={() => void delShort(s.id)}
+                                            />
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    )}
+                                  </div>
+                                </details>
+                              ))}
                             </div>
                           </details>
                         ))
@@ -554,12 +683,13 @@ export function SettingsMemoryPanel() {
                           return (
                             <details key={g.key} className="group/date border-t border-zinc-100 first:border-t-0 dark:border-zinc-800">
                               <summary className={sumInner}>
-                                <span className="flex flex-wrap items-center gap-2">
+                                <span className="flex min-w-0 flex-wrap items-center gap-2">
                                   <span className="font-mono text-[13px] text-zinc-900 dark:text-zinc-100">{title}</span>
                                   <span className="text-[11px] font-normal text-zinc-500">
                                     {`\uff08${g.items.length}\u4ef6\uff09`}
                                   </span>
                                 </span>
+                                <ChevronDown className="h-4 w-4 shrink-0 text-zinc-500 transition-transform group-open/date:rotate-180 dark:text-zinc-400" />
                               </summary>
                               <div className="border-t border-emerald-50/80 bg-emerald-50/20 px-2 py-2 dark:border-emerald-950/30 dark:bg-emerald-950/10">
                                 <ul className="space-y-2">
@@ -649,6 +779,7 @@ function ShortEditor({
   const [text, setText] = useSyncedState(initialText);
   const [sal, setSal] = useSyncedState(salience);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  useAutosizeTextarea(taRef, text, { maxRows: 3 });
 
   const insertDateTag = useCallback(() => {
     const tag = `[${entryDateYmd}] `;
@@ -694,37 +825,40 @@ function ShortEditor({
         ref={taRef}
         value={text}
         onChange={(e) => setText(e.target.value)}
-        rows={4}
+        rows={1}
         placeholder={`例:\n打合せが長引いた\n来週頃(${exampleFutureYmd}) 10:00 面接`}
-        className="w-full rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+        className="settings-memory-compact-text w-full resize-none rounded-md border border-zinc-200 bg-white px-2 py-1 dark:border-zinc-700 dark:bg-zinc-950"
       />
-      <label className="flex items-center gap-2 text-[11px] text-zinc-600 dark:text-zinc-400">
-        salience
-        <input
-          type="range"
-          min={0}
-          max={1}
-          step={0.05}
-          value={sal}
-          onChange={(e) => setSal(Number(e.target.value))}
-        />
-        {sal.toFixed(2)}
-      </label>
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={() => onSave(text, sal)}
-          className="rounded-md bg-emerald-600 px-2 py-1 text-xs text-white hover:bg-emerald-700"
-        >
-          保存
-        </button>
-        <button
-          type="button"
-          onClick={onDelete}
-          className="rounded-md border border-red-300 px-2 py-1 text-xs text-red-700 dark:border-red-800 dark:text-red-400"
-        >
-          削除
-        </button>
+      <div className="flex items-center justify-between gap-2">
+        <label className="flex min-w-0 flex-1 items-center gap-2 text-[11px] text-zinc-600 dark:text-zinc-400">
+          <span className="shrink-0">salience</span>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={sal}
+            onChange={(e) => setSal(Number(e.target.value))}
+            className="min-w-0 flex-1"
+          />
+          <span className="shrink-0">{sal.toFixed(2)}</span>
+        </label>
+        <div className="flex shrink-0 flex-nowrap gap-2">
+          <button
+            type="button"
+            onClick={() => onSave(text, sal)}
+            className="whitespace-nowrap rounded-md bg-emerald-600 px-2 py-1 text-xs text-white hover:bg-emerald-700"
+          >
+            保存
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            className="whitespace-nowrap rounded-md border border-red-300 px-2 py-1 text-xs text-red-700 dark:border-red-800 dark:text-red-400"
+          >
+            削除
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -746,6 +880,7 @@ function LongEditor({
   const [text, setText] = useSyncedState(initialText);
   const [imp, setImp] = useSyncedState(impact);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  useAutosizeTextarea(taRef, text, { maxRows: 3 });
 
   const insertDateTag = useCallback(() => {
     if (!anchorDateYmd) return;
@@ -805,9 +940,9 @@ function LongEditor({
         ref={taRef}
         value={text}
         onChange={(e) => setText(e.target.value)}
-        rows={4}
+        rows={1}
         placeholder={anchorDateYmd && longPlaceholderExample ? `例:\n${longPlaceholderExample}` : longPlaceholderCommon}
-        className="w-full rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+        className="settings-memory-compact-text w-full resize-none rounded-md border border-zinc-200 bg-white px-2 py-1 dark:border-zinc-700 dark:bg-zinc-950"
       />
       <label className="flex items-center gap-2 text-[11px] text-zinc-600 dark:text-zinc-400">
         impact (0–100)
@@ -820,18 +955,18 @@ function LongEditor({
           className="w-20 rounded border border-zinc-200 px-1 dark:border-zinc-700 dark:bg-zinc-950"
         />
       </label>
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-nowrap gap-2">
         <button
           type="button"
           onClick={() => onSave(text, imp)}
-          className="rounded-md bg-emerald-600 px-2 py-1 text-xs text-white hover:bg-emerald-700"
+          className="whitespace-nowrap rounded-md bg-emerald-600 px-2 py-1 text-xs text-white hover:bg-emerald-700"
         >
           保存
         </button>
         <button
           type="button"
           onClick={onDelete}
-          className="rounded-md border border-red-300 px-2 py-1 text-xs text-red-700 dark:border-red-800 dark:text-red-400"
+          className="whitespace-nowrap rounded-md border border-red-300 px-2 py-1 text-xs text-red-700 dark:border-red-800 dark:text-red-400"
         >
           削除
         </button>

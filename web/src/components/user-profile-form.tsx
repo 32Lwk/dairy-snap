@@ -131,7 +131,7 @@ function WorkLifeParttimeIndustry({
         {PARTTIME_INDUSTRY_OPTIONS.map((o: WorkLifeOption) => (
           <label
             key={o.value}
-            className="flex cursor-pointer items-start gap-2 rounded-lg py-1 text-sm text-zinc-800 dark:text-zinc-100"
+            className="flex cursor-pointer items-start gap-2 rounded-lg py-1 text-xs text-zinc-800 dark:text-zinc-100 sm:text-sm"
           >
             <input
               type="checkbox"
@@ -460,7 +460,7 @@ export function UserProfileForm({
   }
 
   const inputCls =
-    "mt-0.5 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950";
+    "mt-0.5 w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-[11px] leading-snug dark:border-zinc-700 dark:bg-zinc-950 sm:text-xs md:text-sm";
 
   const homePrefBlock = (
     <div className="mt-3">
@@ -481,15 +481,15 @@ export function UserProfileForm({
       {showTitle && (
         <div>
           <div className="flex flex-wrap items-start justify-between gap-2">
-            <h2 className="font-medium text-zinc-900 dark:text-zinc-50">プロフィール（任意）</h2>
+            <h2 className="text-sm font-medium text-zinc-900 dark:text-zinc-50 sm:text-base">プロフィール（任意）</h2>
             {headerActions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{headerActions}</div> : null}
           </div>
-          <p className="mt-1 text-xs text-zinc-500">
+          <p className="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400 sm:text-xs">
             振り返りチャットの文脈に使います。生年月日を入れると星座を自動入力します。
           </p>
         </div>
       )}
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-xs text-red-600 sm:text-sm">{error}</p>}
 
       <label className="block text-xs text-zinc-600 dark:text-zinc-400">
         ニックネーム
@@ -611,11 +611,11 @@ export function UserProfileForm({
             const summary =
               form.occupationRole === "student" ? stu || occ : occ || stu;
             return summary ? (
-              <p className="mt-1 whitespace-pre-wrap text-sm text-zinc-600 dark:text-zinc-300">
+              <p className="mt-1 whitespace-pre-wrap text-xs text-zinc-600 dark:text-zinc-300 sm:text-sm">
                 {summary}
               </p>
             ) : (
-              <p className="mt-1 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+              <p className="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400 sm:text-xs">
                 「職業・立場」に応じた質問に答えると、ここに要約が入ります（学生は学校・通学などがここにまとまります）。
               </p>
             );
@@ -670,7 +670,7 @@ export function UserProfileForm({
                   }}
                 />
               </div>
-              <label className="mt-3 block text-xs text-zinc-600 dark:text-zinc-400">
+              <label className="mt-3 block text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-400 sm:text-xs">
                 学年・年次に近いものはどれですか？（大学・大学院生のみ。該当しない場合は選ばない）
                 <FancySelect
                   value={workLife.st_univ_year ?? ""}
@@ -684,7 +684,7 @@ export function UserProfileForm({
                   ))}
                 </FancySelect>
               </label>
-              <label className="block text-xs text-zinc-600 dark:text-zinc-400">
+              <label className="block text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-400 sm:text-xs">
                 学部・学科・学問領域に近いものはどれですか？（大学・大学院生のみ。該当しない場合は選ばない）
                 <FancySelect
                   value={workLife.st_univ_field ?? ""}
@@ -759,7 +759,7 @@ export function UserProfileForm({
               <button
                 type="button"
                 onClick={() => setStudentTimetableSheetOpen(true)}
-                className="mt-2 w-full rounded-xl border border-emerald-600 bg-emerald-50 py-2.5 text-sm font-medium text-emerald-900 hover:bg-emerald-100 dark:border-emerald-500 dark:bg-emerald-950/40 dark:text-emerald-100 dark:hover:bg-emerald-900/50"
+                className="mt-2 w-full rounded-xl border border-emerald-600 bg-emerald-50 py-2 text-xs font-medium text-emerald-900 hover:bg-emerald-100 dark:border-emerald-500 dark:bg-emerald-950/40 dark:text-emerald-100 dark:hover:bg-emerald-900/50 sm:py-2.5 sm:text-sm"
               >
                 時間割を入力・編集
               </button>
@@ -860,7 +860,7 @@ export function UserProfileForm({
                 </FancySelect>
               </label>
               <div className="mt-3">
-                <p className="mb-1 text-xs text-zinc-600 dark:text-zinc-400">
+                <p className="mb-1 text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-400 sm:text-xs">
                   バイト・パートの内容に近いものを、チップから選んでください。（複数可。「その他」を選んだときは下の欄に書けます）
                 </p>
                 <WorkLifeParttimeIndustry
@@ -1120,7 +1120,7 @@ export function UserProfileForm({
                     </FancySelect>
                   </label>
                   <div className="mt-3">
-                    <p className="mb-1 text-xs text-zinc-600 dark:text-zinc-400">
+                    <p className="mb-1 text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-400 sm:text-xs">
                       バイト・パートの内容に近いものを、チップから選んでください。（複数可。「その他」を選んだときは下の欄に書けます）
                     </p>
                     <WorkLifeParttimeIndustry
@@ -1242,7 +1242,7 @@ export function UserProfileForm({
           type="button"
           disabled={saving}
           onClick={() => void save()}
-          className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
+          className="rounded-lg bg-zinc-900 px-3.5 py-2 text-xs font-medium text-white dark:bg-zinc-100 dark:text-zinc-900 sm:px-4 sm:text-sm"
         >
           {saving ? "保存中…" : "今すぐ保存"}
         </button>

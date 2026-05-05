@@ -12,6 +12,7 @@ import {
 } from "@/lib/settings-proposal-tool";
 import { APP_HEADER_TITLE_INLINE, APP_HEADER_TOOLBAR_INNER } from "@/lib/app-header-toolbar";
 import { DayBoundaryMismatchNotice } from "@/components/day-boundary-mismatch-notice";
+import { TopBannerHeightProvider } from "@/components/top-banner-height-provider";
 import { TodayJournalDraftProvider, TodayMobileJournalDraftHeaderButton } from "./today-journal-draft-bridge";
 import { TodayMainGrid } from "./today-main-grid";
 
@@ -84,50 +85,58 @@ export default async function TodayPage() {
             "lg:pt-0",
           ].join(" ")}
         >
-          {dayCtx.calendarYmd !== ymd ? (
-            <div className="mx-auto w-full max-w-5xl shrink-0 px-4 pt-2 sm:px-6 lg:max-w-6xl lg:px-10">
-              <DayBoundaryMismatchNotice variant="today" effectiveYmd={ymd} calendarYmd={dayCtx.calendarYmd} />
-            </div>
-          ) : null}
-
-          <div
-            className={[
-              "mx-auto flex min-h-0 w-full min-w-0 flex-1 flex-col px-4 pb-4 sm:px-6 md:max-w-5xl md:pb-5 lg:max-w-6xl lg:px-10 lg:pb-6",
-              "max-lg:overflow-y-auto max-lg:overscroll-y-contain",
-              "lg:overflow-hidden",
-            ].join(" ")}
+          <TopBannerHeightProvider
+            banner={
+              dayCtx.calendarYmd !== ymd ? (
+                <div className="mx-auto w-full max-w-5xl shrink-0 px-4 pt-2 sm:px-6 lg:max-w-6xl lg:px-10">
+                  <DayBoundaryMismatchNotice
+                    variant="today"
+                    effectiveYmd={ymd}
+                    calendarYmd={dayCtx.calendarYmd}
+                  />
+                </div>
+              ) : null
+            }
           >
-            <TodayMainGrid
-              entryId={entry.id}
-              entryDateYmd={ymd}
-              diaryBody={entry.body ?? ""}
-              photosDailyQuota={{ remaining, dailyLimit, resetAt: resetAtIso }}
-              chatSecurityNoticeJa={chatSecurityNoticeJa}
-              pendingSettingsSummaryJa={pendingSettingsSummaryJa}
-              images={(entry.images ?? []).map((i) => ({
-                id: i.id,
-                mimeType: i.mimeType,
-                byteSize: i.byteSize,
-                rotationQuarterTurns: i.rotationQuarterTurns,
-                caption: i.caption,
-              }))}
-              initialThreadId={chatThread?.id ?? null}
-              initialMessages={
-                chatThread?.messages.map((m) => ({
-                  id: m.id,
-                  role: m.role,
-                  content: m.content,
-                  model: m.model,
-                  sentAt: m.updatedAt.toISOString(),
-                })) ?? []
-              }
-              latitude={entry.latitude}
-              longitude={entry.longitude}
-              weatherJson={entry.weatherJson}
-              initialPlutchikAnalysis={entry.plutchikAnalysis}
-              transcriptCharCount={transcriptMeta.charCount}
-            />
-          </div>
+            <div
+              className={[
+                "mx-auto flex min-h-0 w-full min-w-0 flex-1 flex-col px-4 pb-4 sm:px-6 md:max-w-5xl md:pb-5 lg:max-w-6xl lg:px-10 lg:pb-6",
+                "max-lg:overflow-y-auto max-lg:overscroll-y-contain",
+                "lg:overflow-hidden",
+              ].join(" ")}
+            >
+              <TodayMainGrid
+                entryId={entry.id}
+                entryDateYmd={ymd}
+                diaryBody={entry.body ?? ""}
+                photosDailyQuota={{ remaining, dailyLimit, resetAt: resetAtIso }}
+                chatSecurityNoticeJa={chatSecurityNoticeJa}
+                pendingSettingsSummaryJa={pendingSettingsSummaryJa}
+                images={(entry.images ?? []).map((i) => ({
+                  id: i.id,
+                  mimeType: i.mimeType,
+                  byteSize: i.byteSize,
+                  rotationQuarterTurns: i.rotationQuarterTurns,
+                  caption: i.caption,
+                }))}
+                initialThreadId={chatThread?.id ?? null}
+                initialMessages={
+                  chatThread?.messages.map((m) => ({
+                    id: m.id,
+                    role: m.role,
+                    content: m.content,
+                    model: m.model,
+                    sentAt: m.updatedAt.toISOString(),
+                  })) ?? []
+                }
+                latitude={entry.latitude}
+                longitude={entry.longitude}
+                weatherJson={entry.weatherJson}
+                initialPlutchikAnalysis={entry.plutchikAnalysis}
+                transcriptCharCount={transcriptMeta.charCount}
+              />
+            </div>
+          </TopBannerHeightProvider>
         </div>
       </div>
     </TodayJournalDraftProvider>

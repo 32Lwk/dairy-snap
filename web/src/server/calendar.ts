@@ -14,6 +14,7 @@ import { google, calendar_v3 } from "googleapis";
 import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/server/db";
 import {
+  fetchAppLocalEventBrief,
   insertAppLocalCalendarEvent,
   mergeAppLocalEventsIntoGoogleList,
   patchAppLocalCalendarEvent,
@@ -33,10 +34,14 @@ export type CalendarEventBrief = {
   end: string;
   location: string;
   description: string;
+  /**
+   * 分類・検索用の平坦化テキスト（会議URL/添付/参加者/拡張プロパティ等を含みうる）。
+   * 通常の UI には出さないため、必要な場面だけ opt-in で返す。
+   */
+  eventSearchBlob?: string;
   fixedCategory?: string;
   cacheId?: string;
   eventPayload?: unknown;
-  eventSearchBlob?: string;
 };
 
 export type CalendarFetchFailureReason =
@@ -70,6 +75,11 @@ const GCAL_EVENT_CACHE_SELECT_BASE = {
   fixedCategory: true,
 } satisfies Prisma.GoogleCalendarEventCacheSelect;
 
+const GCAL_EVENT_CACHE_SELECT_WITH_SEARCH_BLOB = {
+  ...GCAL_EVENT_CACHE_SELECT_BASE,
+  eventSearchBlob: true,
+} satisfies Prisma.GoogleCalendarEventCacheSelect;
+
 const GCAL_EVENT_CACHE_SELECT_WITH_PAYLOAD = {
   ...GCAL_EVENT_CACHE_SELECT_BASE,
   eventPayload: true,
@@ -78,19 +88,25 @@ const GCAL_EVENT_CACHE_SELECT_WITH_PAYLOAD = {
 
 type GcalCachedEventRow =
   | Prisma.GoogleCalendarEventCacheGetPayload<{ select: typeof GCAL_EVENT_CACHE_SELECT_BASE }>
+  | Prisma.GoogleCalendarEventCacheGetPayload<{ select: typeof GCAL_EVENT_CACHE_SELECT_WITH_SEARCH_BLOB }>
   | Prisma.GoogleCalendarEventCacheGetPayload<{ select: typeof GCAL_EVENT_CACHE_SELECT_WITH_PAYLOAD }>;
 
 function briefPayloadExtras(
-  includePayload: boolean | undefined,
+  opts: { includeEventPayload?: boolean; includeEventSearchBlob?: boolean } | undefined,
   r: GcalCachedEventRow,
 ): Partial<Pick<CalendarEventBrief, "eventPayload" | "eventSearchBlob">> {
-  if (!includePayload) return {};
+  if (!opts?.includeEventPayload && !opts?.includeEventSearchBlob) return {};
+
   const row = r as Prisma.GoogleCalendarEventCacheGetPayload<{
     select: typeof GCAL_EVENT_CACHE_SELECT_WITH_PAYLOAD;
-  }>;
+  }> &
+    Prisma.GoogleCalendarEventCacheGetPayload<{
+      select: typeof GCAL_EVENT_CACHE_SELECT_WITH_SEARCH_BLOB;
+    }>;
+
   return {
-    ...(row.eventPayload != null ? { eventPayload: row.eventPayload } : {}),
-    eventSearchBlob: row.eventSearchBlob ?? "",
+    ...(opts.includeEventPayload && row.eventPayload != null ? { eventPayload: row.eventPayload } : {}),
+    ...(opts.includeEventSearchBlob ? { eventSearchBlob: row.eventSearchBlob ?? "" } : {}),
   };
 }
 
@@ -537,6 +553,15 @@ export type CalendarEventPatchFailureReason =
   | "not_found"
   | "unknown";
 
+export type CalendarEventGetFailureReason =
+  | "no_google_account"
+  | "no_refresh_token"
+  | "oauth_not_configured"
+  | "invalid_grant"
+  | "calendar_api_error"
+  | "not_found"
+  | "unknown";
+
 function buildGoogleCalendarEventResourceFromWriteFields(input: CalendarEventWriteFields):
   | { ok: true; requestBody: GoogleCalEvent }
   | { ok: false; detail: string } {
@@ -749,6 +774,102 @@ async function persistGcalEventToCacheAfterFetch(
     cacheId: cached.id,
     ...(cached.fixedCategory ? { fixedCategory: cached.fixedCategory } : {}),
   };
+}
+
+export async function fetchCalendarEventForUser(params: {
+  userId: string;
+  calendarId: string;
+  eventId: string;
+  /**
+   * true: Google に取りに行ってキャッシュ更新（存在しない/消えたときは not_found）。
+   * false: キャッシュ優先（無ければ Google を試す）
+   */
+  forceRefresh?: boolean;
+}): Promise<{ ok: true; event: CalendarEventBrief } | { ok: false; reason: CalendarEventGetFailureReason; detail?: string }> {
+  const { userId, calendarId, eventId } = params;
+  const cid = calendarId.trim();
+  const eid = eventId.trim();
+  if (!cid || !eid) return { ok: false, reason: "not_found", detail: "予定が不正です" };
+
+  if (isAppLocalCalendarId(cid)) {
+    const r = await fetchAppLocalEventBrief(userId, cid, eid);
+    if (!r.ok) return { ok: false, reason: "not_found", detail: r.error };
+    return { ok: true, event: r.event };
+  }
+
+  // cache first (fast)
+  if (!params.forceRefresh) {
+    const cached = await prisma.googleCalendarEventCache.findUnique({
+      where: { userId_calendarId_eventId: { userId, calendarId: cid, eventId: eid } },
+      select: GCAL_EVENT_CACHE_SELECT_BASE,
+    });
+    if (cached) {
+      return {
+        ok: true,
+        event: {
+          eventId: cached.eventId,
+          calendarId: cached.calendarId,
+          calendarName: formatGoogleCalendarDisplayName(cached.calendarId, cached.calendarName),
+          colorId: cached.eventColorId ?? cached.calendarColorId ?? "",
+          title: cached.title,
+          start: cached.startIso,
+          end: cached.endIso,
+          location: cached.location,
+          description: cached.description,
+          cacheId: cached.id,
+          ...(cached.fixedCategory ? { fixedCategory: cached.fixedCategory } : {}),
+        },
+      };
+    }
+  }
+
+  // fetch from Google and persist
+  const account = await prisma.account.findFirst({
+    where: { userId, provider: "google" },
+    select: { refresh_token: true },
+  });
+  if (!account) return { ok: false, reason: "no_google_account" };
+  if (!account.refresh_token) {
+    return {
+      ok: false,
+      reason: "no_refresh_token",
+      detail:
+        "Google がリフレッシュトークンを発行していません。設定の「Google を再連携（カレンダー）」から再ログインしてください。",
+    };
+  }
+  const clientId = process.env.AUTH_GOOGLE_ID;
+  const clientSecret = process.env.AUTH_GOOGLE_SECRET;
+  if (!clientId || !clientSecret) {
+    return { ok: false, reason: "oauth_not_configured" };
+  }
+  const oauth2 = new google.auth.OAuth2(clientId, clientSecret);
+  oauth2.setCredentials({ refresh_token: account.refresh_token });
+  try {
+    await oauth2.getAccessToken();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/invalid_grant|Invalid grant/i.test(msg)) {
+      return { ok: false, reason: "invalid_grant", detail: "トークンが無効です。設定から Google を再連携してください。" };
+    }
+    return { ok: false, reason: "unknown", detail: msg };
+  }
+
+  const cal = google.calendar({ version: "v3", auth: oauth2 });
+  let refreshed: GoogleCalEvent;
+  try {
+    const got = await cal.events.get({ calendarId: cid, eventId: eid });
+    refreshed = got.data;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const code =
+      typeof e === "object" && e !== null && "code" in e ? Number((e as { code?: number }).code) : undefined;
+    if (code === 404) return { ok: false, reason: "not_found", detail: "Google 上に予定が見つかりませんでした。" };
+    return { ok: false, reason: "calendar_api_error", detail: msg };
+  }
+
+  const meta = await resolveCalendarMetaFromCache(userId, cid);
+  const out = await persistGcalEventToCacheAfterFetch(userId, cid, eid, refreshed, meta);
+  return { ok: true, event: out };
 }
 
 /**
@@ -972,6 +1093,8 @@ export async function fetchCalendarEventsForUser(
     deepPastDays?: number;
     /** 応答に eventPayload / eventSearchBlob を含める（サイズ大） */
     includeEventPayload?: boolean;
+    /** 応答に eventSearchBlob を含める（分類精度向上用。payload より軽い） */
+    includeEventSearchBlob?: boolean;
   },
 ): Promise<CalendarFetchResult> {
   const account = await prisma.account.findFirst({
@@ -1047,7 +1170,11 @@ export async function fetchCalendarEventsForUser(
       },
       orderBy: { startAt: scopeOneCalendar ? "desc" : "asc" },
       take: limit,
-      select: opts?.includeEventPayload ? GCAL_EVENT_CACHE_SELECT_WITH_PAYLOAD : GCAL_EVENT_CACHE_SELECT_BASE,
+      select: opts?.includeEventPayload
+        ? GCAL_EVENT_CACHE_SELECT_WITH_PAYLOAD
+        : opts?.includeEventSearchBlob
+          ? GCAL_EVENT_CACHE_SELECT_WITH_SEARCH_BLOB
+          : GCAL_EVENT_CACHE_SELECT_BASE,
     });
 
     const events: CalendarEventBrief[] = rows
@@ -1063,7 +1190,7 @@ export async function fetchCalendarEventsForUser(
         description: r.description,
         cacheId: r.id,
         ...(r.fixedCategory ? { fixedCategory: r.fixedCategory } : {}),
-        ...briefPayloadExtras(opts?.includeEventPayload, r),
+        ...briefPayloadExtras(opts, r),
       }))
       .filter((e) => e.start)
       .sort((a, b) =>
@@ -1115,7 +1242,7 @@ export async function fetchCalendarEventsForUser(
 export async function fetchCalendarEventsForDay(
   userId: string,
   dayYmd: string,
-  opts?: { includeEventPayload?: boolean },
+  opts?: { includeEventPayload?: boolean; includeEventSearchBlob?: boolean },
 ): Promise<CalendarFetchResult> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dayYmd)) {
     return { ok: false, reason: "unknown", detail: "日付形式が不正です" };
@@ -1196,7 +1323,11 @@ export async function fetchCalendarEventsForDay(
       },
       orderBy: { startAt: "asc" },
       take: 50,
-      select: opts?.includeEventPayload ? GCAL_EVENT_CACHE_SELECT_WITH_PAYLOAD : GCAL_EVENT_CACHE_SELECT_BASE,
+      select: opts?.includeEventPayload
+        ? GCAL_EVENT_CACHE_SELECT_WITH_PAYLOAD
+        : opts?.includeEventSearchBlob
+          ? GCAL_EVENT_CACHE_SELECT_WITH_SEARCH_BLOB
+          : GCAL_EVENT_CACHE_SELECT_BASE,
     });
 
     const events: CalendarEventBrief[] = rows
@@ -1212,7 +1343,7 @@ export async function fetchCalendarEventsForDay(
         description: r.description,
         cacheId: r.id,
         ...(r.fixedCategory ? { fixedCategory: r.fixedCategory } : {}),
-        ...briefPayloadExtras(opts?.includeEventPayload, r),
+        ...briefPayloadExtras(opts, r),
       }))
       .filter((e) => e.start)
       .sort((a, b) => sortKeyIso(a.start) - sortKeyIso(b.start));
@@ -1258,7 +1389,7 @@ export async function fetchCalendarEventsForDay(
 export async function fetchCalendarEventsStartingOnDay(
   userId: string,
   dayYmd: string,
-  opts?: { includeEventPayload?: boolean },
+  opts?: { includeEventPayload?: boolean; includeEventSearchBlob?: boolean },
 ): Promise<CalendarFetchResult> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dayYmd)) {
     return { ok: false, reason: "unknown", detail: "日付形式が不正です" };
@@ -1304,7 +1435,7 @@ export async function fetchCalendarEventsStartingOnDay(
   }
 
   try {
-    const cacheKey = `toolcache:gcal_fetch_start_v1:${userId}:${dayYmd}:${opts?.includeEventPayload ? 1 : 0}`;
+    const cacheKey = `toolcache:gcal_fetch_start_v1:${userId}:${dayYmd}:p${opts?.includeEventPayload ? 1 : 0}:b${opts?.includeEventSearchBlob ? 1 : 0}`;
     if (process.env.DISABLE_TOOL_CALENDAR_REDIS_CACHE !== "1") {
       const redis = await getOptionalRedis();
       if (redis) {
@@ -1338,7 +1469,11 @@ export async function fetchCalendarEventsStartingOnDay(
       },
       orderBy: { startAt: "asc" },
       take: 80,
-      select: opts?.includeEventPayload ? GCAL_EVENT_CACHE_SELECT_WITH_PAYLOAD : GCAL_EVENT_CACHE_SELECT_BASE,
+      select: opts?.includeEventPayload
+        ? GCAL_EVENT_CACHE_SELECT_WITH_PAYLOAD
+        : opts?.includeEventSearchBlob
+          ? GCAL_EVENT_CACHE_SELECT_WITH_SEARCH_BLOB
+          : GCAL_EVENT_CACHE_SELECT_BASE,
     });
 
     const events: CalendarEventBrief[] = rows
@@ -1354,7 +1489,13 @@ export async function fetchCalendarEventsStartingOnDay(
         description: r.description,
         cacheId: r.id,
         ...(r.fixedCategory ? { fixedCategory: r.fixedCategory } : {}),
-        ...briefPayloadExtras(opts?.includeEventPayload, r),
+        ...briefPayloadExtras(
+          {
+            includeEventPayload: opts?.includeEventPayload,
+            includeEventSearchBlob: opts?.includeEventSearchBlob,
+          },
+          r,
+        ),
       }))
       .filter((e) => e.start)
       .sort((a, b) => sortKeyIso(a.start) - sortKeyIso(b.start));

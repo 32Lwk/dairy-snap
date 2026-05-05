@@ -1,4 +1,4 @@
-import { inferCalendarEventCategory } from "@/lib/calendar-opening-infer-event";
+import { inferCalendarEventIntent } from "@/lib/calendar-event-intent";
 import { getOpenAI } from "@/lib/ai/openai";
 import {
   chatCompletionOutputTokenLimit,
@@ -23,8 +23,13 @@ function eventIsWorkRelated(ev: CalendarEventBrief, req: AgentRequest): boolean 
   if (suggestsParttimeCalendarName(ev.calendarName)) return true;
   const fixed = (ev.fixedCategory ?? "").trim();
   if (fixed === "parttime" || fixed === "job_hunt") return true;
-  const cat = inferCalendarEventCategory(ev, req.calendarOpening ?? null);
-  return cat === "parttime" || cat === "job_hunt";
+  const intent = inferCalendarEventIntent({
+    ev,
+    calendarOpening: req.calendarOpening ?? null,
+    profile: null,
+  });
+  if (intent.bestCategory === "parttime" || intent.bestCategory === "job_hunt") return true;
+  return intent.axes.work_or_jobhunt.score >= 8;
 }
 
 function hhmmTokyo(isoLike: string): string {

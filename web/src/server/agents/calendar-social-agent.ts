@@ -5,6 +5,8 @@ import {
   getAgentSocialMiniChatModel,
 } from "@/lib/ai/openai-chat-models";
 import { withChatModelFallback } from "@/lib/ai/openai-model-fallback";
+import { inferCalendarEventIntent } from "@/lib/calendar-event-intent";
+import { looksLikeDiningVenueReservation } from "@/lib/calendar-dining-reservation";
 import { fetchCalendarEventsStartingOnDay } from "@/server/calendar";
 import type { AgentRequest, AgentResponse } from "./types";
 import { loadAgentPrompt } from "./utils";
@@ -12,7 +14,7 @@ import { loadAgentPrompt } from "./utils";
 const EXCLUDE_KEYWORDS = [
   "バイト", "アルバイト", "シフト", "出勤", "勤務", "残業",
   "授業", "講義", "ゼミ", "試験", "テスト", "レポート", "課題",
-  "面接", "ES", "説明会", "選考", "内定", "インターン",
+  "面接", "エントリーシート", "説明会", "選考", "内定", "インターン",
 ];
 
 function isSocialEvent(title: string): boolean {
@@ -38,7 +40,23 @@ export async function runCalendarSocialAgent(req: AgentRequest): Promise<AgentRe
   try {
     const cal = await fetchCalendarEventsStartingOnDay(req.userId, req.entryDateYmd);
     if (cal.ok && cal.events.length > 0) {
-      const socialEvents = cal.events.filter((ev) => isSocialEvent(ev.title));
+      const socialEvents = cal.events.filter((ev) => {
+        if (!isSocialEvent(ev.title)) return false;
+        if (looksLikeDiningVenueReservation(ev)) return true;
+        const intent = inferCalendarEventIntent({
+          ev,
+          calendarOpening: req.calendarOpening ?? null,
+          profile: null,
+        });
+        if (intent.bestCategory === "job_hunt" || intent.bestCategory === "parttime" || intent.bestCategory === "school") {
+          return false;
+        }
+        // Include when private/social-ish axes dominate.
+        const priv = intent.axes.private_social.score + intent.axes.family.score + intent.axes.hobby_event.score;
+        const work = intent.axes.work_or_jobhunt.score;
+        const school = intent.axes.school.score;
+        return priv >= Math.max(6, work, school);
+      });
       if (socialEvents.length > 0) {
         eventsBlock = socialEvents
           .slice(0, 8)

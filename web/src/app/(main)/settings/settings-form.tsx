@@ -40,7 +40,7 @@ const WeatherLocationMapPicker = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="flex h-56 items-center justify-center rounded-xl border border-zinc-200 bg-zinc-100 text-sm text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 md:h-64">
+      <div className="flex h-56 items-center justify-center rounded-xl border border-zinc-200 bg-zinc-100 text-xs text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 md:h-64 sm:text-sm">
         {"\u5730\u56f3\u3092\u8aad\u307f\u8fbc\u307f\u4e2d\u2026"}
       </div>
     ),
@@ -516,10 +516,10 @@ export function SettingsForm({ userId }: { userId: string }) {
   }
 
   if (!data && !error) {
-    return <p className="mt-3 text-sm text-zinc-500">読み込み中…</p>;
+    return <p className="mt-3 text-xs text-zinc-500 sm:text-sm">読み込み中…</p>;
   }
   if (error && !data) {
-    return <p className="mt-3 text-sm text-red-600">{error}</p>;
+    return <p className="mt-3 text-xs text-red-600 sm:text-sm">{error}</p>;
   }
   if (!data) return null;
 
@@ -541,14 +541,14 @@ export function SettingsForm({ userId }: { userId: string }) {
     <>
       <div className="mt-3 w-full min-w-0 space-y-3">
       {!data.profile?.onboardingCompletedAt && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50/90 px-4 py-3 text-sm text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100">
+        <div className="rounded-xl border border-amber-200 bg-amber-50/90 px-4 py-3 text-xs text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100 sm:text-sm">
           <p className="font-medium">初回の「はじめに」が未完了です</p>
           <p className="mt-1 text-xs text-amber-900/90 dark:text-amber-200/90">
             「今日」ページを開くには、プロフィールの保存またはスキップが必要です。
           </p>
           <Link
             href="/onboarding"
-            className="mt-2 inline-block text-sm font-semibold text-amber-900 underline underline-offset-2 dark:text-amber-200"
+            className="mt-2 inline-block text-xs font-semibold text-amber-900 underline underline-offset-2 dark:text-amber-200 sm:text-sm"
           >
             はじめにページへ
           </Link>
@@ -556,8 +556,8 @@ export function SettingsForm({ userId }: { userId: string }) {
       )}
 
       <section className="w-full min-w-0 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
-        <h2 className="font-medium text-zinc-900 dark:text-zinc-50">暗号化</h2>
-        <p className="mt-1 text-xs text-zinc-500">
+        <h2 className="text-sm font-medium text-zinc-900 dark:text-zinc-50 sm:text-base">暗号化</h2>
+        <p className="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400 sm:text-xs">
           実験的 E2EE は本文のみ。パスフレーズ紛失時は復旧できません（後続で鍵束・32 文字要件を実装）。
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
@@ -565,7 +565,7 @@ export function SettingsForm({ userId }: { userId: string }) {
             type="button"
             disabled={saving}
             onClick={() => void saveMode("STANDARD")}
-            className={`rounded-lg px-3 py-1.5 text-sm ${
+            className={`rounded-lg px-3 py-1.5 text-xs sm:text-sm ${
               data.encryptionMode === "STANDARD"
                 ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
                 : "border border-zinc-200 dark:border-zinc-700"
@@ -577,7 +577,7 @@ export function SettingsForm({ userId }: { userId: string }) {
             type="button"
             disabled={saving}
             onClick={() => void saveMode("EXPERIMENTAL_E2EE")}
-            className={`rounded-lg px-3 py-1.5 text-sm ${
+            className={`rounded-lg px-3 py-1.5 text-xs sm:text-sm ${
               data.encryptionMode === "EXPERIMENTAL_E2EE"
                 ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
                 : "border border-zinc-200 dark:border-zinc-700"
@@ -589,13 +589,13 @@ export function SettingsForm({ userId }: { userId: string }) {
       </section>
 
       <section className="w-full min-w-0 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
-        <h2 className="font-medium text-zinc-900 dark:text-zinc-50">品質改善への協力（任意）</h2>
-        <p className="mt-1 max-w-3xl text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+        <h2 className="text-sm font-medium text-zinc-900 dark:text-zinc-50 sm:text-base">品質改善への協力（任意）</h2>
+        <p className="mt-1 max-w-3xl text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400 sm:text-xs">
           チェックを入れると、会話のユーザー発話と AI
           返答の全文を、サービス品質の分析にのみ利用する目的で保存できます。実験的 E2EE
           の日記では保存されません。いつでもオフにできます。
         </p>
-        <label className="mt-3 flex cursor-pointer items-start gap-2 text-sm text-zinc-800 dark:text-zinc-200">
+        <label className="mt-3 flex cursor-pointer items-start gap-2 text-xs text-zinc-800 dark:text-zinc-200 sm:text-sm">
           <input
             type="checkbox"
             className="mt-0.5 h-4 w-4 rounded border-zinc-300 text-emerald-600 focus:ring-emerald-500 dark:border-zinc-600 dark:bg-zinc-900"
@@ -608,8 +608,8 @@ export function SettingsForm({ userId }: { userId: string }) {
       </section>
 
       <section className="w-full min-w-0 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
-        <h2 className="font-medium text-zinc-900 dark:text-zinc-50">日付の区切りとタイムゾーン</h2>
-        <p className="mt-1 max-w-3xl text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+        <h2 className="text-sm font-medium text-zinc-900 dark:text-zinc-50 sm:text-base">日付の区切りとタイムゾーン</h2>
+        <p className="mt-1 max-w-3xl text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400 sm:text-xs">
           <strong className="font-medium text-zinc-700 dark:text-zinc-300">タイムゾーン</strong>
           は、日付表示や1日の利用上限の切り替えに使います。
           <span className="mx-1 text-zinc-400">/</span>
@@ -745,8 +745,8 @@ export function SettingsForm({ userId }: { userId: string }) {
       </section>
 
       <section className="w-full min-w-0 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
-        <h2 className="font-medium text-zinc-900 dark:text-zinc-50">日記チャットの開口トピック（カレンダー分類）</h2>
-        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+        <h2 className="text-sm font-medium text-zinc-900 dark:text-zinc-50 sm:text-base">日記チャットの開口トピック（カレンダー分類）</h2>
+        <p className="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400 sm:text-xs">
           日記でチャットを開いたとき、当日の Google カレンダー予定からどの話題として声をかけるかを決めるルールです（優先順位・キーワードルール等）。カレンダー画面の表示設定ダイアログには出さず、ここでのみ編集します。曖昧な予定は「どんな予定？」と確認します。
         </p>
 
@@ -853,7 +853,7 @@ export function SettingsForm({ userId }: { userId: string }) {
                   rules: opening?.rules ?? [],
                 })
               }
-              className="mt-3 rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+              className="mt-3 rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 sm:text-sm"
             >
               ルールを保存
             </button>
@@ -862,8 +862,8 @@ export function SettingsForm({ userId }: { userId: string }) {
       </section>
 
       <section className="w-full min-w-0 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
-        <h2 className="text-sm font-medium text-zinc-900 dark:text-zinc-50">天気の既定の地点</h2>
-        <p className="mt-1 text-xs text-zinc-500">
+        <h2 className="text-sm font-medium text-zinc-900 dark:text-zinc-50 sm:text-base">天気の既定の地点</h2>
+        <p className="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400 sm:text-xs">
           エントリに位置がないときの天気取得（午前・午後）に使います。エントリに位置を保存した場合はそちらが優先されます。
         </p>
         <PlaceCoordsLine
@@ -881,7 +881,7 @@ export function SettingsForm({ userId }: { userId: string }) {
             onPick={onWeatherMapPick}
           />
         </div>
-        <p className="mt-2 text-xs text-zinc-500">
+        <p className="mt-2 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400 sm:text-xs">
           {"\u5730\u56f3\u3092\u30bf\u30c3\u30d7\u3059\u308b\u304b\u3001\u30d4\u30f3\u3092\u30c9\u30e9\u30c3\u30b0\u3057\u3066\u5730\u70b9\u3092\u6307\u5b9a\u3067\u304d\u307e\u3059\uff08OpenStreetMap\uff09\u3002"}
         </p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -896,7 +896,7 @@ export function SettingsForm({ userId }: { userId: string }) {
             type="button"
             disabled={saving}
             onClick={() => void saveDefaultLocation()}
-            className="inline-flex min-h-10 items-center justify-center rounded-xl bg-zinc-900 px-4 text-sm font-semibold text-white shadow-sm hover:bg-zinc-800 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+            className="inline-flex min-h-9 items-center justify-center rounded-xl bg-zinc-900 px-3.5 text-xs font-semibold text-white shadow-sm hover:bg-zinc-800 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200 sm:min-h-10 sm:px-4 sm:text-sm"
           >
             既定地点を保存
           </button>
@@ -904,7 +904,7 @@ export function SettingsForm({ userId }: { userId: string }) {
             type="button"
             disabled={saving || geoBusy}
             onClick={() => requestDefaultLocationGeolocation()}
-            className="inline-flex min-h-10 items-center justify-center rounded-xl border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-800 shadow-sm hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
+            className="inline-flex min-h-9 items-center justify-center rounded-xl border border-zinc-200 bg-white px-3.5 text-xs font-semibold text-zinc-800 shadow-sm hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900 sm:min-h-10 sm:px-4 sm:text-sm"
           >
             {geoBusy ? "…" : "現在地"}
           </button>
@@ -912,7 +912,7 @@ export function SettingsForm({ userId }: { userId: string }) {
             type="button"
             disabled={saving}
             onClick={() => void clearDefaultLocation()}
-            className="inline-flex min-h-10 items-center justify-center rounded-xl border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 shadow-sm hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900"
+            className="inline-flex min-h-9 items-center justify-center rounded-xl border border-zinc-200 bg-white px-3.5 text-xs font-semibold text-zinc-700 shadow-sm hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900 sm:min-h-10 sm:px-4 sm:text-sm"
           >
             クリア
           </button>
@@ -929,8 +929,8 @@ export function SettingsForm({ userId }: { userId: string }) {
       </section>
 
       <section className="w-full min-w-0 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
-        <h2 className="font-medium text-zinc-900 dark:text-zinc-50">本日の利用状況</h2>
-        <ul className="mt-2 space-y-1 text-sm text-zinc-600 dark:text-zinc-400">
+        <h2 className="text-sm font-medium text-zinc-900 dark:text-zinc-50 sm:text-base">本日の利用状況</h2>
+        <ul className="mt-2 space-y-1 text-xs text-zinc-600 dark:text-zinc-400 sm:text-sm">
           <li>
             チャット: {data.usageToday.chatMessages} / {data.limits.CHAT_PER_DAY}
           </li>
@@ -951,8 +951,8 @@ export function SettingsForm({ userId }: { userId: string }) {
       </section>
 
       <section className="w-full min-w-0 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
-        <h2 className="text-sm font-medium text-zinc-900 dark:text-zinc-50">アプリ内カレンダー</h2>
-        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+        <h2 className="text-sm font-medium text-zinc-900 dark:text-zinc-50 sm:text-base">アプリ内カレンダー</h2>
+        <p className="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400 sm:text-xs">
           Google に同期せず、このアプリのデータベースだけに保存するカレンダーです。一覧では「名前(アプリ)」のように表示されます。削除するとそのカレンダー上の予定もすべて消えます。
         </p>
         <div className="mt-3 flex flex-wrap items-end gap-2">
@@ -961,7 +961,7 @@ export function SettingsForm({ userId }: { userId: string }) {
             onChange={(e) => setNewAppLocalName(e.target.value)}
             placeholder="新しいカレンダー名"
             aria-label="新しいアプリ内カレンダー名"
-            className="min-w-[12rem] flex-1 rounded-lg border border-zinc-200 px-2 py-1.5 text-xs dark:border-zinc-700 dark:bg-zinc-950"
+            className="min-w-[12rem] flex-1 rounded-lg border border-zinc-200 px-2 py-1.5 text-[11px] leading-snug dark:border-zinc-700 dark:bg-zinc-950 sm:text-xs md:text-sm"
           />
           <button
             type="button"
@@ -1015,7 +1015,7 @@ export function SettingsForm({ userId }: { userId: string }) {
       </section>
 
       <section className="w-full min-w-0 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
-        <h2 className="font-medium text-zinc-900 dark:text-zinc-50">プロンプト版</h2>
+        <h2 className="text-sm font-medium text-zinc-900 dark:text-zinc-50 sm:text-base">プロンプト版</h2>
         <ul className="mt-2 space-y-1 font-mono text-xs text-zinc-600 dark:text-zinc-400">
           {Object.entries(data.promptVersions).map(([k, v]) => (
             <li key={k}>
@@ -1042,7 +1042,7 @@ export function SettingsForm({ userId }: { userId: string }) {
               <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">設定</p>
               <h2
                 id="settings-profile-chat-title"
-                className="mt-1 text-xl font-semibold text-zinc-900 dark:text-zinc-50"
+                className="mt-1 text-lg font-semibold text-zinc-900 dark:text-zinc-50 sm:text-xl"
               >
                 プロフィール
               </h2>
@@ -1052,7 +1052,7 @@ export function SettingsForm({ userId }: { userId: string }) {
               onClick={() => {
                 setProfileChatOpen(false);
               }}
-              className="shrink-0 rounded-lg px-2 py-1 text-sm text-zinc-600 hover:bg-zinc-200/80 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              className="shrink-0 rounded-lg px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-200/80 dark:text-zinc-300 dark:hover:bg-zinc-800 sm:text-sm"
             >
               閉じる
             </button>
@@ -1081,7 +1081,7 @@ export function SettingsForm({ userId }: { userId: string }) {
                 <button
                   type="button"
                   onClick={() => setProfileChatMode("chat")}
-                  className="shrink-0 text-left text-sm text-emerald-700 underline dark:text-emerald-400"
+                  className="shrink-0 text-left text-xs text-emerald-700 underline dark:text-emerald-400 sm:text-sm"
                 >
                   ← チャット形式に戻る（入力内容は引き継がれます）
                 </button>
@@ -1147,7 +1147,7 @@ export function SettingsForm({ userId }: { userId: string }) {
                 type="button"
                 disabled={openingBusy}
                 onClick={() => setOpeningPriorityEditorOpen(false)}
-                className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-800 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 sm:w-auto"
+                className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-medium text-zinc-800 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 sm:w-auto sm:text-sm"
               >
                 閉じる
               </button>
@@ -1163,7 +1163,7 @@ export function SettingsForm({ userId }: { userId: string }) {
                     if (ok) setOpeningPriorityEditorOpen(false);
                   })()
                 }
-                className="w-full rounded-lg bg-zinc-900 px-3 py-2 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900 sm:w-auto"
+                className="w-full rounded-lg bg-zinc-900 px-3 py-2 text-xs font-medium text-white dark:bg-zinc-100 dark:text-zinc-900 sm:w-auto sm:text-sm"
               >
                 優先順位を保存
               </button>
@@ -1250,7 +1250,7 @@ export function SettingsForm({ userId }: { userId: string }) {
                 type="button"
                 disabled={openingBusy}
                 onClick={() => setCategoryMultiplierEditorOpen(false)}
-                className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-800 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 sm:w-auto"
+                className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-medium text-zinc-800 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 sm:w-auto sm:text-sm"
               >
                 閉じる
               </button>
@@ -1258,7 +1258,7 @@ export function SettingsForm({ userId }: { userId: string }) {
                 type="button"
                 disabled={openingBusy}
                 onClick={() => setCategoryMultiplierRecommendOpen(true)}
-                className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-800 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 sm:w-auto"
+                className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-medium text-zinc-800 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 sm:w-auto sm:text-sm"
               >
                 おすすめを適用
               </button>
@@ -1276,7 +1276,7 @@ export function SettingsForm({ userId }: { userId: string }) {
                     if (ok) setCategoryMultiplierEditorOpen(false);
                   })()
                 }
-                className="w-full rounded-lg bg-zinc-900 px-3 py-2 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900 sm:w-auto"
+                className="w-full rounded-lg bg-zinc-900 px-3 py-2 text-xs font-medium text-white dark:bg-zinc-100 dark:text-zinc-900 sm:w-auto sm:text-sm"
               >
                 倍率を保存
               </button>
@@ -1332,7 +1332,7 @@ export function SettingsForm({ userId }: { userId: string }) {
                 type="button"
                 disabled={openingBusy}
                 onClick={() => setCategoryMultiplierRecommendOpen(false)}
-                className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-800 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 sm:w-auto"
+                className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-medium text-zinc-800 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 sm:w-auto sm:text-sm"
               >
                 閉じる
               </button>
@@ -1351,7 +1351,7 @@ export function SettingsForm({ userId }: { userId: string }) {
                   });
                   setCategoryMultiplierRecommendOpen(false);
                 }}
-                className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-800 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 sm:w-auto"
+                className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-medium text-zinc-800 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 sm:w-auto sm:text-sm"
               >
                 フォームにだけ反映
               </button>
@@ -1370,7 +1370,7 @@ export function SettingsForm({ userId }: { userId: string }) {
                     if (ok) setCategoryMultiplierRecommendOpen(false);
                   })();
                 }}
-                className="w-full rounded-lg bg-zinc-900 px-3 py-2 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900 sm:w-auto"
+                className="w-full rounded-lg bg-zinc-900 px-3 py-2 text-xs font-medium text-white dark:bg-zinc-100 dark:text-zinc-900 sm:w-auto sm:text-sm"
               >
                 反映して保存
               </button>
@@ -1505,7 +1505,7 @@ function RuleRow({
         value={rule.value}
         disabled={disabled}
         onChange={(e) => onChange({ ...rule, value: e.target.value })}
-        className="w-full px-2 py-1 text-sm"
+        className="w-full px-2 py-1 text-xs sm:text-sm"
       >
         <option value="">（選ぶ）</option>
         {calendars.map((c) => (
@@ -1519,7 +1519,7 @@ function RuleRow({
         value={rule.value}
         disabled={disabled}
         onChange={(e) => onChange({ ...rule, value: e.target.value })}
-        className="w-full px-2 py-1 text-sm"
+        className="w-full px-2 py-1 text-xs sm:text-sm"
       >
         <option value="">（選ぶ）</option>
         {colorIds.map((c) => (
@@ -1533,7 +1533,7 @@ function RuleRow({
         value={rule.value}
         disabled={disabled}
         onChange={(e) => onChange({ ...rule, value: e.target.value })}
-        className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+        className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-950 sm:text-sm"
         placeholder={kind === "keyword" ? "例: 面接 / シフト / デート" : kind === "location" ? "例: #jobhunt" : "例: #tag"}
       />
     );
@@ -1544,7 +1544,7 @@ function RuleRow({
         value={rule.kind}
         disabled={disabled}
         onChange={(e) => onChange({ ...rule, kind: e.target.value as CalendarOpeningRule["kind"], value: "" })}
-        className="px-2 py-1 text-sm sm:col-span-3"
+        className="px-2 py-1 text-xs sm:col-span-3 sm:text-sm"
       >
         <option value="keyword">キーワード</option>
         <option value="calendarId">カレンダー</option>
@@ -1557,7 +1557,7 @@ function RuleRow({
         value={rule.category}
         disabled={disabled}
         onChange={(e) => onChange({ ...rule, category: e.target.value as CalendarOpeningCategory })}
-        className="px-2 py-1 text-sm sm:col-span-3"
+        className="px-2 py-1 text-xs sm:col-span-3 sm:text-sm"
       >
         {cats.map((c) => (
           <option key={c.id} value={c.id}>
@@ -1569,7 +1569,7 @@ function RuleRow({
         value={rule.weight ?? 5}
         disabled={disabled}
         onChange={(e) => onChange({ ...rule, weight: Number(e.target.value) })}
-        className="rounded-lg border border-zinc-200 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950 sm:col-span-1"
+        className="rounded-lg border border-zinc-200 bg-white px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-950 sm:col-span-1 sm:text-sm"
         inputMode="numeric"
       />
       <button

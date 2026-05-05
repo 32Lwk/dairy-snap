@@ -1,4 +1,5 @@
 import type { CalendarOpeningCategory, CalendarOpeningSettings } from "@/lib/user-settings";
+import { looksLikeDiningVenueReservation } from "@/lib/calendar-dining-reservation";
 import {
   addCalendarOpeningBuiltinTextHints,
   BIRTHDAY_CALENDAR_NAME_SCORE_BOOST,
@@ -21,6 +22,7 @@ export type CalendarEventForCategoryInfer = {
   end?: string;
   location?: string;
   description?: string;
+  eventSearchBlob?: string;
   calendarName?: string;
   calendarId?: string;
   colorId?: string;
@@ -42,7 +44,13 @@ export function inferCalendarEventCategory(
   const hayTitle = (ev.title ?? "").toLowerCase();
   const hayLoc = (ev.location ?? "").toLowerCase();
   const hayDesc = (ev.description ?? "").toLowerCase();
-  const haystack = `${ev.title ?? ""}\n${ev.location ?? ""}\n${ev.description ?? ""}\n${ev.calendarName ?? ""}`;
+  const haystack = [
+    ev.title ?? "",
+    ev.location ?? "",
+    ev.description ?? "",
+    ev.eventSearchBlob ?? "",
+    ev.calendarName ?? "",
+  ].join("\n");
   const scores = new Map<CalendarOpeningCategory, number>();
   const add = (cat: CalendarOpeningCategory, w: number) => {
     scores.set(cat, (scores.get(cat) ?? 0) + w);
@@ -89,5 +97,10 @@ export function inferCalendarEventCategory(
     add("school", SCHOOL_CALENDAR_NAME_SCORE_BOOST);
   }
   add("other", 1);
-  return pickWinningCalendarCategory(scores, priority);
+  let best = pickWinningCalendarCategory(scores, priority);
+  // Bar/restaurant reservations are often mis-tagged as 就活 due to calendar defaults or "opaque title" heuristics.
+  if (looksLikeDiningVenueReservation(ev) && best === "job_hunt") {
+    best = "family";
+  }
+  return best;
 }

@@ -456,34 +456,40 @@ export function CalendarClient(props: {
       return;
     }
     let alive = true;
-    const t = window.setTimeout(() => {
-      void fetch("/api/github/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify({ reason: "calendar" }),
-      }).catch(() => {});
-      const [yy, mm] = props.ym.split("-").map(Number);
-      const pad = (n: number) => String(n).padStart(2, "0");
-      const from = `${String(yy).padStart(4, "0")}-${pad(mm)}-01`;
-      const lastD = new Date(yy, mm, 0).getDate();
-      const to = `${String(yy).padStart(4, "0")}-${pad(mm)}-${pad(lastD)}`;
-      void fetch(`/api/github/contributions?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, {
-        credentials: "same-origin",
-      })
-        .then((r) => r.json())
-        .then((j) => {
-          if (!alive) return;
-          const m = (j as { byYmd?: Record<string, number> }).byYmd;
-          setGithubByYmd(m && typeof m === "object" ? m : {});
-        })
-        .catch(() => {
-          if (alive) setGithubByYmd({});
-        });
-    }, 500);
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    const [yy, mm] = props.ym.split("-").map(Number);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const from = `${String(yy).padStart(4, "0")}-${pad(mm)}-01`;
+    const lastD = new Date(yy, mm, 0).getDate();
+    const to = `${String(yy).padStart(4, "0")}-${pad(mm)}-${pad(lastD)}`;
+
+    const url = `/api/github/contributions?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+    async function load(attempt: number) {
+      try {
+        // contributions API 側でも同期キューを積むので、ここでは余計な /sync 呼び出しと遅延を入れない
+        const r = await fetch(url, { credentials: "same-origin" });
+        const j = (await r.json().catch(() => ({}))) as { byYmd?: Record<string, number> };
+        if (!alive) return;
+        const m = j.byYmd;
+        const map = m && typeof m === "object" ? m : {};
+        setGithubByYmd(map);
+
+        // 初回バックフィル中は最初のレスポンスが空になりやすいので、短時間だけ自動リトライして反映を早める
+        const needsInitial = (githubStatus as { contributionsInitialSyncDone?: boolean } | null)?.contributionsInitialSyncDone === false;
+        const hasAny = Object.keys(map).length > 0;
+        if (needsInitial && !hasAny && attempt < 4) {
+          retryTimer = setTimeout(() => {
+            void load(attempt + 1);
+          }, 1500 + attempt * 800);
+        }
+      } catch {
+        if (alive) setGithubByYmd({});
+      }
+    }
+    void load(0);
     return () => {
       alive = false;
-      window.clearTimeout(t);
+      if (retryTimer) clearTimeout(retryTimer);
     };
   }, [props.ym, githubStatus?.linked, gridDisplay.showGithubGrass]);
 

@@ -20,7 +20,7 @@ You run **after the user merged the AI journal draft into the diary body** (or w
 
 3. **AgentMemory (`agentMemoryUpserts` / `agentMemoryDeletes`)**  
    - **Structured, domain-scoped** facts the orchestrator’s specialist agents would reuse (school timetable habits, work/part-time cues, social circle labels, hobby tags, romance boundaries). **Do not** paste long-term-style prose; use **short key/value** rows only.  
-   - **Domains allowed (exact strings):** `school`, `calendar_daily`, `calendar_work`, `calendar_social`, `hobby`, `romance`.  
+   - **Domains allowed (exact strings):** `orchestrator`, `school`, `calendar_daily`, `calendar_work`, `calendar_social`, `hobby`, `romance`.  
    - **Keys:** lowercase snake_case, max 48 chars, must start with a letter (`^[a-z][a-z0-9_]*$`).  
    - **Values:** short plain text, max 400 characters. No JSON inside values.  
    - **Do not** store free-form diary prose here. **Do not** invent calendar events.  

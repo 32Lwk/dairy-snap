@@ -11,7 +11,7 @@ export function CalendarReconnectButton() {
     <div className="mt-0">
       <button
         type="button"
-        className="w-full rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-medium text-zinc-900 shadow-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 lg:py-3"
+        className="w-full rounded-xl border border-zinc-200 bg-white px-3.5 py-2 text-xs font-medium text-zinc-900 shadow-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 sm:px-4 sm:py-2.5 sm:text-sm lg:py-3"
         onClick={() =>
           void signIn(
             "google",
@@ -22,7 +22,7 @@ export function CalendarReconnectButton() {
       >
         Google を再連携（カレンダー権限を含む）
       </button>
-      <p className="mt-2 text-xs text-zinc-500">
+      <p className="mt-2 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400 sm:text-xs">
         初回ログインやスコープ追加後は、Google がリフレッシュトークンを返さないことがあります。
         このボタンはブラウザで同意画面を開き、取得したトークンをアカウントに保存します。
       </p>
