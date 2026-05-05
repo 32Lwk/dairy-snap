@@ -718,9 +718,11 @@ export async function runMasMemoryExtraction(args: {
   userMessage: string;
   assistantMessage: string;
   recentTurns: MasMemoryChatTurn[];
-}): Promise<void> {
-  if (process.env.DISABLE_MEMORY_EXTRACTION === "1") return;
-  if (!process.env.OPENAI_API_KEY) return;
+  threadId?: string;
+  messageCountForSnapshot?: number;
+}): Promise<{ ok: true } | { ok: false; reason: "disabled" | "unconfigured" | "llm" | "parse" | "db" }> {
+  if (process.env.DISABLE_MEMORY_EXTRACTION === "1") return { ok: false, reason: "disabled" };
+  if (!process.env.OPENAI_API_KEY) return { ok: false, reason: "unconfigured" };
 
   const userRow = await prisma.user.findUnique({
     where: { id: args.userId },
@@ -809,12 +811,28 @@ export async function runMasMemoryExtraction(args: {
   ].join("\n\n");
 
   const sub = await callMemorySubAgent(system, userBlock, 2200, args.userId);
-  if (!sub.ok) return;
+  if (!sub.ok) return { ok: false, reason: sub.reason };
 
-  await prisma.$transaction(async (tx) => {
-    await applyMemoryDeltaTx(tx, args.userId, args.entryId, sub.delta, "mas_memory_turn");
-  });
+  try {
+    await prisma.$transaction(async (tx) => {
+      await applyMemoryDeltaTx(tx, args.userId, args.entryId, sub.delta, "mas_memory_turn");
+    });
+  } catch {
+    return { ok: false, reason: "db" };
+  }
   scheduleLongTermEmbeddingSync(args.userId, sub.delta);
+
+  if (args.threadId && typeof args.messageCountForSnapshot === "number") {
+    await prisma.chatThread.update({
+      where: { id: args.threadId },
+      data: {
+        memoryChatBackfillAt: new Date(),
+        memoryChatBackfillMsgCount: args.messageCountForSnapshot,
+      },
+    });
+  }
+
+  return { ok: true };
 }
 
 /** 日記本文へ AI 草案がマージされたあと — 全体を通した記憶の再整理 */

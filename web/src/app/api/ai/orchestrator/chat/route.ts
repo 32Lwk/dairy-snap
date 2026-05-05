@@ -572,7 +572,10 @@ export async function POST(req: NextRequest) {
             select: { body: true },
           });
           try {
-            await runMasMemoryExtraction({
+            const messageCountForSnapshot = await prisma.chatMessage.count({
+              where: { threadId: thread!.id, role: { in: ["user", "assistant"] } },
+            });
+            const memRes = await runMasMemoryExtraction({
               userId: session.user.id,
               entryId: entry.id,
               entryDateYmd: entry.entryDateYmd,
@@ -581,7 +584,18 @@ export async function POST(req: NextRequest) {
               userMessage: parsed.data.message,
               assistantMessage: storedAssistant,
               recentTurns,
+              threadId: thread!.id,
+              messageCountForSnapshot,
             });
+            if (!memRes.ok) {
+              scheduleAppLog(AppLogScope.chat, "warn", "orchestrator_chat_memory_extraction_skipped", {
+                userId: session.user.id,
+                entryId: entry.id,
+                threadId: thread!.id,
+                entryDateYmd: entry.entryDateYmd,
+                reason: memRes.reason,
+              });
+            }
           } catch (e) {
             scheduleAppLog(AppLogScope.chat, "error", "orchestrator_chat_memory_extraction_failed", {
               userId: session.user.id,
