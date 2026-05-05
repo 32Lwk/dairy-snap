@@ -101,5 +101,16 @@ export async function GET(req: Request) {
     );
   }
 
-  return NextResponse.json({ events: result.events });
+  const isCacheable = !forceSync && !full && !deepSync;
+  return NextResponse.json(
+    { events: result.events },
+    isCacheable
+      ? {
+          headers: {
+            "Cache-Control": "private, max-age=30, stale-while-revalidate=120",
+            Vary: "Cookie",
+          },
+        }
+      : undefined,
+  );
 }

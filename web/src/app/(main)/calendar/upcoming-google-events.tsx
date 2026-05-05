@@ -55,9 +55,18 @@ function upcomingEventsCacheKey(ymd: string): string {
 }
 
 function readUpcomingEventsCache(ymd: string): Ev[] | null {
-  if (typeof sessionStorage === "undefined") return null;
+  if (typeof localStorage === "undefined" && typeof sessionStorage === "undefined") return null;
   try {
-    const raw = sessionStorage.getItem(upcomingEventsCacheKey(ymd));
+    const key = upcomingEventsCacheKey(ymd);
+    let raw = typeof localStorage !== "undefined" ? localStorage.getItem(key) : null;
+    if (!raw && typeof sessionStorage !== "undefined") {
+      const legacy = sessionStorage.getItem(key);
+      if (legacy) {
+        raw = legacy;
+        try { localStorage.setItem(key, legacy); } catch {}
+        sessionStorage.removeItem(key);
+      }
+    }
     if (!raw) return null;
     const p = JSON.parse(raw) as UpcomingCachePayload;
     if (p.v !== 1 || !Array.isArray(p.events)) return null;
@@ -69,10 +78,17 @@ function readUpcomingEventsCache(ymd: string): Ev[] | null {
 }
 
 function writeUpcomingEventsCache(ymd: string, events: Ev[]): void {
-  if (typeof sessionStorage === "undefined") return;
+  if (typeof localStorage === "undefined" && typeof sessionStorage === "undefined") return;
   try {
     const payload: UpcomingCachePayload = { v: 1, savedAt: Date.now(), events };
-    sessionStorage.setItem(upcomingEventsCacheKey(ymd), JSON.stringify(payload));
+    const text = JSON.stringify(payload);
+    const key = upcomingEventsCacheKey(ymd);
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem(key, text);
+      if (typeof sessionStorage !== "undefined") sessionStorage.removeItem(key);
+    } else if (typeof sessionStorage !== "undefined") {
+      sessionStorage.setItem(key, text);
+    }
   } catch {
     /* 容量・プライベートモード等 */
   }
@@ -114,7 +130,7 @@ export function UpcomingGoogleEvents({
   const [events, setEvents] = useState<Ev[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hint, setHint] = useState<string | null>(null);
-  /** SSR との整合のため初期 true。クライアントでは sessionStorage を useLayoutEffect で先に見る */
+  /** SSR との整合のため初期 true。クライアントでは localStorage を useLayoutEffect で先に見る */
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
