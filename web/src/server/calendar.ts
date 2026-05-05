@@ -1253,3 +1253,165 @@ export async function fetchCalendarEventsForDay(
     return { ok: false, reason: "calendar_api_error", detail: msg };
   }
 }
+
+/** 指定日（Asia/Tokyo の暦日 YYYY-MM-DD）に「開始」する予定（重なりではなく開始日ベース） */
+export async function fetchCalendarEventsStartingOnDay(
+  userId: string,
+  dayYmd: string,
+  opts?: { includeEventPayload?: boolean },
+): Promise<CalendarFetchResult> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dayYmd)) {
+    return { ok: false, reason: "unknown", detail: "日付形式が不正です" };
+  }
+
+  const account = await prisma.account.findFirst({
+    where: { userId, provider: "google" },
+  });
+  if (!account) {
+    return { ok: false, reason: "no_google_account" };
+  }
+
+  if (!account.refresh_token) {
+    return {
+      ok: false,
+      reason: "no_refresh_token",
+      detail:
+        "Google がリフレッシュトークンを発行していません。設定の「Google を再連携（カレンダー）」から再ログインしてください。",
+    };
+  }
+
+  const clientId = process.env.AUTH_GOOGLE_ID;
+  const clientSecret = process.env.AUTH_GOOGLE_SECRET;
+  if (!clientId || !clientSecret) {
+    return { ok: false, reason: "oauth_not_configured" };
+  }
+
+  const oauth2 = new google.auth.OAuth2(clientId, clientSecret);
+  oauth2.setCredentials({ refresh_token: account.refresh_token });
+
+  try {
+    await oauth2.getAccessToken();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/invalid_grant|Invalid grant/i.test(msg)) {
+      return {
+        ok: false,
+        reason: "invalid_grant",
+        detail: "トークンが無効です。設定から Google を再連携してください。",
+      };
+    }
+    return { ok: false, reason: "unknown", detail: msg };
+  }
+
+  try {
+    const cacheKey = `toolcache:gcal_fetch_start_v1:${userId}:${dayYmd}:${opts?.includeEventPayload ? 1 : 0}`;
+    if (process.env.DISABLE_TOOL_CALENDAR_REDIS_CACHE !== "1") {
+      const redis = await getOptionalRedis();
+      if (redis) {
+        try {
+          const hit = await redis.get(cacheKey);
+          if (hit) {
+            const parsed = JSON.parse(hit) as CalendarFetchResult;
+            if (parsed && typeof parsed === "object" && "ok" in parsed) {
+              return parsed;
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+
+    const cal = google.calendar({ version: "v3", auth: oauth2 });
+    // 同期（差分）
+    await syncGoogleCalendarCache(userId, cal, { forceSync: false, minIntervalMs: 5 * 60 * 1000 });
+
+    const dayStart = tokyoCalendarDayStart(dayYmd);
+    const dayEndExclusive = tokyoCalendarDayEndExclusive(dayYmd);
+
+    const rows = await prisma.googleCalendarEventCache.findMany({
+      where: {
+        userId,
+        isCancelled: false,
+        // Start-on-day: startAt within the day only
+        startAt: { gte: dayStart, lt: dayEndExclusive },
+      },
+      orderBy: { startAt: "asc" },
+      take: 80,
+      select: opts?.includeEventPayload ? GCAL_EVENT_CACHE_SELECT_WITH_PAYLOAD : GCAL_EVENT_CACHE_SELECT_BASE,
+    });
+
+    const events: CalendarEventBrief[] = rows
+      .map((r) => ({
+        eventId: r.eventId,
+        calendarId: r.calendarId,
+        calendarName: formatGoogleCalendarDisplayName(r.calendarId, r.calendarName),
+        colorId: r.eventColorId ?? r.calendarColorId ?? "",
+        title: r.title,
+        start: r.startIso,
+        end: r.endIso,
+        location: r.location,
+        description: r.description,
+        cacheId: r.id,
+        ...(r.fixedCategory ? { fixedCategory: r.fixedCategory } : {}),
+        ...briefPayloadExtras(opts?.includeEventPayload, r),
+      }))
+      .filter((e) => e.start)
+      .sort((a, b) => sortKeyIso(a.start) - sortKeyIso(b.start));
+
+    // Merge app-local events in the same day window, then keep start-on-day only.
+    const merged = await mergeAppLocalEventsIntoGoogleList(userId, dayStart, dayEndExclusive, events, {
+      scopeOneCalendar: false,
+      limit: 80,
+    });
+    const out: CalendarFetchResult = {
+      ok: true,
+      events: merged.filter((e) => {
+        const s = (e.start ?? "").trim();
+        if (!s) return false;
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s === dayYmd;
+        const d = new Date(s);
+        if (Number.isNaN(d.getTime())) return false;
+        const ymd = new Intl.DateTimeFormat("sv-SE", {
+          timeZone: "Asia/Tokyo",
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        })
+          .format(d)
+          .replaceAll("/", "-");
+        return ymd === dayYmd;
+      }),
+    };
+
+    if (process.env.DISABLE_TOOL_CALENDAR_REDIS_CACHE !== "1") {
+      const redis = await getOptionalRedis();
+      if (redis) {
+        void redis.set(cacheKey, JSON.stringify(out), { EX: 120 }).catch(() => {});
+      }
+    }
+    return out;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const code =
+      typeof e === "object" && e !== null && "code" in e
+        ? Number((e as { code?: number }).code)
+        : undefined;
+    if (code === 403 || /accessNotConfigured|Calendar API has not been used/i.test(msg)) {
+      return {
+        ok: false,
+        reason: "calendar_api_error",
+        detail:
+          "Google Cloud で Calendar API が有効になっていない可能性があります。コンソールで API を有効化してください。",
+      };
+    }
+    if (code === 401 || /Invalid Credentials|invalid authentication/i.test(msg)) {
+      return {
+        ok: false,
+        reason: "invalid_grant",
+        detail: "認証に失敗しました。Google を再連携してください。",
+      };
+    }
+    return { ok: false, reason: "calendar_api_error", detail: msg };
+  }
+}

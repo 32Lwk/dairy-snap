@@ -94,8 +94,10 @@ export async function fetchAppLocalEventsAsBriefs(
   const rows = await prisma.appLocalCalendarEvent.findMany({
     where: {
       userId,
-      startAt: { lte: timeMax },
-      endAt: { gte: timeMin },
+      // Half-open intersection: [startAt, endAt) overlaps [timeMin, timeMax)
+      // Match Google cache query semantics to avoid boundary ghosts (e.g. all-day ending at 00:00 leaking into next day).
+      startAt: { lt: timeMax },
+      endAt: { gt: timeMin },
       ...(rawCalId ? { calendarId: rawCalId } : {}),
     },
     include: { calendar: { select: { name: true } } },

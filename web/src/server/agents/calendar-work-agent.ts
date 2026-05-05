@@ -7,7 +7,7 @@ import {
 } from "@/lib/ai/openai-chat-models";
 import { withChatModelFallback } from "@/lib/ai/openai-model-fallback";
 import { suggestsParttimeCalendarName } from "@/lib/user-settings";
-import { fetchCalendarEventsForDay, type CalendarEventBrief } from "@/server/calendar";
+import { fetchCalendarEventsStartingOnDay, type CalendarEventBrief } from "@/server/calendar";
 import type { AgentRequest, AgentResponse } from "./types";
 import { loadAgentPrompt } from "./utils";
 
@@ -43,7 +43,7 @@ export async function runCalendarWorkAgent(req: AgentRequest): Promise<AgentResp
   let eventsBlock = "（バイト・業務系予定なし）";
 
   try {
-    const cal = await fetchCalendarEventsForDay(req.userId, req.entryDateYmd);
+    const cal = await fetchCalendarEventsStartingOnDay(req.userId, req.entryDateYmd);
     if (cal.ok && cal.events.length > 0) {
       const workEvents = cal.events.filter((ev) => eventIsWorkRelated(ev, req));
       if (workEvents.length > 0) {
@@ -51,8 +51,10 @@ export async function runCalendarWorkAgent(req: AgentRequest): Promise<AgentResp
           .map((ev) => {
             const start = hhmmTokyo(ev.start);
             const end = hhmmTokyo(ev.end);
-            const calHint = suggestsParttimeCalendarName(ev.calendarName) ? " [シフト系カレンダー]" : "";
-            return `- ${ev.title}${calHint}${start ? ` ${start}〜${end}` : ""}`;
+            const when = start ? (end ? `${start}〜${end}` : start) : "終日";
+            const title = ev.title?.trim() || "（タイトルなし）";
+            const hint = suggestsParttimeCalendarName(ev.calendarName) ? " | calendarHint=シフト系" : "";
+            return `- time=${when} | title=${title}${hint}`;
           })
           .join("\n");
       }

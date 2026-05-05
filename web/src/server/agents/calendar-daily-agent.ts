@@ -5,7 +5,7 @@ import {
   getAgentQualityChatModel,
 } from "@/lib/ai/openai-chat-models";
 import { withChatModelFallback } from "@/lib/ai/openai-model-fallback";
-import { fetchCalendarEventsForDay } from "@/server/calendar";
+import { fetchCalendarEventsStartingOnDay } from "@/server/calendar";
 import { prisma } from "@/server/db";
 import type { AgentRequest, AgentResponse } from "./types";
 import { loadAgentPrompt } from "./utils";
@@ -47,7 +47,7 @@ export async function runCalendarDailyAgent(req: AgentRequest): Promise<AgentRes
   let eventsBlock = "（カレンダー未連携または予定なし）";
 
   try {
-    const cal = await fetchCalendarEventsForDay(req.userId, req.entryDateYmd);
+    const cal = await fetchCalendarEventsStartingOnDay(req.userId, req.entryDateYmd);
     if (cal.ok && cal.events.length > 0) {
       const filtered = cal.events
         .slice(0, 15)
@@ -58,7 +58,9 @@ export async function runCalendarDailyAgent(req: AgentRequest): Promise<AgentRes
           .map((ev) => {
             const time = hhmmTokyo(ev.start);
             const status = timingStatus(ev);
-            return `- ${ev.title}${time ? ` (${time})` : ""} [${status}]`;
+            const when = time || "終日";
+            // Unified normalized line format used across calendar agents
+            return `- time=${when} | title=${ev.title || "（タイトルなし）"} | status=${status}`;
           })
           .join("\n");
       } else {

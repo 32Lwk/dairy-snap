@@ -5,7 +5,7 @@ import {
   getAgentSocialMiniChatModel,
 } from "@/lib/ai/openai-chat-models";
 import { withChatModelFallback } from "@/lib/ai/openai-model-fallback";
-import { fetchCalendarEventsForDay } from "@/server/calendar";
+import { fetchCalendarEventsStartingOnDay } from "@/server/calendar";
 import type { AgentRequest, AgentResponse } from "./types";
 import { loadAgentPrompt } from "./utils";
 
@@ -36,7 +36,7 @@ export async function runCalendarSocialAgent(req: AgentRequest): Promise<AgentRe
   let eventsBlock = "（社交・個人予定なし）";
 
   try {
-    const cal = await fetchCalendarEventsForDay(req.userId, req.entryDateYmd);
+    const cal = await fetchCalendarEventsStartingOnDay(req.userId, req.entryDateYmd);
     if (cal.ok && cal.events.length > 0) {
       const socialEvents = cal.events.filter((ev) => isSocialEvent(ev.title));
       if (socialEvents.length > 0) {
@@ -44,7 +44,10 @@ export async function runCalendarSocialAgent(req: AgentRequest): Promise<AgentRe
           .slice(0, 8)
           .map((ev) => {
             const time = hhmmTokyo(ev.start);
-            return `- ${ev.title}${time ? ` (${time})` : ""}${ev.location ? ` @${ev.location}` : ""}`;
+            const when = time || "終日";
+            const title = ev.title?.trim() || "（タイトルなし）";
+            const loc = ev.location?.trim() ? ` | location=${ev.location.trim()}` : "";
+            return `- time=${when} | title=${title}${loc}`;
           })
           .join("\n");
       }

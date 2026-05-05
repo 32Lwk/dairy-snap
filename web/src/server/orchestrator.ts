@@ -34,7 +34,7 @@ import { isMbtiType, mbtiDisplayJa } from "@/lib/mbti";
 import { isLoveMbtiType, loveMbtiDisplayJa } from "@/lib/love-mbti";
 import { prisma } from "@/server/db";
 import {
-  fetchCalendarEventsForDay,
+  fetchCalendarEventsStartingOnDay,
   type CalendarEventBrief,
   type CalendarFetchResult,
 } from "@/server/calendar";
@@ -209,24 +209,25 @@ function hhmmInUserZoneBrief(isoLike: string, timeZone: string): string {
 }
 
 /** 開口プロンプト用: 分類ラベルをそのまま見せ、就活系バケットは「確定ではない」と明示する */
-function openingCalendarCategoryTagJa(ev: CalendarEventBrief, calendarOpening: CalendarOpeningSettings | undefined): string {
+function openingCalendarCategoryLineJa(
+  ev: CalendarEventBrief,
+  calendarOpening: CalendarOpeningSettings | undefined,
+): { categoryLabel: string; needsUserConfirm: boolean } | null {
   const cat = inferCalendarEventCategory(ev, calendarOpening ?? null);
-  if (cat === "parttime") return "（バイト/シフト）";
-  if (cat === "job_hunt") {
-    return "（分類: 就活/面接系・業務も含む／面接・説明会・別件はユーザー確認）";
-  }
+  if (cat === "parttime") return { categoryLabel: "バイト/シフト", needsUserConfirm: false };
+  if (cat === "birthday") return { categoryLabel: "誕生日", needsUserConfirm: false };
+  if (cat === "job_hunt") return { categoryLabel: "就活/面接系（業務の可能性もあり）", needsUserConfirm: true };
+
   if ((cat as string).startsWith("usercat:")) {
     const opts = calendarOpeningCategoryOptions(calendarOpening ?? null);
     const lab = opts.find((o) => o.id === (cat as CalendarOpeningCategory))?.label?.trim() ?? "";
-    if (!lab) return "";
+    if (!lab) return null;
     const hint = lab.normalize("NFKC");
-    if (
-      /就活|面接|採用|説明会|企業|インターン|リクルート|選考|キャリア|OB|OG|キックオフ|会社説明|労働|業務/i.test(hint)
-    ) {
-      return `（分類: ${lab}／具体的内容はユーザー確認）`;
-    }
+    const needsUserConfirm =
+      /就活|面接|採用|説明会|企業|インターン|リクルート|選考|キャリア|OB|OG|キックオフ|会社説明|労働|業務/i.test(hint);
+    return { categoryLabel: lab, needsUserConfirm };
   }
-  return "";
+  return null;
 }
 
 function formatOneOpeningCalendarLine(
@@ -236,10 +237,13 @@ function formatOneOpeningCalendarLine(
 ): string {
   const t = hhmmInUserZoneBrief(ev.start, timeZone);
   const when = t || "終日";
-  const loc = ev.location?.trim() ? ` @${ev.location.trim()}` : "";
+  const loc = ev.location?.trim() ? ev.location.trim() : "";
   const title = ev.title?.trim() || "（タイトルなし）";
-  const catTag = openingCalendarCategoryTagJa(ev, calendarOpening);
-  return `- ${when} ${title}${loc}${catTag}`;
+  const cat = openingCalendarCategoryLineJa(ev, calendarOpening);
+  const catCell = cat ? `category=${cat.categoryLabel}${cat.needsUserConfirm ? "; confirm=needed" : ""}` : "";
+  const locCell = loc ? `location=${loc}` : "";
+  // Unified normalized line format (no parentheses-based tags)
+  return `- time=${when} | title=${title}${locCell ? ` | ${locCell}` : ""}${catCell ? ` | ${catCell}` : ""}`;
 }
 
 /** `orderedEvIdx`: 開口時は Impact×近さでソートした event インデックス（先頭ほど優先） */
@@ -580,7 +584,15 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
           promptLon: DEFAULT_WEATHER_LONGITUDE,
         }),
       ),
-      fetchCalendarEventsForDay(userId, entryDateYmd),
+      // Opening: inject same-day calendar list for grounding.
+      // Non-opening: do NOT inject calendar events directly; allow calendar via specialized calendar agents (query_calendar_* tools).
+      isOpening
+        ? fetchCalendarEventsStartingOnDay(userId, entryDateYmd)
+        : Promise.resolve<CalendarFetchResult>({
+            ok: false,
+            reason: "unknown",
+            detail: "calendar_not_injected_non_opening",
+          }),
       classifyTopicDeepeningParallel({
         skip: classifierSkip,
         userMessage,
@@ -608,10 +620,10 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
   }
   const githubPromptBlock = useMini ? null : githubBlockLoaded;
   const githubToolEligible = Boolean(!useMini && githubBlockLoaded);
-  const calendarAvailable = isCalendarToolEligible(calendarRes);
-  const calendarEventsForOrchestrator = calendarRes.ok
-    ? filterCalendarEventsForAiNationalHolidaySanity(entryDateYmd, calendarRes.events)
-    : [];
+  // Calendar tools remain eligible even when we intentionally skip direct calendar injection (non-opening turns).
+  const calendarAvailable = isOpening ? isCalendarToolEligible(calendarRes) : true;
+  const calendarEventsForOrchestrator =
+    isOpening && calendarRes.ok ? filterCalendarEventsForAiNationalHolidaySanity(entryDateYmd, calendarRes.events) : [];
   const holidaySignal =
     calendarEventsForOrchestrator.length > 0 ? detectHolidaySignal(calendarEventsForOrchestrator) : null;
   const calendarHolidayTitle =
@@ -867,26 +879,30 @@ export async function runOrchestrator(params: OrchestratorParams): Promise<Orche
       ? `${rawBody.slice(0, DIARY_BODY_MAX_CHARS_ORCHESTRATOR)}…`
       : rawBody;
 
-  const calendarBriefBody = calendarRes.ok
-    ? formatOpeningDayCalendarBrief(
-        calendarEventsSubstantive,
-        calendarOrderedEvIdx,
-        userTimeZone,
-        profile?.calendarOpening,
-      )
-    : "";
-  const calendarDayBriefForOrchestrator = calendarRes.ok
-    ? `${ORCHESTRATOR_DAY_CALENDAR_HEADING}\n${calendarBriefBody}`
-    : "";
+  const calendarBriefBody =
+    isOpening && calendarRes.ok
+      ? formatOpeningDayCalendarBrief(
+          calendarEventsSubstantive,
+          calendarOrderedEvIdx,
+          userTimeZone,
+          profile?.calendarOpening,
+        )
+      : "";
+  const calendarDayBriefForOrchestrator =
+    isOpening && calendarRes.ok ? `${ORCHESTRATOR_DAY_CALENDAR_HEADING}\n${calendarBriefBody}` : "";
 
   let toolFactCards: ToolFactCard[] = [
     weatherToToolFactCard(weather),
-    calendarDayToToolFactCard({
-      entryDateYmd,
-      calendarOk: calendarRes.ok,
-      substantiveEventCount: calendarEventsSubstantive.length,
-      summaryJa: calendarBriefBody || (calendarRes.ok ? "（予定なし）" : "（カレンダー未取得）"),
-    }),
+    ...(isOpening
+      ? [
+          calendarDayToToolFactCard({
+            entryDateYmd,
+            calendarOk: calendarRes.ok,
+            substantiveEventCount: calendarEventsSubstantive.length,
+            summaryJa: calendarBriefBody || (calendarRes.ok ? "（予定なし）" : "（カレンダー未取得）"),
+          }),
+        ]
+      : []),
   ];
   const todayReferentialFactsBlock = formatTodayReferentialFactsSection({
     cards: toolFactCards,
