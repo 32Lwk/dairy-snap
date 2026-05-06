@@ -2,10 +2,11 @@
 
 import { signOut } from "next-auth/react";
 import { useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AccountTransferDialog } from "@/components/account-transfer-dialog";
 import { SimpleAccordion } from "@/components/simple-accordion";
 import { GitHubLogoIcon } from "@/components/github-logo-icon";
+import { formatGithubSyncErrorForDisplay } from "@/lib/github-sync-error-format";
 
 type Props = {
   /** 省略時は `/api/account/me` で取得（許可リスト外の画面用） */
@@ -151,6 +152,35 @@ export function SettingsAccountActions({ email: emailProp }: Props) {
     }
   }
 
+  async function handleGithubSyncNow() {
+    if (!github?.configured) return;
+    setGithubBusy(true);
+    setGithubMsg(null);
+    try {
+      const res = await fetch("/api/github/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: "calendar" }),
+        credentials: "same-origin",
+      });
+      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setGithubMsg(typeof json.error === "string" ? json.error : "同期の開始に失敗しました");
+        return;
+      }
+      setGithubMsg("バックグラウンドで同期を開始しました。数十秒後に状態が更新されます。");
+      await new Promise((r) => setTimeout(r, 2500));
+      await loadGithub();
+    } finally {
+      setGithubBusy(false);
+    }
+  }
+
+  const githubSyncErrorUi = useMemo(
+    () => formatGithubSyncErrorForDisplay(github?.lastSyncError),
+    [github?.lastSyncError],
+  );
+
   const isPrivateScope = github?.scope?.includes("repo") ?? false;
 
   return (
@@ -249,19 +279,33 @@ export function SettingsAccountActions({ email: emailProp }: Props) {
             <p className="mt-3 text-xs text-emerald-700 dark:text-emerald-300">{githubMsg}</p>
           ) : null}
 
-          {github.lastSyncError ? (
-            <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-950 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
-              <p>
-                <span className="font-medium">同期エラー:</span> {github.lastSyncError}
-              </p>
-              <p className="mt-1 text-amber-700/80 dark:text-amber-200/80">
-                トークン切れや権限の問題のときは、再接続で再認可してください。
-              </p>
+          {githubSyncErrorUi ? (
+            <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs text-amber-950 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
+              <p className="font-medium text-amber-950 dark:text-amber-50">{githubSyncErrorUi.title}</p>
+              <p className="mt-1.5 leading-relaxed text-amber-900/95 dark:text-amber-100/95">{githubSyncErrorUi.body}</p>
+              {githubSyncErrorUi.technicalDetail ? (
+                <details className="mt-2 rounded-md border border-amber-200/80 bg-amber-100/40 dark:border-amber-800/80 dark:bg-amber-950/50">
+                  <summary className="cursor-pointer select-none px-2 py-1.5 text-[11px] font-medium text-amber-900 dark:text-amber-200">
+                    技術的な詳細（サポート用）
+                  </summary>
+                  <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-words border-t border-amber-200/60 px-2 py-1.5 font-mono text-[10px] leading-snug text-amber-950/90 dark:border-amber-800/60 dark:text-amber-100/90">
+                    {githubSyncErrorUi.technicalDetail}
+                  </pre>
+                </details>
+              ) : null}
               {github.linked ? (
-                <div className="mt-2">
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={githubBusy}
+                    onClick={() => void handleGithubSyncNow()}
+                    className="inline-flex items-center justify-center rounded-lg border border-emerald-600/70 bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50 dark:border-emerald-500 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+                  >
+                    {githubBusy ? "処理中…" : "今すぐ同期"}
+                  </button>
                   <a
                     href={`/api/github/oauth/start?mode=${isPrivateScope ? "private" : "public"}`}
-                    className="inline-flex items-center justify-center rounded-lg border border-amber-600/60 bg-white px-3 py-1.5 text-sm font-medium text-amber-950 shadow-sm hover:bg-amber-100/80 dark:border-amber-500/50 dark:bg-amber-950/60 dark:text-amber-50 dark:hover:bg-amber-900/50"
+                    className="inline-flex items-center justify-center rounded-lg border border-amber-700/50 bg-white px-3 py-1.5 text-sm font-medium text-amber-950 shadow-sm hover:bg-amber-100/90 dark:border-amber-500/60 dark:bg-amber-900/80 dark:text-amber-50 dark:hover:bg-amber-800/80"
                   >
                     再接続（再認可）
                   </a>
