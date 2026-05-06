@@ -250,11 +250,24 @@ export function SettingsAccountActions({ email: emailProp }: Props) {
           ) : null}
 
           {github.lastSyncError ? (
-            <p className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-950 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
-              <span className="font-medium">同期エラー:</span> {github.lastSyncError}
-              <br />
-              <span className="text-amber-700/70 dark:text-amber-300/70">再接続を試してください</span>
-            </p>
+            <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-950 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
+              <p>
+                <span className="font-medium">同期エラー:</span> {github.lastSyncError}
+              </p>
+              <p className="mt-1 text-amber-700/80 dark:text-amber-200/80">
+                トークン切れや権限の問題のときは、再接続で再認可してください。
+              </p>
+              {github.linked ? (
+                <div className="mt-2">
+                  <a
+                    href={`/api/github/oauth/start?mode=${isPrivateScope ? "private" : "public"}`}
+                    className="inline-flex items-center justify-center rounded-lg border border-amber-600/60 bg-white px-3 py-1.5 text-sm font-medium text-amber-950 shadow-sm hover:bg-amber-100/80 dark:border-amber-500/50 dark:bg-amber-950/60 dark:text-amber-50 dark:hover:bg-amber-900/50"
+                  >
+                    再接続（再認可）
+                  </a>
+                </div>
+              ) : null}
+            </div>
           ) : null}
 
           {github.linked ? (

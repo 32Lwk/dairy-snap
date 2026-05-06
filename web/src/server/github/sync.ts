@@ -10,6 +10,9 @@ import { loadGithubOAuthToken } from "@/server/github/token-store";
 
 const CONTRIBUTION_YEARS_WINDOW = 3;
 
+/** 草データ・日次スナップショットは 1 トランザクションに多数の upsert が入る。既定 5s だと Neon 等で期限切れになりやすい */
+const BULK_UPSERT_TX = { maxWait: 15_000, timeout: 120_000 } as const;
+
 function calendarYearUtc(d: Date): number {
   return d.getUTCFullYear();
 }
@@ -32,6 +35,7 @@ async function upsertContributionDays(userId: string, days: { date: string; cont
           update: { contributionCount: d.contributionCount },
         }),
       ),
+      BULK_UPSERT_TX,
     );
   }
 }
@@ -135,6 +139,7 @@ export async function runGithubSync(userId: string, reason: GithubSyncReason): P
               update: { summary: payload },
             });
           }),
+          BULK_UPSERT_TX,
         );
       }
 
