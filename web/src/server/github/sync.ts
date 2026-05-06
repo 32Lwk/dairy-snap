@@ -24,17 +24,21 @@ async function upsertContributionDays(userId: string, days: { date: string; cont
   for (let i = 0; i < days.length; i += chunk) {
     const part = days.slice(i, i + chunk);
     await prisma.$transaction(
-      part.map((d) =>
-        prisma.gitHubContributionDay.upsert({
-          where: { userId_dateYmd: { userId, dateYmd: d.date } },
-          create: {
-            userId,
-            dateYmd: d.date,
-            contributionCount: d.contributionCount,
-          },
-          update: { contributionCount: d.contributionCount },
-        }),
-      ),
+      async (tx) => {
+        await Promise.all(
+          part.map((d) =>
+            tx.gitHubContributionDay.upsert({
+              where: { userId_dateYmd: { userId, dateYmd: d.date } },
+              create: {
+                userId,
+                dateYmd: d.date,
+                contributionCount: d.contributionCount,
+              },
+              update: { contributionCount: d.contributionCount },
+            }),
+          ),
+        );
+      },
       BULK_UPSERT_TX,
     );
   }
@@ -127,18 +131,22 @@ export async function runGithubSync(userId: string, reason: GithubSyncReason): P
       for (let i = 0; i < entries.length; i += chunk) {
         const slice = entries.slice(i, i + chunk);
         await prisma.$transaction(
-          slice.map(([dateYmd, summary]) => {
-            const payload = {
-              counts: summary.counts,
-              topRepo: summary.topRepo ?? null,
-              linesJa: summary.linesJa,
-            };
-            return prisma.gitHubDailySnapshot.upsert({
-              where: { userId_dateYmd: { userId, dateYmd } },
-              create: { userId, dateYmd, summary: payload },
-              update: { summary: payload },
-            });
-          }),
+          async (tx) => {
+            await Promise.all(
+              slice.map(([dateYmd, summary]) => {
+                const payload = {
+                  counts: summary.counts,
+                  topRepo: summary.topRepo ?? null,
+                  linesJa: summary.linesJa,
+                };
+                return tx.gitHubDailySnapshot.upsert({
+                  where: { userId_dateYmd: { userId, dateYmd } },
+                  create: { userId, dateYmd, summary: payload },
+                  update: { summary: payload },
+                });
+              }),
+            );
+          },
           BULK_UPSERT_TX,
         );
       }
